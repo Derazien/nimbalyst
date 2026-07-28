@@ -22,7 +22,8 @@ import { trackCreateAiSession } from '../services/analytics/sessionLaunchAnalyti
 import { SessionCommitService } from '../services/SessionCommitService';
 import { getSessionsForFile } from '../services/fileSessionLookup';
 import { normalizeSessionPhaseMetadataUpdate } from '../services/session/sessionPhaseTransition';
-import { destroyProviderForArchivedSession } from '../services/ai/archiveSessionProviderLifecycle';
+import { releaseSessionRuntime } from '../services/ai/archiveSessionProviderLifecycle';
+import { getTerminalSessionManager } from '../services/TerminalSessionManager';
 import { resolveSessionModelSelection } from '../services/ai/sessionModelSelection';
 import { inheritedOwnership, stripOwnerControlledMetadata } from '../services/extensionSessions/sessionOwnership';
 import { readSessionSubtree } from '../services/sessionHierarchy';
@@ -295,7 +296,19 @@ export async function registerSessionHandlers() {
 
     // Delete session
     safeHandle('session:delete', async (event, sessionId: string) => {
-        ProviderFactory.destroyProvider(sessionId);
+        // #903: release the terminal too. Destroying the provider alone leaves a
+        // claude-code-cli session's process tree running for the lifetime of the
+        // app, invisible because the session no longer exists in the UI.
+        await releaseSessionRuntime(sessionId, {
+            destroyProvider: (id) => ProviderFactory.destroyProvider(id),
+            destroyTerminal: (id) => getTerminalSessionManager().destroyTerminal(id),
+            onProviderCleanupError: (id, error) => {
+                console.error(`[SessionHandlers] Failed to destroy provider for deleted session ${id}:`, error);
+            },
+            onTerminalCleanupError: (id, error) => {
+                console.error(`[SessionHandlers] Failed to destroy terminal for deleted session ${id}:`, error);
+            },
+        });
         await sessionManager.deleteSession(sessionId);
     });
 
@@ -376,13 +389,18 @@ export async function registerSessionHandlers() {
                 const subtree = currentSession.workspacePath
                     ? await readSessionSubtree(database, sessionId, currentSession.workspacePath)
                     : [{ id: sessionId }];
-                for (const row of subtree) destroyProviderForArchivedSession(
-                    row.id,
-                    (id) => ProviderFactory.destroyProvider(id),
-                    (id, cleanupError) => {
+                // #903: archiving leaks the same way deleting does. The session
+                // leaves the UI but its CLI process tree keeps running.
+                for (const row of subtree) await releaseSessionRuntime(row.id, {
+                    destroyProvider: (id) => ProviderFactory.destroyProvider(id),
+                    destroyTerminal: (id) => getTerminalSessionManager().destroyTerminal(id),
+                    onProviderCleanupError: (id, cleanupError) => {
                         console.error(`[SessionHandlers] Failed to destroy provider for archived session ${id}:`, cleanupError);
-                    }
-                );
+                    },
+                    onTerminalCleanupError: (id, cleanupError) => {
+                        console.error(`[SessionHandlers] Failed to destroy terminal for archived session ${id}:`, cleanupError);
+                    },
+                });
             }
 
             // Notify renderer windows so session list state stays in sync without waiting for full refresh.

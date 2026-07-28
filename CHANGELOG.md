@@ -1648,6 +1648,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The organization inbox reconnects on its own after the connection drops.
 - Session titles inside an expanded workstream update as they change instead of showing the old name. (#973)
 - Windows builds sign the app payload before packaging, so the installer no longer reports an unsigned application. (#853)
+- Deleting or archiving a Claude Code CLI session now stops its CLI process instead of leaving it running invisibly in the background.
 
 ### Removed
 <!-- Removed features go here -->
