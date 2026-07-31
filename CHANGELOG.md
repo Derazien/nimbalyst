@@ -1625,6 +1625,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Claude Code CLI's own typing suggestions no longer show up as a reply in the Nimbalyst transcript.
 - Sharing a plan or decision now produces a link your teammates can actually open, and the sharer edits the same collaborative content everyone else sees instead of quietly staying on their local file. Items shared earlier can be unshared and shared again to pick this up, keeping the content that has been edited since.
 - An AI session that reports its previous conversation has expired now genuinely starts fresh on the next message, instead of repeating the same expiration error forever. (#1098)
+- The effort level you select now applies to Claude Code CLI sessions instead of being ignored.
 - Tracker items with structured array fields no longer crash when opened, even when older schemas describe those fields as text lists. (#1104)
 - Claude Code sessions now use your existing MCP setup instead of overriding it, so account connectors load again and sessions no longer fail to start on machines with an organization-managed MCP policy. (#1051)
 - HTTP MCP servers that authenticate with a static key now connect directly on Claude Code sessions instead of being routed through an extra helper process.
