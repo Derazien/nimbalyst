@@ -959,6 +959,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Quick open's Files tab can narrow to just your local files or just your team's shared documents, and remembers the choice.
 - A workstream's context menu can mark every session in it as read at once.
 - `/planning:nimbalyst-coach` reviews your project and recent sessions and suggests extensions that match your files, features you have not tried, and instructions worth adding, changing nothing until you approve it.
+- The effort level for a Claude Code CLI session can now be changed mid-session instead of only at launch.
 
 ### Changed
 <!-- Changes to existing functionality go here -->
