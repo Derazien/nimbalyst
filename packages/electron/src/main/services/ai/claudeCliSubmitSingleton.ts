@@ -20,6 +20,7 @@ import { findAttachmentDenyRule } from '@nimbalyst/runtime/ai/server';
 import { ClaudeSettingsManager } from '../ClaudeSettingsManager';
 import { getAttachmentStagingConfig } from '../../utils/store';
 import { closeSupersededQuestions, snapshotQuestionsToSupersede } from './supersedeOpenQuestions';
+import { claudeCliSubmitLatch } from './claudeCliSubmitLatch';
 
 /** Submit a CLI prompt using the real terminal/log/analytics deps. */
 export async function submitClaudeCliPromptProduction(
@@ -33,7 +34,14 @@ export async function submitClaudeCliPromptProduction(
     context: input.documentContext,
   });
   const result = await submitClaudeCliPrompt(input, {
-    writeToTerminal: (sessionId: string, data: string) => manager.writeToTerminal(sessionId, data),
+    writeToTerminal: (sessionId: string, data: string) => {
+      // Hold the queue until the CLI actually picks this up. The bytes take real
+      // time to cross the PTY (see claudeCliSubmitLatch), and until they land the
+      // session's PID file still reads idle, which every flush trigger reads as
+      // "safe to send another prompt".
+      claudeCliSubmitLatch.mark(sessionId, data.length);
+      manager.writeToTerminal(sessionId, data);
+    },
     logUserPrompt: (p: {
       sessionId: string;
       workspacePath: string;
