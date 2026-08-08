@@ -67,6 +67,12 @@ export async function submitClaudeCliPromptProduction(
       }
     },
     delay: (ms: number) => new Promise((resolve) => setTimeout(resolve, ms)),
+    // The CLI ingests an attached file after its bytes land, and an Enter that
+    // arrives mid-ingest is swallowed — the prompt then sits in the box unsent.
+    // Same live PID-file signal the queue drain trusts. `null` (unknown) is NOT
+    // treated as started, so a genuinely stranded prompt still gets a retry.
+    hasTurnStarted: async (sessionId: string) =>
+      (await manager.getClaudeCliLiveTurnState(sessionId)) === 'running',
   });
 
   // The CLI never runs through MessageStreamingHandler, so its human turns
