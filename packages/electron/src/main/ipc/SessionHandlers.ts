@@ -9,6 +9,7 @@ import {
     ModelIdentifier,
     shouldBlockStartedSessionProviderSwitch,
     type AIProviderType,
+    type AgentRole,
 } from '@nimbalyst/runtime/ai/server/types';
 import type { UpdateSessionMetadataPayload } from '@nimbalyst/runtime/ai/adapters/sessionStore';
 import path from "path";
@@ -22,6 +23,7 @@ import { trackCreateAiSession } from '../services/analytics/sessionLaunchAnalyti
 import { SessionCommitService } from '../services/SessionCommitService';
 import { getSessionsForFile } from '../services/fileSessionLookup';
 import { normalizeSessionPhaseMetadataUpdate } from '../services/session/sessionPhaseTransition';
+import { validateAgentRoleTransition } from '../services/session/agentRoleTransition';
 import { releaseSessionRuntime } from '../services/ai/archiveSessionProviderLifecycle';
 import { getTerminalSessionManager } from '../services/TerminalSessionManager';
 import { resolveSessionModelSelection } from '../services/ai/sessionModelSelection';
@@ -460,6 +462,40 @@ export async function registerSessionHandlers() {
             return { success: true };
         } catch (error) {
             console.error('[SessionHandlers] Failed to update session metadata:', error);
+            return { success: false, error: String(error) };
+        }
+    });
+
+    // Update a session's agentRole after creation. Validated and one-way: a
+    // 'standard' session is never promoted, and unknown role strings are
+    // rejected outright -- the visibility predicate in atoms/sessions.ts hides
+    // sessions by role, so a typo here would make a session vanish from every
+    // list. Writes agentRole at the top level of the payload (the column),
+    // never nested under metadata (the JSON blob).
+    safeHandle('sessions:update-agent-role', async (event, sessionId: string, requestedRole: string) => {
+        try {
+            const currentSession = await AISessionsRepository.get(sessionId);
+            if (!currentSession) {
+                return { success: false, error: 'Session not found' };
+            }
+
+            const currentRole: AgentRole = currentSession.agentRole ?? 'standard';
+            const validation = validateAgentRoleTransition(currentRole, requestedRole);
+            if (!validation.ok) {
+                return { success: false, error: validation.error };
+            }
+
+            await AISessionsRepository.updateMetadata(sessionId, { agentRole: validation.role });
+
+            for (const window of BrowserWindow.getAllWindows()) {
+                if (!window.isDestroyed()) {
+                    window.webContents.send('sessions:session-updated', sessionId, { agentRole: validation.role });
+                }
+            }
+
+            return { success: true };
+        } catch (error) {
+            console.error('[SessionHandlers] Failed to update session agent role:', error);
             return { success: false, error: String(error) };
         }
     });
