@@ -3167,6 +3167,7 @@ const SessionHistoryComponent: React.FC = () => {
           onClick={() => setShowCompanionAtom(!showCompanionAtom)}
           title={showCompanionAtom ? 'Hide companion sessions' : 'Show companion sessions'}
           aria-label={showCompanionAtom ? 'Hide companion sessions' : 'Show companion sessions'}
+          aria-pressed={showCompanionAtom}
           data-testid="session-list-companion-toggle"
         >
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
