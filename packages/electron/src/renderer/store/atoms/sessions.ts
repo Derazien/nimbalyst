@@ -30,6 +30,7 @@ import { workstreamStateAtom, setWorkstreamActiveChildAtom } from './workstreamS
 import { clearSessionUnreadAtom } from './sessionActivity';
 import { aiInputHistoryAtom } from './aiInputUndo';
 import { shouldShowInRootList } from './sessionListVisibility';
+import { isCompanionRole } from '@nimbalyst/runtime/ai/server/agentRoles';
 
 // SessionMeta is imported from @nimbalyst/runtime (canonical type).
 // Re-export for consumers that import from the store.
@@ -2205,6 +2206,10 @@ export const sessionListChatAtom = atom<SessionMeta[]>((get) => {
   return Array.from(registry.values())
     .filter(s => {
       if (s.agentRole === 'meta-agent') return false;
+      // Companion sessions are structurally hidden here for the same reason
+      // meta-agent sessions are: the companion lives on its own surface, not
+      // in the chat picker. Mirrors sessionListVisibility.shouldShowInRootList.
+      if (isCompanionRole(s.agentRole)) return false;
       // Exclude worktree sessions
       if (s.worktreeId) return false;
       // Exclude workstream parents (childCount > 0 means it's a parent)
