@@ -2127,9 +2127,14 @@ const SessionHistoryComponent: React.FC = () => {
     // session rows under their own group key; the COMPANION distinction lives in
     // which `result` key the items land under.
     const companionItems: UnifiedListItem[] = [];
+    // Ids of everything folded into companionItems, so the regular-sessions
+    // loop below can skip them and they do not render twice.
+    const companionSessionIds = new Set<string>();
     const companionHead = sessions.find(s => isCompanionHead(s.agentRole));
     if (companionHead) {
+      companionSessionIds.add(companionHead.id);
       const assistants = sessions.filter(s => isSubCompanion(s.agentRole)).sort(compareSessionOrder);
+      for (const assistant of assistants) companionSessionIds.add(assistant.id);
       for (const member of [companionHead, ...assistants]) {
         companionItems.push({
           type: 'session' as const,
@@ -2144,6 +2149,8 @@ const SessionHistoryComponent: React.FC = () => {
     for (const session of sessions) {
       // Skip blitz sessions - they're rendered via BlitzGroup, not as individual items
       if (session.sessionType === 'blitz') continue;
+      // Skip the companion head and her assistants - they're rendered via the Companion group
+      if (companionSessionIds.has(session.id)) continue;
 
       if (!session.worktreeId) {
         // Check if this is a workstream (has children)
