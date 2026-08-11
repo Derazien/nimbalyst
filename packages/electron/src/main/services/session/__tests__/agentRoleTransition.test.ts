@@ -21,19 +21,24 @@ describe('validateAgentRoleTransition', () => {
     }
   });
 
-  it('rejects promoting a standard session out of standard', () => {
+  it('allows classifying a pre-taxonomy standard session into the companion family (the Looc QA case)', () => {
+    // The Looc QA resident sat at 'standard' since before 'sub-companion'
+    // existed. It was never promoted and then demoted, so reclassifying it
+    // now is an initial classification, not a reversed promotion, and must
+    // be allowed. The one-way promotion ratchet lives in the promotion flow
+    // itself, not in this validator.
     const result = validateAgentRoleTransition('standard', 'sub-companion');
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error).toMatch(/standard/i);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.role).toBe('sub-companion');
     }
   });
 
-  it('rejects a standard session even when the requested role is standard itself', () => {
+  it('allows a standard session to be reassigned standard (no-op transition)', () => {
     const result = validateAgentRoleTransition('standard', 'standard');
 
-    expect(result.ok).toBe(false);
+    expect(result.ok).toBe(true);
   });
 
   it('rejects a value outside the AgentRole union', () => {

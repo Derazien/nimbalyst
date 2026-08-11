@@ -466,12 +466,19 @@ export async function registerSessionHandlers() {
         }
     });
 
-    // Update a session's agentRole after creation. Validated and one-way: a
-    // 'standard' session is never promoted, and unknown role strings are
-    // rejected outright -- the visibility predicate in atoms/sessions.ts hides
-    // sessions by role, so a typo here would make a session vanish from every
-    // list. Writes agentRole at the top level of the payload (the column),
-    // never nested under metadata (the JSON blob).
+    // Update a session's agentRole after creation. Validated against the
+    // AgentRole union -- unknown role strings are rejected outright, because
+    // the visibility predicate in atoms/sessions.ts hides sessions by role,
+    // so a typo here would make a session vanish from every list. Any
+    // transition between known roles is allowed, including 'standard' to a
+    // companion-family role, which is how a session that predates the
+    // companion taxonomy (e.g. the Looc QA resident) gets classified into it
+    // for the first time. The one-way promotion ratchet -- a session
+    // shouldn't slide back into the companion family after being promoted
+    // OUT to 'standard' -- belongs in the promotion flow itself, not here:
+    // this validator cannot tell that case apart from an initial
+    // classification. Writes agentRole at the top level of the payload (the
+    // column), never nested under metadata (the JSON blob).
     safeHandle('sessions:update-agent-role', async (event, sessionId: string, requestedRole: string) => {
         try {
             const currentSession = await AISessionsRepository.get(sessionId);
