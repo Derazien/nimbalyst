@@ -47,7 +47,7 @@ import { alphaFeatureEnabledAtom, worktreesFeatureAvailableAtom } from '../../st
 import { activeWorkspacePathAtom } from '../../store/atoms/openProjects';
 import { useGitRepoProbe } from '../../hooks/useGitRepoProbe';
 import { workstreamStateAtom } from '../../store/atoms/workstreamState';
-import { sessionProcessingAtom, sessionUnreadAtom, sessionHasPendingInteractivePromptAtom, activeSessionIdAtom as globalActiveSessionIdAtom, sessionPinnedUpdateAtom } from '../../store/atoms/sessions';
+import { sessionProcessingAtom, sessionUnreadAtom, sessionHasPendingInteractivePromptAtom, activeSessionIdAtom as globalActiveSessionIdAtom, sessionPinnedUpdateAtom, showCompanionSessionsAtom } from '../../store/atoms/sessions';
 import { collapsedGroupsAtom, compactRowsAtom, setCompactRowsAtom, showContextUsageAtom, setShowContextUsageAtom, sortOrderAtom, setCollapsedGroupsAtom, setSortOrderAtom } from '../../store/atoms/agentMode';
 import {
   recentlyRenamedSessionAtom,
@@ -341,6 +341,8 @@ const SessionHistoryComponent: React.FC = () => {
   const atomLoading = useAtomValue(sessionListLoadingAtom);
   const showArchivedAtom = useAtomValue(showArchivedSessionsAtom);
   const setShowArchivedAtom = useSetAtom(showArchivedSessionsAtom);
+  const showCompanionAtom = useAtomValue(showCompanionSessionsAtom);
+  const setShowCompanionAtom = useSetAtom(showCompanionSessionsAtom);
   const refreshSessions = useSetAtom(refreshSessionListAtom);
   const updateSessionStore = useSetAtom(updateSessionStoreAtom);
   const removeSessionFromAtom = useSetAtom(removeSessionFullAtom);
@@ -3158,6 +3160,20 @@ const SessionHistoryComponent: React.FC = () => {
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
             <path d="M2 5h12M4 5v8a1 1 0 001 1h6a1 1 0 001-1V5" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round"/>
             <path d="M6 8h4" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round"/>
+          </svg>
+        </button>
+        <button
+          className={`session-history-companion-filter flex items-center justify-center px-1.5 py-1 text-xs rounded border border-[var(--nim-border)] bg-[var(--nim-bg-secondary)] text-[var(--nim-text-faint)] cursor-pointer transition-all duration-150 outline-none hover:bg-[var(--nim-bg-tertiary)] hover:border-[var(--nim-primary)] hover:text-[var(--nim-text)] [&_svg]:block ${showCompanionAtom ? 'bg-[var(--nim-primary)] border-[var(--nim-primary)] text-white hover:opacity-90' : ''}`}
+          onClick={() => setShowCompanionAtom(!showCompanionAtom)}
+          title={showCompanionAtom ? 'Hide companion sessions' : 'Show companion sessions'}
+          aria-label={showCompanionAtom ? 'Hide companion sessions' : 'Show companion sessions'}
+          data-testid="session-list-companion-toggle"
+        >
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect x="3" y="6" width="10" height="7" rx="2" stroke="currentColor" strokeWidth="1.25"/>
+            <path d="M8 6V3" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round"/>
+            <circle cx="8" cy="2" r="1" fill="currentColor"/>
+            <path d="M6 9.5v1M10 9.5v1" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round"/>
           </svg>
         </button>
         {(() => {
