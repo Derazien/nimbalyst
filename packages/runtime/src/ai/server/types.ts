@@ -414,7 +414,19 @@ export type SessionType = 'session' | 'workstream' | 'blitz' | 'voice';
 
 export type SessionMode = 'planning' | 'agent' | 'auto';
 
-export type AgentRole = 'standard' | 'meta-agent';
+/**
+ * Structural role of a session.
+ *
+ * 'companion' and 'sub-companion' are the LocalLead companion agent (Lea) and
+ * her surface-bound assistants. Both are hidden from the Agent Mode session
+ * list by default: her home is the companion FAB, and her assistants live in
+ * the surfaces they serve. See sessionListVisibility.ts for the predicate.
+ *
+ * The distinction that decides visibility is ASSISTANTS versus WORK. Sessions
+ * the companion spawns to do a job stay 'standard' and stay visible, because
+ * they are work the operator might take over.
+ */
+export type AgentRole = 'standard' | 'meta-agent' | 'companion' | 'sub-companion';
 
 export interface QueuedPrompt {
   id: string;           // Unique ID for this queued item
