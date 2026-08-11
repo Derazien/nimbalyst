@@ -6,6 +6,7 @@ import {
   matchesSessionListTag,
   VIRTUAL_TAG_WORKSTREAMS,
   VIRTUAL_TAG_WORKTREE,
+  VIRTUAL_TAG_COMPANION,
 } from '../sessionListFilter';
 
 function session(overrides: Partial<SessionMeta> & Pick<SessionMeta, 'id'>): SessionMeta {
@@ -60,5 +61,27 @@ describe('session list virtual tags', () => {
     expect(matchesSessionListTag(worktreeSession, VIRTUAL_TAG_WORKTREE, registry)).toBe(true);
     expect(matchesSessionListTag(standalone, 'feature', registry)).toBe(true);
     expect(matchesSessionListTag(standalone, 'missing', registry)).toBe(false);
+  });
+
+  it('matches #companion for the companion head and her assistants only', () => {
+    const lea = session({ id: 'lea', agentRole: 'companion' });
+    const reviewer = session({ id: 'reviewer', agentRole: 'sub-companion' });
+    const spawnedWork = session({ id: 'watts', agentRole: 'standard' });
+    const metaAgent = session({ id: 'meta', agentRole: 'meta-agent' });
+    const withRegistry = new Map(
+      [lea, reviewer, spawnedWork, metaAgent].map(s => [s.id, s]),
+    );
+
+    expect(matchesSessionListTag(lea, VIRTUAL_TAG_COMPANION, withRegistry)).toBe(true);
+    expect(matchesSessionListTag(reviewer, VIRTUAL_TAG_COMPANION, withRegistry)).toBe(true);
+    expect(matchesSessionListTag(spawnedWork, VIRTUAL_TAG_COMPANION, withRegistry)).toBe(false);
+    expect(matchesSessionListTag(metaAgent, VIRTUAL_TAG_COMPANION, withRegistry)).toBe(false);
+  });
+
+  it('does not let a persisted tag named companion masquerade as the virtual one', () => {
+    const tagged = session({ id: 'tagged', tags: ['companion'] });
+    const registryWithTagged = new Map([[tagged.id, tagged]]);
+
+    expect(matchesSessionListTag(tagged, VIRTUAL_TAG_COMPANION, registryWithTagged)).toBe(false);
   });
 });

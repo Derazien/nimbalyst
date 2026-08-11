@@ -11,15 +11,18 @@
 
 import { atom } from 'jotai';
 import type { SessionMeta } from '@nimbalyst/runtime';
+import { isCompanionRole } from '@nimbalyst/runtime/ai/server/agentRoles';
 
 // Virtual tags are renderer-only predicates. They are never persisted in a
 // session's metadata.tags array.
 export const VIRTUAL_TAG_WORKTREE = 'worktree';
 export const VIRTUAL_TAG_WORKSTREAMS = 'workstreams';
+export const VIRTUAL_TAG_COMPANION = 'companion';
 
 export const SESSION_LIST_VIRTUAL_TAGS = new Set([
   VIRTUAL_TAG_WORKTREE,
   VIRTUAL_TAG_WORKSTREAMS,
+  VIRTUAL_TAG_COMPANION,
 ]);
 
 /** Match the same root shapes that SessionHistory renders as workstream groups. */
@@ -49,6 +52,12 @@ export function matchesSessionListTag(
 
     const parent = registry.get(session.parentSessionId);
     return parent ? isWorkstreamParentSession(parent) : false;
+  }
+
+  if (tag === VIRTUAL_TAG_COMPANION) {
+    // Structural, not persisted. A session merely tagged "companion" by hand
+    // is not a companion session and must not match here.
+    return isCompanionRole(session.agentRole);
   }
 
   return (session.tags ?? []).includes(tag);
