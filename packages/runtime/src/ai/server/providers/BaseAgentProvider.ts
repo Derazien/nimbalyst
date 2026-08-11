@@ -13,7 +13,7 @@
  */
 
 import { BaseAIProvider } from '../AIProvider';
-import { AIProviderType, ProviderCapabilities, type DocumentContext } from '../types';
+import { AIProviderType, ProviderCapabilities, AgentRole, type DocumentContext } from '../types';
 import { AgentCapabilities, BUILTIN_AGENT_CAPABILITIES } from '../agentCapabilities';
 import { AISessionsRepository } from '../../../storage/repositories/AISessionsRepository';
 import { FrozenSessionDirectives } from './sessionDirective';
@@ -302,13 +302,13 @@ export abstract class BaseAgentProvider extends BaseAIProvider {
     BaseAgentProvider.securityLogger?.(message, data);
   }
 
-  protected async getAgentRole(sessionId?: string): Promise<'standard' | 'meta-agent'> {
+  protected async getAgentRole(sessionId?: string): Promise<AgentRole> {
     if (!sessionId) {
       return 'standard';
     }
     try {
       const session = await AISessionsRepository.get(sessionId);
-      return session?.agentRole === 'meta-agent' ? 'meta-agent' : 'standard';
+      return session?.agentRole ?? 'standard';
     } catch {
       return 'standard';
     }

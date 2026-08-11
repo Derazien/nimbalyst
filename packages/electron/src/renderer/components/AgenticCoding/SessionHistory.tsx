@@ -3193,6 +3193,7 @@ const SessionHistoryComponent: React.FC = () => {
           onClick={toggleShowArchived}
           title={showArchived ? 'Hide archived sessions' : 'Show archived sessions'}
           aria-label={showArchived ? 'Hide archived sessions' : 'Show archived sessions'}
+          aria-pressed={showArchived}
         >
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
             <path d="M2 5h12M4 5v8a1 1 0 001 1h6a1 1 0 001-1V5" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round"/>

@@ -18,6 +18,7 @@ import {
 } from '../atoms/sessions';
 import { workstreamStateAtom } from '../atoms/workstreamState';
 import { sessionRefMapAtom, type SessionRefMeta } from '@nimbalyst/runtime/ui/AgentTranscript/session/sessionRefAtoms';
+import type { AgentRole } from '@nimbalyst/runtime/ai/server/types';
 
 // Track pending refresh to debounce rapid-fire events
 let pendingRefreshTimer: NodeJS.Timeout | null = null;
@@ -82,7 +83,7 @@ export function initSessionListListeners(): () => void {
         ...(updates.sessionType !== undefined && {
           sessionType: updates.sessionType as 'session' | 'workstream' | 'blitz' | 'voice'
         }),
-        ...(updates.agentRole !== undefined && { agentRole: updates.agentRole as 'standard' | 'meta-agent' }),
+        ...(updates.agentRole !== undefined && { agentRole: updates.agentRole as AgentRole }),
         ...(updates.createdBySessionId !== undefined && { createdBySessionId: updates.createdBySessionId as string | null }),
         ...(updates.parentSessionId !== undefined && { parentSessionId: updates.parentSessionId as string | null }),
         ...(updates.worktreeId !== undefined && { worktreeId: updates.worktreeId as string | null }),
