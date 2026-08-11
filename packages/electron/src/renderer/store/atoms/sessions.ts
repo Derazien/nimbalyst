@@ -29,6 +29,7 @@ import { sessionListMetadata } from './sessionListMetadata';
 import { workstreamStateAtom, setWorkstreamActiveChildAtom } from './workstreamState';
 import { clearSessionUnreadAtom } from './sessionActivity';
 import { aiInputHistoryAtom } from './aiInputUndo';
+import { shouldShowInRootList } from './sessionListVisibility';
 
 // SessionMeta is imported from @nimbalyst/runtime (canonical type).
 // Re-export for consumers that import from the store.
@@ -2180,19 +2181,14 @@ export const sessionListRootAtom = atom<SessionListItem[]>((get) => {
   const registry = get(sessionRegistryAtom);
   const workspacePath = get(sessionListWorkspaceAtom) || '';
   const showArchived = get(showArchivedSessionsAtom);
+  const showCompanion = get(showCompanionSessionsAtom);
   const host = get(selectedMachineAtom(workspacePath));
 
   return Array.from(registry.values())
-    .filter(s => {
-      if ((s.remoteHostDeviceId ?? "") !== host) return false;
-      if (!showArchived && s.isArchived) return false;
-      // Root sessions (no parent) are always included
-      if (!s.parentSessionId) return true;
-      // Blitz child sessions must also be included so they appear in worktreeGroupsData
-      // and can be grouped into BlitzGroup via their parentSessionId
-      const parent = registry.get(s.parentSessionId);
-      return parent?.sessionType === 'blitz';
-    })
+    // Host first, exactly as upstream ordered it: a session belonging to
+    // another machine is out before any visibility rule is consulted.
+    .filter(s => (s.remoteHostDeviceId ?? "") === host)
+    .filter(s => shouldShowInRootList(s, registry, { showArchived, showCompanion }))
     .sort((a, b) => b.updatedAt - a.updatedAt);
 });
 
@@ -2233,6 +2229,16 @@ export const sessionListWorkspaceAtom = atom<string | null>(null);
  * Show archived sessions toggle.
  */
 export const showArchivedSessionsAtom = atom<boolean>(false);
+
+/**
+ * Show companion sessions toggle.
+ *
+ * Off by default: Lea and her assistants do not belong in Agent Mode. On, they
+ * appear as a COMPANION group. Mirrors showArchivedSessionsAtom deliberately,
+ * because it is the same kind of "structurally hidden, revealable" state and
+ * the operator already knows that control.
+ */
+export const showCompanionSessionsAtom = atom<boolean>(false);
 
 /**
  * Refresh the session list from the database.
