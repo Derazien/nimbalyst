@@ -75,9 +75,11 @@ import {
   matchesSessionListTag,
   SESSION_LIST_VIRTUAL_TAGS,
   sessionListTagFilterAtom,
+  VIRTUAL_TAG_COMPANION,
   VIRTUAL_TAG_WORKSTREAMS,
   VIRTUAL_TAG_WORKTREE,
 } from '../../store/atoms/sessionListFilter';
+import { isCompanionHead, isCompanionRole, isSubCompanion } from '@nimbalyst/runtime/ai/server/agentRoles';
 import type { SuperLoop } from '../../../shared/types/superLoop';
 import { store } from '@nimbalyst/runtime/store';
 import { createMetaAgentSession } from '../../utils/metaAgentUtils';
@@ -515,6 +517,13 @@ const SessionHistoryComponent: React.FC = () => {
       for (const s of allSessions) if (isWorkstreamParentSession(s)) workstreamCount++;
       if (workstreamCount > 0) {
         virtuals.push({ name: VIRTUAL_TAG_WORKSTREAMS, count: workstreamCount });
+      }
+    }
+    if (!activeSet.has(VIRTUAL_TAG_COMPANION)) {
+      let companionCount = 0;
+      for (const s of allSessions) if (isCompanionRole(s.agentRole)) companionCount++;
+      if (companionCount > 0) {
+        virtuals.push({ name: VIRTUAL_TAG_COMPANION, count: companionCount });
       }
     }
     const real = allWorkspaceTags.filter(
@@ -2113,6 +2122,24 @@ const SessionHistoryComponent: React.FC = () => {
     const timestampField = sortBy === 'updated' ? 'updatedAt' : 'createdAt';
     const items: UnifiedListItem[] = [];
     const pinnedItems: UnifiedListItem[] = [];
+    // Build the companion group. Upstream v0.80 retired MetaAgentGroup and the
+    // 'metaAgent' item shape, so the head and her assistants are listed as plain
+    // session rows under their own group key; the COMPANION distinction lives in
+    // which `result` key the items land under.
+    const companionItems: UnifiedListItem[] = [];
+    const companionHead = sessions.find(s => isCompanionHead(s.agentRole));
+    if (companionHead) {
+      const assistants = sessions.filter(s => isSubCompanion(s.agentRole)).sort(compareSessionOrder);
+      for (const member of [companionHead, ...assistants]) {
+        companionItems.push({
+          type: 'session' as const,
+          session: member,
+          timestamp: getDisplayedOrderTimestamp(member),
+          rank: getDisplayedOrderRank(member.id),
+        });
+      }
+    }
+
     // Add regular sessions and workstreams (those without worktreeId)
     for (const session of sessions) {
       // Skip blitz sessions - they're rendered via BlitzGroup, not as individual items
@@ -2315,8 +2342,11 @@ const SessionHistoryComponent: React.FC = () => {
     // Build pinned and time groups
     const result: Record<string, UnifiedListItem[]> = {};
 
-    // Meta-agent sessions always appear at the very top
-
+    // Companion sits at the top: when the operator has deliberately revealed
+    // it with the CMP toggle, it is what they came to look at.
+    if (companionItems.length > 0) {
+      result['Companion'] = companionItems;
+    }
 
     // If we have pinned items, add them as a "Pinned" group
     if (pinnedItems.length > 0) {
@@ -2330,11 +2360,11 @@ const SessionHistoryComponent: React.FC = () => {
       }
     }
 
-    return result as Record<TimeGroupKey | 'Pinned' | 'Meta Agent', UnifiedListItem[]>;
+    return result as Record<TimeGroupKey | 'Pinned' | 'Meta Agent' | 'Companion', UnifiedListItem[]>;
   }, [sessions, worktreeGroupsData, sortBy, worktreeCache, workstreamChildrenCache, sessionTreeIndex, blitzCache, superLoops, showArchived, isMetaAgentEnabled, getDisplayedOrderRank, getDisplayedOrderTimestamp, compareSessionOrder, compareUnifiedItems]);
 
   const groupKeys = useMemo(
-    () => Object.keys(groupedItems) as (TimeGroupKey | 'Pinned' | 'Meta Agent')[],
+    () => Object.keys(groupedItems) as (TimeGroupKey | 'Pinned' | 'Meta Agent' | 'Companion')[],
     [groupedItems],
   );
 
