@@ -275,6 +275,21 @@ export const SETTINGS_REGISTRY = {
     { store: 'app-settings', path: 'agentSessionsPopover.width' },
     420,
   ),
+  /**
+   * Whether an agent session may reach sessions in ANOTHER workspace through
+   * the host MCP tools (send_prompt, notify_user, respond_to_prompt,
+   * get_session_status/result, list_queued_prompts). Same-workspace access is
+   * always allowed and unaffected.
+   *   off     -- same workspace only (default; the historical behaviour)
+   *   creator -- also sessions the calling session created itself
+   *   allow   -- also any session whose workspace is open in a live window
+   *              (and, as a superset of creator, the caller's own children)
+   */
+  'agent.crossWorkspaceMessaging': setting(
+    z.enum(['off', 'creator', 'allow']),
+    { store: 'app-settings', path: 'crossWorkspaceMessaging' },
+    'off',
+  ),
   'team.presence.status': setting(
     z.enum(['online', 'away']),
     { store: 'app-settings', path: 'teamPresence.status' },

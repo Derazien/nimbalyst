@@ -375,7 +375,7 @@ export const META_AGENT_TOOL_DEFS: Array<{
   {
     name: "send_prompt",
     description:
-      "Queue a follow-up prompt for a session. An instruction to an idle session starts processing immediately; a report or status never wakes it and is read on its next turn. Do not message the session that started you unless it asked for reports.",
+      "Queue a follow-up prompt for a session. An instruction to an idle session starts processing immediately; a report or status never wakes it and is read on its next turn. Do not message the session that started you unless it asked for reports. Sessions in another workspace are reachable only as far as the Cross-workspace messaging setting allows (off by default; creator = sessions you created; allow = any session in an open project).",
     inputSchema: {
       type: "object",
       properties: {

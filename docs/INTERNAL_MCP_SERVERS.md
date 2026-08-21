@@ -23,6 +23,8 @@ Three orthogonal axes (see `mcpTopology.ts`): **server boundary** = the unit of 
 
 Settings writes route through `SettingsControlService` (allow-list, deny-list for API keys / Stytch creds / share keys, 30-writes/60s rate limit, audit logging). Kill-switch: set `settingsAgentToolsDisabled` in Settings to drop the settings tools from `nimbalyst-host`.
 
+The session-targeting orchestration tools (send_prompt, notify_user, respond_to_prompt, get_session_status/result, list_queued_prompts) resolve their target through `MetaAgentService.resolveSessionForCaller`, which enforces the workspace boundary. Same-workspace targets always resolve. Targets in another workspace are governed by the `agent.crossWorkspaceMessaging` setting (Settings → Agent Features → Cross-workspace messaging): `off` (default) refuses them, `creator` allows sessions the caller created (`created_by_session_id`), and `allow` additionally permits any session whose workspace is open in a live window (`hasLiveWindowForWorkspace`). A missing session and a refused one return the same error, `Session <id> not found or not allowed across workspaces (crossWorkspaceMessaging=<mode>)`, so ids in other workspaces are not enumerable. Execution always uses the target's own cwd (`worktreePath || workspacePath`); the pure predicate lives in `main/services/crossWorkspaceMessaging.ts`. `get_session_summary` (session-context) is read-only and already reads across workspaces.
+
 > The legacy monolithic `nimbalyst-mcp` server and the standalone `settings` /
 > `session-context` / `meta-agent` / `session-naming` HTTP servers have been
 > **retired** — their tools fold onto the unified endpoints above. The standalone

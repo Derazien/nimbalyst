@@ -10,6 +10,7 @@ import {
 } from '../../store/atoms/appSettings';
 import { autoCommitEnabledAtom, setAutoCommitEnabledAtom } from '../../store/atoms/autoCommitAtoms';
 import { settingAtom } from '../../store/atoms/settingAtomFamily';
+import type { SettingValue } from '../../../shared/settings/keys';
 import { ALPHA_FEATURES, type AlphaFeatureTag } from '../../../shared/alphaFeatures';
 import { AlphaBadge, SETTINGS_ALPHA_TOOLTIP } from '../common/AlphaBadge';
 import { SettingsToggle } from '../GlobalSettings/SettingsToggle';
@@ -33,6 +34,7 @@ interface WorkflowExportSettings {
 }
 
 type AttachmentStagingMode = 'temp' | 'workspace' | 'custom';
+type CrossWorkspaceMessagingMode = SettingValue<'agent.crossWorkspaceMessaging'>;
 
 export function AgentFeaturesPanel() {
   const posthog = usePostHog();
@@ -48,6 +50,9 @@ export function AgentFeaturesPanel() {
   const [showMcpSessionStatus, setShowMcpSessionStatus] = useAtom(
     settingAtom('ai.showMcpSessionStatus'),
   ) as [boolean, (value: boolean) => void];
+  const [crossWorkspaceMessaging, setCrossWorkspaceMessaging] = useAtom(
+    settingAtom('agent.crossWorkspaceMessaging'),
+  ) as [CrossWorkspaceMessagingMode, (value: CrossWorkspaceMessagingMode) => void];
 
   const [promptSuggestionsEnabled, setPromptSuggestionsEnabled] = useAtom(
     settingAtom('ai.promptSuggestionsEnabled'),
@@ -498,6 +503,26 @@ export function AgentFeaturesPanel() {
             description={feature.description}
           />
         ))}
+
+        <div className="cross-workspace-messaging-setting setting-item py-2">
+          <div className="flex items-center justify-between gap-4">
+            <div className="setting-text flex flex-col gap-0 min-w-0">
+              <span className="setting-name text-sm font-medium text-[var(--nim-text)]">Cross-workspace messaging</span>
+              <span className="setting-description text-xs leading-snug text-[var(--nim-text-muted)]">
+                Whether an agent may message or inspect sessions in another workspace (send_prompt, notify_user, respond_to_prompt, status and result tools). Same-workspace access is always allowed.
+              </span>
+            </div>
+            <select
+              value={crossWorkspaceMessaging}
+              onChange={(e) => setCrossWorkspaceMessaging(e.target.value as CrossWorkspaceMessagingMode)}
+              className="setting-select shrink-0 py-1.5 px-2 pr-7 rounded-md text-sm bg-[var(--nim-bg-secondary)] border border-[var(--nim-border)] text-[var(--nim-text)] outline-none"
+            >
+              <option value="off">Off (same workspace only)</option>
+              <option value="creator">Sessions it created</option>
+              <option value="allow">Any session in an open project</option>
+            </select>
+          </div>
+        </div>
 
         <SettingsToggle
           checked={chatShowToolCalls}

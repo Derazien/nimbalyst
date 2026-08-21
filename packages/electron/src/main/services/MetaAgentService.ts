@@ -41,6 +41,7 @@ import { extractMessageText, extractUserPrompts } from './metaAgentMessageText';
 import type { NotificationOptions, NotificationResult } from './NotificationService';
 import type { MobilePushResult } from '@nimbalyst/runtime/sync/types';
 import { composeNotificationTitle } from '../../shared/notificationTitle';
+import { resolveCrossWorkspaceAccess, sessionNotReachableMessage } from './crossWorkspaceMessaging';
 
 type SessionStatusValue = 'idle' | 'running' | 'waiting_for_input' | 'error' | 'interrupted';
 type PromptType = 'permission_request' | 'ask_user_question_request' | 'exit_plan_mode_request';
@@ -278,18 +279,18 @@ export class MetaAgentService {
           this.createChildSession(metaSessionId, workspaceId, args),
         spawnSession: (callerSessionId, workspaceId, args) =>
           this.spawnSession(callerSessionId, workspaceId, args),
-        getSessionStatus: (_metaSessionId, workspaceId, targetSessionId) =>
-          this.getSessionStatusJson(targetSessionId, workspaceId),
-        getSessionResult: (_metaSessionId, workspaceId, targetSessionId, options) =>
-          this.getSessionResultJson(targetSessionId, workspaceId, options),
-        listQueuedPrompts: (_metaSessionId, workspaceId, targetSessionId, options) =>
-          this.listQueuedPromptsJson(targetSessionId, workspaceId, options),
+        getSessionStatus: (metaSessionId, workspaceId, targetSessionId) =>
+          this.getSessionStatusJson(targetSessionId, workspaceId, metaSessionId),
+        getSessionResult: (metaSessionId, workspaceId, targetSessionId, options) =>
+          this.getSessionResultJson(targetSessionId, workspaceId, options, metaSessionId),
+        listQueuedPrompts: (metaSessionId, workspaceId, targetSessionId, options) =>
+          this.listQueuedPromptsJson(targetSessionId, workspaceId, options, metaSessionId),
         sendPrompt: (metaSessionId, workspaceId, targetSessionId, prompt, interrupt, messageKind) =>
           this.sendPromptToSession(metaSessionId, targetSessionId, workspaceId, prompt, interrupt, messageKind),
         notifyUser: (callerSessionId, workspaceId, args) =>
           this.notifyUserJson(callerSessionId, workspaceId, args),
-        respondToPrompt: (_metaSessionId, workspaceId, args) =>
-          this.respondToPrompt(workspaceId, args),
+        respondToPrompt: (metaSessionId, workspaceId, args) =>
+          this.respondToPrompt(workspaceId, args, metaSessionId),
         listSpawnedSessions: (metaSessionId, workspaceId) =>
           this.listSpawnedSessionsJson(metaSessionId, workspaceId),
       });
@@ -841,9 +842,13 @@ export class MetaAgentService {
     return JSON.stringify(summaries, null, 2);
   }
 
-  private async getSessionStatusJson(sessionId: string, workspaceId: string): Promise<string> {
-    const workspaceKey = await this.resolveSessionWorkspaceKey(sessionId, workspaceId);
-    const row = workspaceKey ? await this.getSessionStatusRow(sessionId, workspaceKey) : null;
+  private async getSessionStatusJson(
+    sessionId: string,
+    workspaceId: string,
+    callerSessionId?: string
+  ): Promise<string> {
+    const session = await this.resolveSessionForCaller(callerSessionId, workspaceId, sessionId);
+    const row = await this.getSessionStatusRow(sessionId, session.workspacePath || workspaceId);
     if (!row) {
       throw new Error(`Session ${sessionId} not found`);
     }
@@ -868,13 +873,15 @@ export class MetaAgentService {
   private async getSessionResultJson(
     sessionId: string,
     workspaceId: string,
-    options: { includeFullResponse?: boolean } = {}
+    options: { includeFullResponse?: boolean } = {},
+    callerSessionId?: string
   ): Promise<string> {
     const data = await this.buildSessionResultData(
       sessionId,
       workspaceId,
       undefined,
-      options.includeFullResponse ?? true
+      options.includeFullResponse ?? true,
+      callerSessionId
     );
     return JSON.stringify(data, null, 2);
   }
@@ -882,16 +889,14 @@ export class MetaAgentService {
   private async listQueuedPromptsJson(
     sessionId: string,
     workspaceId: string,
-    options: { includeCompleted?: boolean; includePromptText?: boolean } = {}
+    options: { includeCompleted?: boolean; includePromptText?: boolean } = {},
+    callerSessionId?: string
   ): Promise<string> {
     if (!sessionId) {
       throw new Error('sessionId is required');
     }
 
-    const session = await AISessionsRepository.get(sessionId);
-    if (!session || !sameWorkspaceIdentity(session.workspacePath, workspaceId)) {
-      throw new Error(`Session ${sessionId} not found`);
-    }
+    await this.resolveSessionForCaller(callerSessionId, workspaceId, sessionId);
 
     const { getQueuedPromptsStore } = await import('./RepositoryManager');
     const queueStore = getQueuedPromptsStore();
@@ -943,16 +948,13 @@ export class MetaAgentService {
       throw new Error('prompt is required');
     }
 
-    const session = await AISessionsRepository.get(sessionId);
-    if (!session || !sameWorkspaceIdentity(session.workspacePath, workspaceId)) {
-      throw new Error(`Session ${sessionId} not found`);
-    }
+    const session = await this.resolveSessionForCaller(originSessionId, workspaceId, sessionId);
 
-    // Validated by the guard above; this hands the same stored key back verbatim.
-    const sessionWorkspaceKey = resolveStoredWorkspaceId(session.workspacePath, workspaceId);
     const normalizedPrompt = prompt.trim();
     const shouldBypassExecution = this.shouldBypassChildAgentExecutionForTests();
-    const statusRow = await this.getSessionStatusRow(sessionId, sessionWorkspaceKey);
+    // Status rows are keyed by the target's own workspace, which differs from
+    // the caller's for a cross-workspace target.
+    const statusRow = await this.getSessionStatusRow(sessionId, session.workspacePath || workspaceId);
     const statusBeforeQueue = (statusRow?.status || 'idle') as SessionStatusValue;
     const promptProvenance: PromptProvenance = {
       actor: 'agent',
@@ -1076,10 +1078,7 @@ export class MetaAgentService {
     }
 
     const targetSessionId = args.sessionId?.trim() || callerSessionId;
-    const session = await AISessionsRepository.get(targetSessionId);
-    if (!session || !sameWorkspaceIdentity(session.workspacePath, workspaceId)) {
-      throw new Error(`Session ${targetSessionId} not found`);
-    }
+    const session = await this.resolveSessionForCaller(callerSessionId, workspaceId, targetSessionId);
 
     if (!this.showNotificationWithResult) {
       throw new Error('Notification delivery is not initialized');
@@ -1093,7 +1092,8 @@ export class MetaAgentService {
       body: boundedBody,
       kind: 'agent-complete',
       sessionId: targetSessionId,
-      workspacePath: resolveStoredWorkspaceId(session.workspacePath, workspaceId),
+      // The target's own workspace so the click opens the right project.
+      workspacePath: session.workspacePath || workspaceId,
       sourceLabel,
       provider: 'agent',
       bypassFocusCheck: args.bypassFocusCheck === true,
@@ -1133,15 +1133,12 @@ export class MetaAgentService {
     promptId: string;
     promptType: PromptType;
     response: Record<string, unknown>;
-  }): Promise<string> {
+  }, callerSessionId?: string): Promise<string> {
     if (!this.aiService) {
       throw new Error('AI service not initialized');
     }
 
-    const session = await AISessionsRepository.get(args.sessionId);
-    if (!session || !sameWorkspaceIdentity(session.workspacePath, workspaceId)) {
-      throw new Error(`Session ${args.sessionId} not found`);
-    }
+    await this.resolveSessionForCaller(callerSessionId, workspaceId, args.sessionId);
 
     const result = await this.aiService.respondToInteractivePrompt({
       sessionId: args.sessionId,
@@ -1407,7 +1404,10 @@ export class MetaAgentService {
     prefetchedSession?: { title: string; provider: string; model: string | null; status: string; lastActivity: number | null; createdAt: number; updatedAt: number; worktreeId: string | null },
     // Skip the heavier full-turn extract when the caller only needs preview
     // fields (the list and notification paths discard fullResponse).
-    includeFullResponse: boolean = true
+    includeFullResponse: boolean = true,
+    // The tool caller, for the cross-workspace access check. Internal callers
+    // that pass a prefetched session skip the check: they already own it.
+    callerSessionId?: string
   ): Promise<SessionResultData> {
     let sessionTitle: string;
     let sessionProvider: string;
@@ -1429,11 +1429,8 @@ export class MetaAgentService {
       sessionUpdatedAt = prefetchedSession.updatedAt;
       sessionWorktreeId = prefetchedSession.worktreeId;
     } else {
-      const session = await AISessionsRepository.get(sessionId);
-      if (!session || !sameWorkspaceIdentity(session.workspacePath, workspaceId)) {
-        throw new Error(`Session ${sessionId} not found`);
-      }
-      const statusRow = await this.getSessionStatusRow(sessionId, resolveStoredWorkspaceId(session.workspacePath, workspaceId));
+      const session = await this.resolveSessionForCaller(callerSessionId, workspaceId, sessionId);
+      const statusRow = await this.getSessionStatusRow(sessionId, session.workspacePath || workspaceId);
       sessionTitle = session.title || 'Untitled Session';
       sessionProvider = session.provider;
       sessionModel = session.model || null;
@@ -1642,6 +1639,26 @@ export class MetaAgentService {
       return null;
     }
     return resolveStoredWorkspaceId(session.workspacePath, workspaceId);
+  }
+
+  /**
+   * Load a target session for a tool call and enforce the workspace boundary.
+   * Same-workspace targets always resolve; anything else is governed by the
+   * `agent.crossWorkspaceMessaging` setting (off / creator / allow, see
+   * crossWorkspaceMessaging.ts). A missing session and a disallowed one share
+   * the same error so session ids in other workspaces are not enumerable.
+   */
+  private async resolveSessionForCaller(
+    callerSessionId: string | null | undefined,
+    callerWorkspaceId: string,
+    targetSessionId: string
+  ): Promise<NonNullable<Awaited<ReturnType<typeof AISessionsRepository.get>>>> {
+    const session = await AISessionsRepository.get(targetSessionId);
+    const access = resolveCrossWorkspaceAccess(callerSessionId, callerWorkspaceId, session);
+    if (!session || !access.allowed) {
+      throw new Error(sessionNotReachableMessage(targetSessionId, access.mode));
+    }
+    return session;
   }
 
   private async ensurePlanTrackerItem(workspaceId: string, sessionId: string, result: SessionResultData): Promise<void> {

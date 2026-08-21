@@ -155,6 +155,20 @@ export function anyWindowReferencesWorkspace(path: string, excludeWindowId?: num
 }
 
 /**
+ * Whether a live window currently references a workspace path.
+ *
+ * This is the lightweight loaded-project gate for services that must not pull
+ * in WindowManager's startup graph merely to verify routing custody.
+ */
+export function hasLiveWindowForWorkspace(path: string): boolean {
+    for (const [id, window] of windows) {
+        if (window.isDestroyed()) continue;
+        if (windowReferencesWorkspace(windowStates.get(id), path)) return true;
+    }
+    return false;
+}
+
+/**
  * #1375: Keep the window's represented file in lockstep with the document on
  * screen.
  *

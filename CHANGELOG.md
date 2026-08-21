@@ -960,6 +960,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A workstream's context menu can mark every session in it as read at once.
 - `/planning:nimbalyst-coach` reviews your project and recent sessions and suggests extensions that match your files, features you have not tried, and instructions worth adding, changing nothing until you approve it.
 - The effort level for a Claude Code CLI session can now be changed mid-session instead of only at launch.
+- Agents can message and inspect sessions in another open project when the new Cross-workspace messaging setting (Agent Features) allows it; it is off by default, with "sessions it created" and "any session in an open project" as the two wider levels.
 
 ### Changed
 <!-- Changes to existing functionality go here -->
