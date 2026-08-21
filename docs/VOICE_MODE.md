@@ -123,7 +123,7 @@ All voice state lives in workspace-scoped atoms (not per-session) because only o
 | `voiceListenStateAtom` | `'off' \ | 'listening' \ | 'sleeping'` | Three-state listening model |
 | `voiceTranscriptEntriesAtom` | `VoiceTranscriptEntry[]` | Accumulated user/assistant transcript entries |
 | `voiceCurrentUserTextAtom` | `string` | Live partial transcription while user speaks |
-| `voiceTokenUsageAtom` | `VoiceTokenUsage \ | null` | Input/output audio and text token counts |
+| `voiceTokenUsageAtom` | `VoiceTokenUsage \ | null` | Cumulative billed audio/text token counts, plus `context` (last turn's input + output) and the serving `model` |
 | `voiceSessionStartTimeAtom` | `number \ | null` | When the current voice session started |
 | `voiceWorkspacePathAtom` | `string \ | null` | Workspace path for the voice session |
 | `voiceDbSessionIdAtom` | `string \ | null` | Database session ID (separate from linked coding session) |
@@ -188,7 +188,7 @@ When sleeping:
 | `voice-mode:text-received` | Text delta from voice agent response |
 | `voice-mode:transcript-complete` | Final user speech transcription |
 | `voice-mode:transcript-delta` | Partial/streaming user transcription |
-| `voice-mode:token-usage` | Token usage update after response completes |
+| `voice-mode:token-usage` | Token usage update after each `response.done` (cumulative billing counters + live `context` + `model`) |
 | `voice-mode:submit-prompt` | Voice agent wants to send a coding task |
 | `voice-mode:interrupt` | Barge-in policy decided to stop playback (deferred/suppressed for echo-suspect triggers) |
 | `voice-mode:speech-started` | VAD detected user speech (unconditional, fired for every trigger) |
@@ -312,7 +312,7 @@ Voice mode maintains two separate but linked sessions in the database:
 
 - Created with ID format `voice-{timestamp}-{random}` and provider `openai-realtime`
 - Transcript entries stored in `ai_agent_messages` incrementally as they arrive
-- Metadata (linked coding session ID, token usage, duration) stored in the session's metadata JSONB field
+- Metadata (linked coding session ID, token usage, duration) stored in the session's metadata JSONB field. The persisted `tokenUsage` is the final `VoiceTokenUsage`: cumulative billed counters for the whole session, plus the `context` of the last turn and the `model` that served it
 - Sessions can be **resumed**: if a voice session for the same workspace was updated within the last 30 minutes (`VOICE_SESSION_TIMEOUT_MS`), new transcript entries append to it instead of creating a new session
 - Diagnostic entries (file changes, state transitions) are written with `[system]` prefix and `diag-` ID prefix
 - Tool calls the voice agent makes (memory lookups, `ask_coding_agent`, etc.) are written as `voiceToolCall` JSON entries with a `tool-` ID prefix — emitted from `RealtimeAPIClient.handleFunctionCall` (started) and `sendFunctionCallResult` (completed), forwarded via `voice-mode:tool-call` IPC, and rendered as real tool widgets by `VoiceRawParser`. Previously these executed silently and were invisible in the transcript.
@@ -418,12 +418,16 @@ Two independent timers manage voice session lifecycle:
 A dropped socket no longer silently ends voice mode. `RealtimeAPIClient` distinguishes intentional disconnects (`user_stopped`, inactivity `timeout`) from unexpected ones:
 
 - On an unexpected `close`/`error` after the socket was open, it reconnects with bounded exponential backoff (`RECONNECT_BASE_DELAY_MS` 500ms, doubling, capped at `RECONNECT_MAX_DELAY_MS` 8s, up to `MAX_RECONNECT_ATTEMPTS` = 5).
-- On reconnect, `session.created` re-runs `updateSession()` which re-sends the **identical** voice/model/reasoning/instructions, so recovery is inaudible. Token-usage accumulators are instance fields and survive the reconnect (the live indicator doesn't reset).
+- On reconnect, `session.created` re-runs `updateSession()` which re-sends the **identical** voice/model/reasoning/instructions, so recovery is inaudible. Token-usage counters (billing totals and the last-turn context) are instance fields and survive the reconnect (the live indicator doesn't reset).
 - The renderer shows a transient "reconnecting…" state (`voiceReconnectingAtom`, set from `voice-mode:reconnecting`, cleared on `voice-mode:reconnected`). A hard `voice-mode:error` is emitted only after retries are exhausted.
 
 ## Model Selection & Fallback
 
-Voice mode defaults to `gpt-realtime-2` (GPT-5-class reasoning, 128K context, more consistent voice rendering). If the initial socket fails to open on `gpt-realtime-2` (no account/region access), the client falls back **once** to `gpt-realtime`, logs a warning, and emits the `voice_model_fallback` analytics event. The fallback model is also manually selectable. `supportsAsyncFunctionCalls()` (true only for gpt-realtime-2) gates the async `submit_agent_prompt` path; the fallback uses the legacy queue + wake path.
+Voice mode defaults to `gpt-realtime-2` (GPT-5-class reasoning, 128K context, more consistent voice rendering). If the initial socket fails to open on `gpt-realtime-2` (no account/region access), the client falls back **once** to `gpt-realtime` (32K context), logs a warning, and emits the `voice_model_fallback` analytics event. The fallback model is also manually selectable. `supportsAsyncFunctionCalls()` (true only for gpt-realtime-2) gates the async `submit_agent_prompt` path; the fallback uses the legacy queue + wake path.
+
+### Context meter
+
+The ring around the voice button and its tooltip show **live context**, not spend. After every `response.done`, `RealtimeAPIClient.trackTokenUsage` reads that response's `usage`: `input_tokens` already holds the whole conversation (text + audio, cached tokens included), so the meter's `context` is the last response's `input_tokens + output_tokens`, i.e. the conversation the next turn starts from. It is never summed across turns (summing grew quadratically and showed 28K "used" in a few exchanges). The per-model window comes from `shared/realtimeModels.ts` (`getRealtimeContextWindowTokens`), keyed by the `model` the client is actually connected with, so a fallback to `gpt-realtime` sizes the ring against 32K. The engine does that division itself and reports `contextUsageRatio` with each usage update, the same field the Live engine reports, so the renderer draws the ring without deriving anything; until a response has been measured the ratio is absent and no ring is drawn. The cumulative `inputAudio` / `outputAudio` / `text` / `total` counters stay in the same payload for the persisted session metadata; they sum per response because that is what the API bills.
 
 The output voice is set once in `session.update` and intentionally **not** re-asserted on each `response.create` — gpt-realtime-2 renders a consistent voice for the whole session. The `session.updated` handler compares the server-reported voice against the requested voice and emits `voice_voice_mismatch` if they diverge, turning drift into a measurable signal.
 

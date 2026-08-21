@@ -22,6 +22,7 @@ import {
   type VoiceUiScreenshotToolResult,
 } from './engine/voiceToolRegistry';
 import { VoiceEngineEventBus } from './engine/voiceEngineEvents';
+import { getRealtimeContextWindowTokens } from '../../../shared/realtimeModels';
 import { formatVoiceHostMessage } from './engine/voiceHostMessage';
 import { buildVoiceAgentInstructions } from './engine/voiceAgentInstructions';
 import type {
@@ -115,6 +116,26 @@ type VoiceId = 'alloy' | 'ash' | 'ballad' | 'coral' | 'echo' | 'sage' | 'shimmer
 export type RealtimeModel = 'gpt-realtime-2' | 'gpt-realtime';
 export type RealtimeReasoningEffort = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 
+/**
+ * Token usage reported after every `response.done`.
+ *
+ * `inputAudio` / `outputAudio` / `text` / `total` are cumulative billing
+ * counters: the Realtime API bills every response for its whole input, so
+ * these sum per response and only ever grow. `context` is different: it is
+ * the last response's input + output tokens, i.e. the conversation the next
+ * turn starts from, which is what a "how full is the context window" meter
+ * must show. `model` is the model that served the session (post-fallback),
+ * so the meter can size the window correctly.
+ */
+export interface RealtimeTokenUsage {
+  inputAudio: number;
+  outputAudio: number;
+  text: number;
+  total: number;
+  context: number;
+  model: RealtimeModel;
+}
+
 /** Default model and the fallback used when the account/region lacks access. */
 const PRIMARY_MODEL: RealtimeModel = 'gpt-realtime-2';
 const FALLBACK_MODEL: RealtimeModel = 'gpt-realtime';
@@ -162,10 +183,12 @@ export class RealtimeAPIClient implements VoiceEngineRegistrar {
   private inactivityCheckInterval: NodeJS.Timeout | null = null;
   private readonly INACTIVITY_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
-  // Token usage tracking
+  // Token usage tracking. The three counters are cumulative billing totals;
+  // lastResponseContextTokens is the live context (see RealtimeTokenUsage).
   private inputAudioTokens: number = 0;
   private outputAudioTokens: number = 0;
   private textTokens: number = 0;
+  private lastResponseContextTokens: number = 0;
 
   // Current response tracking
   private currentResponseId: string | null = null;
@@ -1447,67 +1470,72 @@ export class RealtimeAPIClient implements VoiceEngineRegistrar {
    * Track token usage from response events
    */
   private trackTokenUsage(usage: any): void {
-    // OpenAI Realtime API usage format:
-    // - input_tokens: text input tokens
-    // - output_tokens: text output tokens
-    // - input_token_details.audio: audio input tokens (1 token per 100ms)
-    // - output_token_details.audio: audio output tokens (1 token per 50ms)
+    // OpenAI Realtime API usage format (response.done):
+    // - input_tokens: ALL input for this response (text + audio, the whole
+    //   conversation so far, cached tokens included)
+    // - output_tokens: ALL output for this response (text + audio)
+    // - input_token_details.{text_tokens,audio_tokens}
+    // - output_token_details.{text_tokens,audio_tokens}
+    // The beta API named the detail fields `audio` / `text`; both spellings are
+    // read so an older server shape still counts.
+    const inputTokens = usage.input_tokens || 0;
+    const outputTokens = usage.output_tokens || 0;
+    const inputAudio = usage.input_token_details?.audio_tokens ?? usage.input_token_details?.audio ?? 0;
+    const outputAudio = usage.output_token_details?.audio_tokens ?? usage.output_token_details?.audio ?? 0;
+    const inputText = usage.input_token_details?.text_tokens ?? Math.max(0, inputTokens - inputAudio);
+    const outputText = usage.output_token_details?.text_tokens ?? Math.max(0, outputTokens - outputAudio);
 
-    const inputAudio = usage.input_token_details?.audio || 0;
-    const outputAudio = usage.output_token_details?.audio || 0;
-    const inputText = usage.input_tokens || 0;
-    const outputText = usage.output_tokens || 0;
-
+    // Billing counters: every response is billed for its whole input again, so
+    // summing per response is the right thing for "what did this session cost".
     this.inputAudioTokens += inputAudio;
     this.outputAudioTokens += outputAudio;
     this.textTokens += inputText + outputText;
 
-    const totalTokens = this.inputAudioTokens + this.outputAudioTokens + this.textTokens;
+    // Live context: input_tokens already holds the entire conversation, so it
+    // must NOT be summed across responses (that grew quadratically). The last
+    // response's input + output is the context the next turn starts from.
+    this.lastResponseContextTokens = inputTokens + outputTokens;
 
+    const snapshot = this.getTokenUsage();
     console.log('[RealtimeAPIClient] Token usage update', {
-      thisResponse: {
-        inputAudio,
-        outputAudio,
-        inputText,
-        outputText,
-        total: inputAudio + outputAudio + inputText + outputText
-      },
-      sessionTotal: {
-        inputAudio: this.inputAudioTokens,
-        outputAudio: this.outputAudioTokens,
-        text: this.textTokens,
-        total: totalTokens
-      }
+      thisResponse: { inputTokens, outputTokens, inputAudio, outputAudio, inputText, outputText },
+      context: snapshot.context,
+      billedTotal: snapshot.total,
     });
 
-    // Notify listener of updated token usage
-    this.events.emit('usage', {
-      inputAudio: this.inputAudioTokens,
-      outputAudio: this.outputAudioTokens,
-      text: this.textTokens,
-      total: totalTokens,
-    });
+    // Notify listener of updated usage, context occupancy included
+    this.events.emit('usage', this.getUsage());
   }
 
   /**
    * Get current token usage statistics
    */
-  getTokenUsage(): VoiceEngineTokenUsage {
+  getTokenUsage(): RealtimeTokenUsage {
     return {
       inputAudio: this.inputAudioTokens,
       outputAudio: this.outputAudioTokens,
       text: this.textTokens,
       total: this.inputAudioTokens + this.outputAudioTokens + this.textTokens,
+      context: this.lastResponseContextTokens,
+      model: this.model,
     };
   }
 
   /**
-   * VoiceEngine: engine-normalized session usage. Realtime fills only the token
-   * fields -- duration, context occupancy, backend usage, and the finalization
-   * flags stay undefined because this engine genuinely does not report them.
+   * VoiceEngine: engine-normalized session usage. Realtime fills the token
+   * fields and, once a response has been measured, context occupancy: the last
+   * response's input + output over the serving model's real window. Duration,
+   * backend usage, and the finalization flags stay undefined because this
+   * engine genuinely does not report them.
    */
   getUsage(): VoiceEngineUsage {
-    return this.getTokenUsage();
+    const usage = this.getTokenUsage();
+    // Nothing measured yet means occupancy is unknown, which is not zero.
+    if (usage.context <= 0) return usage;
+    return {
+      ...usage,
+      contextUsageRatio: Math.min(1, usage.context / getRealtimeContextWindowTokens(usage.model)),
+    };
   }
 
   /**

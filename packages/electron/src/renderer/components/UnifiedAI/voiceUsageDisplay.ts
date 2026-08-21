@@ -97,13 +97,15 @@ export function buildVoiceUsageDisplay(usage: VoiceTokenUsage | null | undefined
   const lines: VoiceUsageLine[] = [];
   let occupancy: number | null = null;
 
+  // Occupancy comes from the engine's own ratio, whichever engine measured it.
+  // We never derive one from a divisor of ours -- that derived number is
+  // exactly what this replaces.
+  if (isNumber(usage.contextUsageRatio)) {
+    occupancy = Math.min(1, Math.max(0, usage.contextUsageRatio));
+    lines.push({ id: 'context', label: 'Context', value: `${Math.round(occupancy * 100)}%` });
+  }
+
   if (engine === 'live') {
-    // Occupancy comes from the engine's own ratio. We never derive one from a
-    // divisor of ours -- that derived number is exactly what this replaces.
-    if (isNumber(usage.contextUsageRatio)) {
-      occupancy = Math.min(1, Math.max(0, usage.contextUsageRatio));
-      lines.push({ id: 'context', label: 'Context', value: `${Math.round(occupancy * 100)}%` });
-    }
     if (isNumber(usage.durationSeconds)) {
       lines.push({ id: 'duration', label: 'Voice time', value: formatVoiceDuration(usage.durationSeconds) });
       lines.push({ id: 'cost', label: 'Voice cost', value: formatLiveCost(usage.durationSeconds) });

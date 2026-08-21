@@ -59,8 +59,11 @@ export type VoiceId = 'alloy' | 'ash' | 'ballad' | 'coral' | 'echo' | 'sage' | '
 
 // Selectable OpenAI Realtime speech-to-speech models. gpt-realtime-2 is the
 // default (GPT-5-class reasoning, 128K context, more consistent voice rendering);
-// gpt-realtime is the fallback for accounts/regions without gpt-realtime-2 access.
-export type RealtimeModel = 'gpt-realtime-2' | 'gpt-realtime';
+// gpt-realtime is the fallback for accounts/regions without gpt-realtime-2 access
+// and has a 32K context window. The type and the per-model context windows live
+// in shared/realtimeModels.ts so main and renderer agree on both.
+import type { RealtimeModel } from '../../../shared/realtimeModels';
+export type { RealtimeModel };
 
 // Realtime reasoning-effort throttle (latency vs answer quality). Default 'low'
 // for a voice relay; higher = smarter but slower.

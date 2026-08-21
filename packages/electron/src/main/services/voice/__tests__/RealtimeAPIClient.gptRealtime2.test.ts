@@ -542,3 +542,75 @@ describe('queued-action approval messaging (countdown accuracy)', () => {
     expect(message.toLowerCase()).not.toContain('if you approve');
   });
 });
+
+describe('token usage meter (response.done usage)', () => {
+  const usage1 = {
+    total_tokens: 1_200,
+    input_tokens: 1_000,
+    output_tokens: 200,
+    input_token_details: { cached_tokens: 0, text_tokens: 900, audio_tokens: 100 },
+    output_token_details: { text_tokens: 50, audio_tokens: 150 },
+  };
+  // Second turn: input_tokens already carries the whole first turn.
+  const usage2 = {
+    total_tokens: 1_700,
+    input_tokens: 1_400,
+    output_tokens: 300,
+    input_token_details: { cached_tokens: 1_000, text_tokens: 1_200, audio_tokens: 200 },
+    output_token_details: { text_tokens: 60, audio_tokens: 240 },
+  };
+
+  it('reports the last turn as live context instead of summing every turn', () => {
+    const client = makeClient('gpt-realtime-2');
+    const updates: any[] = [];
+    client.setOnTokenUsage((u) => updates.push(u));
+
+    (client as any).handleServerEvent({ type: 'response.done', response: { id: 'r1', usage: usage1 } });
+    (client as any).handleServerEvent({ type: 'response.done', response: { id: 'r2', usage: usage2 } });
+
+    expect(updates).toHaveLength(2);
+    // Context is the latest response's input + output, never a running sum
+    // (summing input_tokens across turns grew quadratically).
+    expect(updates[0].context).toBe(1_200);
+    expect(updates[1].context).toBe(1_700);
+    // Billing counters do accumulate, and audio is counted once: from the
+    // audio_tokens detail, not on top of input_tokens which already holds it.
+    expect(updates[1].inputAudio).toBe(300);
+    expect(updates[1].outputAudio).toBe(390);
+    expect(updates[1].text).toBe(900 + 50 + 1_200 + 60);
+    expect(updates[1].total).toBe(1_200 + 1_700);
+    expect(updates[1].model).toBe('gpt-realtime-2');
+    // Occupancy is the engine's own measurement: the last turn over the serving
+    // model's real window, never the accumulated total.
+    expect(updates[1].contextUsageRatio).toBe(1_700 / 128_000);
+    expect(client.getUsage()).toEqual(updates[1]);
+  });
+
+  it('derives text tokens from the totals when the detail fields use the beta shape', () => {
+    const client = makeClient('gpt-realtime');
+    const updates: any[] = [];
+    client.setOnTokenUsage((u) => updates.push(u));
+
+    (client as any).handleServerEvent({
+      type: 'response.done',
+      response: {
+        id: 'r1',
+        usage: {
+          input_tokens: 500,
+          output_tokens: 100,
+          input_token_details: { audio: 80 },
+          output_token_details: { audio: 90 },
+        },
+      },
+    });
+
+    expect(updates[0]).toMatchObject({
+      inputAudio: 80,
+      outputAudio: 90,
+      text: 420 + 10,
+      total: 600,
+      context: 600,
+      model: 'gpt-realtime',
+    });
+  });
+});

@@ -89,6 +89,14 @@ describe('buildVoiceUsageDisplay', () => {
     expect(zero?.lines.map((l) => l.value)).toEqual(['0%', '0:00', '$0.00']);
   });
 
+  it('draws the ring for Realtime once the engine reports its own occupancy', () => {
+    // The ratio is the engine's measurement of the last turn against the model's
+    // real window. Accumulated tokens still never become occupancy.
+    const display = buildVoiceUsageDisplay({ engine: 'realtime', total: 90000, contextUsageRatio: 0.25 });
+    expect(display?.occupancy).toBe(0.25);
+    expect(display?.lines.map((l) => l.id)).toEqual(['context', 'tokens']);
+  });
+
   it('never derives Live occupancy from token counts', () => {
     const display = buildVoiceUsageDisplay({ engine: 'live', total: 14000, durationSeconds: 60 });
     expect(display?.occupancy).toBeNull();
