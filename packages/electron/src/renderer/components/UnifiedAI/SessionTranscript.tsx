@@ -1452,10 +1452,29 @@ const LocalSessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscrip
     onFileClick?.(resolveTranscriptClickPath(filePath, baseDir), location);
   }, [onFileClick, sessionWorktreePath, workspacePath]);
 
+  // Sidecars are a recent CLI feature, so most older sessions have none at all.
+  // Probe once per session and hide the control entirely when there is nothing
+  // to open, rather than offering a control that silently does nothing.
+  const [hasSubagentTranscripts, setHasSubagentTranscripts] = useState(false);
+  useEffect(() => {
+    if (provider !== 'claude-code-cli') {
+      setHasSubagentTranscripts(false);
+      return;
+    }
+    let cancelled = false;
+    void window.electronAPI.terminal
+      .hasClaudeCliSubagentTranscripts({
+        sessionId,
+        workspacePath,
+        cwd: sessionWorktreePath ?? workspacePath,
+      })
+      .then((has) => { if (!cancelled) setHasSubagentTranscripts(!!has); })
+      .catch(() => { if (!cancelled) setHasSubagentTranscripts(false); });
+    return () => { cancelled = true; };
+  }, [provider, sessionId, workspacePath, sessionWorktreePath]);
+
   // A sub-agent's transcript lives in a file named for its agent id, while the
   // node only knows the tool_use id that spawned it, so main does the lookup.
-  // Only the CLI provider writes these, hence the provider gate: without it the
-  // control would render for agents that have no transcript to open.
   const handleOpenSubagentTranscript = useCallback(async (spawnToolUseId: string) => {
     try {
       const resolved = await window.electronAPI.terminal.resolveClaudeCliSubagentTranscript({
@@ -2606,7 +2625,7 @@ const LocalSessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscrip
             hasPendingInteractivePrompt={hasPendingInteractivePrompt}
             onFileClick={handleFileClick}
             onOpenSubagentTranscript={
-              provider === 'claude-code-cli' ? handleOpenSubagentTranscript : undefined
+              hasSubagentTranscripts ? handleOpenSubagentTranscript : undefined
             }
             onOpenSession={handleOpenSession}
             hideSidebar={hideSidebar || mode === 'chat'}

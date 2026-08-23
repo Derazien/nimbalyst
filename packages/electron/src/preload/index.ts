@@ -2257,6 +2257,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
       cwd?: string;
       spawnToolUseId: string;
     }) => ipcRenderer.invoke('claude-cli:resolve-subagent-transcript', payload),
+    // Whether this session has sub-agent transcripts on disk, so the control is
+    // never offered where it cannot work.
+    hasClaudeCliSubagentTranscripts: (payload: {
+      sessionId: string;
+      workspacePath: string;
+      cwd?: string;
+    }) => ipcRenderer.invoke('claude-cli:has-subagent-transcripts', payload),
     isActive: (terminalId: string) =>
       ipcRenderer.invoke('terminal:is-active', terminalId),
     write: (terminalId: string, data: string) =>

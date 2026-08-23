@@ -14,11 +14,16 @@ import type { ClaudeCliDocumentContext } from '../services/ai/claudeCliPromptCom
 import type { ChatAttachment } from '@nimbalyst/runtime/ai/server/types';
 import { ShellDetector } from '../services/ShellDetector';
 import { safeHandle } from '../utils/ipcRegistry';
-import { resolveSubagentTranscript } from '../services/ai/claudeCliSubagentTranscriptPath';
+import {
+  collectSpawnsFromStoredRows,
+  hasSubagentSidecars,
+  resolveSubagentTranscript,
+} from '../services/ai/claudeCliSubagentTranscriptPath';
 import { nodeSubagentSidecarFs } from '../services/ai/claudeCliSubagentSidecarReader';
 import { resolveClaudeCliSubagentsDir } from '../services/ai/claudeCliJsonlPath';
 import { getSubagentSpawns } from '../services/ai/claudeCliSubAgentTracker';
 import { resolveClaudeConfigDir } from '@nimbalyst/runtime/ai/server/providers/claudeCode/claudeConfigDir';
+import { AgentMessagesRepository } from '@nimbalyst/runtime/storage/repositories/AgentMessagesRepository';
 import { ulid } from 'ulid';
 import { AnalyticsService } from '../services/analytics/AnalyticsService';
 import {
@@ -472,8 +477,39 @@ export function registerTerminalHandlers(): void {
           sessionId: payload.sessionId,
         }),
         spawnToolUseId: payload.spawnToolUseId,
-        spawns: getSubagentSpawns(payload.sessionId),
+        // The in-memory registry only covers the current observation session, so
+        // after a restart an in-process teammate has no link to its spawn. Recover
+        // the missing ones from rows already in the database.
+        spawns: [
+          ...getSubagentSpawns(payload.sessionId),
+          ...collectSpawnsFromStoredRows(
+            await AgentMessagesRepository.list(payload.sessionId, { includeHidden: true }),
+          ),
+        ],
       });
+    },
+  );
+
+  /**
+   * Does this session have sub-agent sidecars at all?
+   *
+   * Sidecars are a recent CLI feature: of 56 sessions in one real project
+   * directory only three had a `subagents/` directory. The renderer gates the
+   * open-transcript control on this so it never appears on an older session's
+   * agent nodes and then does nothing when clicked.
+   */
+  safeHandle(
+    'claude-cli:has-subagent-transcripts',
+    async (_event, payload: { sessionId: string; workspacePath: string; cwd?: string }) => {
+      if (!payload?.sessionId || !payload?.workspacePath) return false;
+      return hasSubagentSidecars(
+        nodeSubagentSidecarFs(),
+        resolveClaudeCliSubagentsDir({
+          configDir: resolveClaudeConfigDir(),
+          cwd: payload.cwd || payload.workspacePath,
+          sessionId: payload.sessionId,
+        }),
+      );
     },
   );
 

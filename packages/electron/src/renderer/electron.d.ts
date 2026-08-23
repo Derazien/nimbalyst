@@ -1198,6 +1198,12 @@ interface ElectronAPI {
       cwd?: string;
       spawnToolUseId: string;
     }) => Promise<{ filePath: string; agentId: string; agentType?: string; description?: string } | null>;
+    /** Whether this session has sub-agent transcripts on disk. */
+    hasClaudeCliSubagentTranscripts: (payload: {
+      sessionId: string;
+      workspacePath: string;
+      cwd?: string;
+    }) => Promise<boolean>;
     isActive: (terminalId: string) => Promise<boolean>;
     write: (terminalId: string, data: string) => Promise<void>;
     resize: (terminalId: string, cols: number, rows: number) => Promise<void>;
