@@ -7,7 +7,9 @@ import {
   getSideNotes,
   isAwaitingSideAnswer,
   noteSideQuestion,
+  looksLikeSideAnswer,
   parseSideQuestion,
+  MAX_SIDE_ANSWER_CHARS,
 } from '../claudeCliSideQuestion';
 
 const SID = 'session-1';
@@ -52,7 +54,8 @@ describe('side note lifecycle', () => {
     noteSideQuestion(SID, parseSideQuestion('/btw which model?', idle)!, 1000);
     expect(isAwaitingSideAnswer(SID)).toBe(true);
 
-    const note = claimSideAnswer(SID, 'Opus 5.', 2000);
+    const result = claimSideAnswer(SID, { text: 'Opus 5.', hasToolCalls: false }, 2000);
+    const note = result.outcome === 'claimed' ? result.note : null;
 
     expect(note?.question).toBe('which model?');
     expect(note?.answer).toBe('Opus 5.');
@@ -62,9 +65,9 @@ describe('side note lifecycle', () => {
 
   it('claims only one turn, so the turn after the answer is left alone', () => {
     noteSideQuestion(SID, parseSideQuestion('/btw one', idle)!, 1000);
-    claimSideAnswer(SID, 'answered', 2000);
+    claimSideAnswer(SID, { text: 'answered', hasToolCalls: false }, 2000);
 
-    expect(claimSideAnswer(SID, 'a normal lead turn', 3000)).toBeNull();
+    expect(claimSideAnswer(SID, { text: 'a normal lead turn', hasToolCalls: false }, 3000).outcome).toBe('none');
   });
 
   it('never claims a turn for a question asked while busy', () => {
@@ -74,14 +77,15 @@ describe('side note lifecycle', () => {
 
     expect(note.claimingAnswer).toBe(false);
     expect(isAwaitingSideAnswer(SID)).toBe(false);
-    expect(claimSideAnswer(SID, 'lead output', 2000)).toBeNull();
+    expect(claimSideAnswer(SID, { text: 'lead output', hasToolCalls: false }, 2000).outcome).toBe('none');
   });
 
   it('lets a second question supersede an unanswered first rather than racing it', () => {
     noteSideQuestion(SID, parseSideQuestion('/btw first', idle)!, 1000);
     noteSideQuestion(SID, parseSideQuestion('/btw second', idle)!, 1100);
 
-    const claimed = claimSideAnswer(SID, 'the answer', 2000);
+    const result = claimSideAnswer(SID, { text: 'the answer', hasToolCalls: false }, 2000);
+    const claimed = result.outcome === 'claimed' ? result.note : null;
 
     expect(claimed?.question).toBe('second');
     expect(getSideNotes(SID).map(n => n.question)).toEqual(['first', 'second']);
@@ -93,7 +97,7 @@ describe('side note lifecycle', () => {
     noteSideQuestion(SID, parseSideQuestion('/btw second', busy)!, 1100);
 
     expect(isAwaitingSideAnswer(SID)).toBe(false);
-    expect(claimSideAnswer(SID, 'lead output', 2000)).toBeNull();
+    expect(claimSideAnswer(SID, { text: 'lead output', hasToolCalls: false }, 2000).outcome).toBe('none');
   });
 
   it('abandons a pending claim so a failed question cannot swallow a later turn', () => {
@@ -101,7 +105,7 @@ describe('side note lifecycle', () => {
     abandonPendingSideAnswer(SID);
 
     expect(isAwaitingSideAnswer(SID)).toBe(false);
-    expect(claimSideAnswer(SID, 'much later lead turn', 9000)).toBeNull();
+    expect(claimSideAnswer(SID, { text: 'much later lead turn', hasToolCalls: false }, 9000).outcome).toBe('none');
     expect(getSideNotes(SID)[0].answer).toBeUndefined();
   });
 
@@ -111,5 +115,72 @@ describe('side note lifecycle', () => {
 
     clearSideQuestions(SID);
     expect(getSideNotes(SID)).toEqual([]);
+  });
+});
+
+describe('the side-answer guard', () => {
+  beforeEach(() => clearSideQuestions(SID));
+
+  const ask = () => noteSideQuestion(SID, parseSideQuestion('/btw which model?', idle)!, 1000);
+
+  it('declines a turn that used tools, and leaves it in the conversation', () => {
+    // A side question asks something; it does not send the agent off to work.
+    // This is the shape that would otherwise eat a lead turn.
+    ask();
+    const result = claimSideAnswer(SID, { text: 'Editing the file now.', hasToolCalls: true }, 2000);
+
+    expect(result.outcome).toBe('declined');
+    expect(result.outcome === 'declined' && result.note.declinedReason).toBe('did-work');
+    expect(result.outcome === 'declined' && result.note.answer).toBeUndefined();
+  });
+
+  it('declines a reply far longer than an answer to a question', () => {
+    ask();
+    const long = 'x'.repeat(MAX_SIDE_ANSWER_CHARS + 1);
+    const result = claimSideAnswer(SID, { text: long, hasToolCalls: false }, 2000);
+
+    expect(result.outcome === 'declined' && result.note.declinedReason).toBe('too-long');
+  });
+
+  it('declines a reply that arrives long after the question', () => {
+    ask();
+    const result = claimSideAnswer(SID, { text: 'late', hasToolCalls: false }, 1000 + 121_000);
+
+    expect(result.outcome === 'declined' && result.note.declinedReason).toBe('too-late');
+  });
+
+  it('lowers the latch on a decline, so it cannot then take the NEXT lead turn', () => {
+    // Leaving it armed after rejecting one turn just points it at the next one,
+    // which is the exact failure this guard exists to prevent.
+    ask();
+    claimSideAnswer(SID, { text: 'working', hasToolCalls: true }, 2000);
+
+    expect(isAwaitingSideAnswer(SID)).toBe(false);
+    expect(claimSideAnswer(SID, { text: 'Opus 5.', hasToolCalls: false }, 3000).outcome).toBe('none');
+  });
+
+  it('still claims a short plain prompt reply', () => {
+    ask();
+    const result = claimSideAnswer(SID, { text: 'Opus 5.', hasToolCalls: false }, 2000);
+
+    expect(result.outcome).toBe('claimed');
+    expect(result.outcome === 'claimed' && result.note.answer).toBe('Opus 5.');
+  });
+});
+
+describe('looksLikeSideAnswer', () => {
+  const base = { text: 'short', hasToolCalls: false, now: 1000, askedAt: 1000 };
+
+  it('accepts a short, plain, prompt reply', () => {
+    expect(looksLikeSideAnswer(base)).toEqual({ ok: true });
+  });
+
+  it('any single clause failing is enough to decline', () => {
+    // Biased towards declining: leaving a side answer in the conversation is a
+    // shrug, claiming a lead turn deletes the lead's output.
+    expect(looksLikeSideAnswer({ ...base, hasToolCalls: true })).toEqual({ ok: false, reason: 'did-work' });
+    expect(looksLikeSideAnswer({ ...base, text: 'x'.repeat(MAX_SIDE_ANSWER_CHARS + 1) }))
+      .toEqual({ ok: false, reason: 'too-long' });
+    expect(looksLikeSideAnswer({ ...base, now: 1000 + 200_000 })).toEqual({ ok: false, reason: 'too-late' });
   });
 });

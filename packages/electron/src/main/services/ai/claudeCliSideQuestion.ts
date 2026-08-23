@@ -71,7 +71,40 @@ export interface SideNote {
   answeredAt?: number;
   /** False when a turn was running, so the answer stays in the transcript. */
   claimingAnswer: boolean;
+  /**
+   * Set when a turn arrived while this note was waiting but did not look like a
+   * side answer, so it was left in the conversation. The strip says so.
+   */
+  declinedReason?: 'did-work' | 'too-long' | 'too-late';
 }
+
+/**
+ * A side answer is a short, plain reply that arrives promptly: no tool calls, not
+ * far longer than an answer to a question, and not long after it was asked.
+ *
+ * This is a guard, not a classifier. The cost of the two mistakes is wildly
+ * asymmetric: wrongly leaving a side answer in the conversation is a shrug, while
+ * wrongly claiming a lead turn deletes the lead's output into a side panel. So
+ * every clause is biased towards declining, and any single one declining is
+ * enough.
+ */
+export function looksLikeSideAnswer(turn: {
+  text: string;
+  hasToolCalls: boolean;
+  now: number;
+  askedAt: number;
+}): { ok: true } | { ok: false; reason: NonNullable<SideNote['declinedReason']> } {
+  // A side question asks something; it does not send the agent off to work.
+  if (turn.hasToolCalls) return { ok: false, reason: 'did-work' };
+  if (turn.text.length > MAX_SIDE_ANSWER_CHARS) return { ok: false, reason: 'too-long' };
+  if (turn.now - turn.askedAt > MAX_SIDE_ANSWER_WAIT_MS) return { ok: false, reason: 'too-late' };
+  return { ok: true };
+}
+
+/** Generous: a side answer can be a paragraph, but not a work report. */
+export const MAX_SIDE_ANSWER_CHARS = 2000;
+/** The CLI answers a side question promptly; beyond this it is somebody else's turn. */
+export const MAX_SIDE_ANSWER_WAIT_MS = 120_000;
 
 interface SessionState {
   notes: SideNote[];
@@ -121,18 +154,42 @@ export function noteSideQuestion(
  * ever called for an UNATTRIBUTED turn: a sub-agent's turn is never a side
  * answer, and claiming one would hide that agent's work.
  */
+export type SideAnswerOutcome =
+  /** Nothing was waiting. Persist the turn normally. */
+  | { outcome: 'none' }
+  /** This turn is the answer. Do not persist it; show the note. */
+  | { outcome: 'claimed'; note: SideNote }
+  /** Something was waiting but this turn is not it. Persist it AND show the note. */
+  | { outcome: 'declined'; note: SideNote };
+
 export function claimSideAnswer(
   sessionId: string,
-  answerText: string,
+  turn: { text: string; hasToolCalls: boolean },
   now: number,
-): SideNote | null {
+): SideAnswerOutcome {
   const state = bySession.get(sessionId);
   const pending = state?.awaitingAnswer;
-  if (!state || !pending) return null;
+  if (!state || !pending) return { outcome: 'none' };
+
+  const verdict = looksLikeSideAnswer({
+    text: turn.text,
+    hasToolCalls: turn.hasToolCalls,
+    now,
+    askedAt: pending.askedAt,
+  });
+
+  // Either way the latch comes down. Leaving it armed after a rejection would
+  // just point it at the NEXT lead turn, which is the failure this guards.
   state.awaitingAnswer = null;
-  pending.answer = answerText;
+
+  if (!verdict.ok) {
+    pending.declinedReason = verdict.reason;
+    return { outcome: 'declined', note: pending };
+  }
+
+  pending.answer = turn.text;
   pending.answeredAt = now;
-  return pending;
+  return { outcome: 'claimed', note: pending };
 }
 
 /** Whether a turn is currently expected to be a side answer. */

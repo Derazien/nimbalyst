@@ -22,6 +22,11 @@ export interface SideNote {
    * transcript instead.
    */
   claimingAnswer: boolean;
+  /**
+   * Set when a turn arrived while this note waited but did not look like a side
+   * answer, so it was left in the conversation rather than moved here.
+   */
+  declinedReason?: 'did-work' | 'too-long' | 'too-late';
 }
 
 /** Per-session side notes, oldest first. Written only by the IPC listener. */

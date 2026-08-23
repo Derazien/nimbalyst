@@ -58,6 +58,16 @@ export const SideNotesStrip: React.FC<SideNotesStripProps> = ({ sessionId }) => 
                 <span className="side-notes-strip-answer whitespace-pre-wrap text-[var(--nim-text-muted)]">
                   {note.answer}
                 </span>
+              ) : note.declinedReason ? (
+                // The reply that arrived did not look like a side answer, so it
+                // was left where it was rather than moved here on a guess.
+                <span className="side-notes-strip-declined text-[var(--nim-text-muted)] italic">
+                  {note.declinedReason === 'did-work'
+                    ? 'The reply used tools, so it stayed in the conversation.'
+                    : note.declinedReason === 'too-long'
+                      ? 'The reply was too long to be a side answer, so it stayed in the conversation.'
+                      : 'No answer arrived in time, so anything since stayed in the conversation.'}
+                </span>
               ) : note.claimingAnswer ? (
                 <span className="side-notes-strip-waiting text-[var(--nim-text-muted)] italic">
                   Waiting for the answer.
