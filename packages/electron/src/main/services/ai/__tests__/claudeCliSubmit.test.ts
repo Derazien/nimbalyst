@@ -315,3 +315,64 @@ describe('submitClaudeCliPrompt', () => {
     });
   });
 });
+
+describe('submitClaudeCliPrompt /btw side questions', () => {
+  it('records a side question instead of writing a user turn', async () => {
+    // The whole point of /btw is that the exchange stays out of the
+    // conversation; logging the question would defeat it before the answer
+    // even arrives.
+    const { deps, logUserPrompt, writes } = harness();
+    const onSideQuestion = vi.fn();
+
+    await submitClaudeCliPrompt(
+      { sessionId: 's1', workspacePath: '/w', prompt: '/btw which model is this?' },
+      { ...deps, onSideQuestion, hasTurnStarted: () => true },
+    );
+
+    expect(logUserPrompt).not.toHaveBeenCalled();
+    expect(onSideQuestion).toHaveBeenCalledWith({
+      sessionId: 's1',
+      workspacePath: '/w',
+      prompt: 'which model is this?',
+      sessionWasIdle: false,
+    });
+    // Still typed into the CLI: it is a real command, not something we swallow.
+    expect(writes.some(([, data]) => data.includes('btw'))).toBe(true);
+  });
+
+  it('marks the session idle so the answer can be claimed', async () => {
+    const { deps } = harness();
+    const onSideQuestion = vi.fn();
+
+    await submitClaudeCliPrompt(
+      { sessionId: 's1', workspacePath: '/w', prompt: '/btw quick one' },
+      { ...deps, onSideQuestion, hasTurnStarted: () => false },
+    );
+
+    expect(onSideQuestion.mock.calls[0][0].sessionWasIdle).toBe(true);
+  });
+
+  it('leaves an ordinary prompt alone', async () => {
+    const { deps, logUserPrompt } = harness();
+    const onSideQuestion = vi.fn();
+
+    await submitClaudeCliPrompt(
+      { sessionId: 's1', workspacePath: '/w', prompt: 'do the thing' },
+      { ...deps, onSideQuestion },
+    );
+
+    expect(onSideQuestion).not.toHaveBeenCalled();
+    expect(logUserPrompt).toHaveBeenCalledOnce();
+  });
+
+  it('treats /btw as ordinary text when the host supplies no side-question sink', async () => {
+    const { deps, logUserPrompt } = harness();
+
+    await submitClaudeCliPrompt(
+      { sessionId: 's1', workspacePath: '/w', prompt: '/btw no sink here' },
+      deps,
+    );
+
+    expect(logUserPrompt).toHaveBeenCalledOnce();
+  });
+});

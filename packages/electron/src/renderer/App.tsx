@@ -122,6 +122,7 @@ import { initAppCommandListeners } from './store/listeners/appCommandListeners';
 import { initClaudeUsageListeners } from './store/listeners/claudeUsageListeners';
 import { initPromptSuggestionListeners } from './store/listeners/promptSuggestionListeners';
 import { initClaudeCliTerminalListeners } from './store/listeners/claudeCliTerminalListeners';
+import { initClaudeCliSideNoteListeners } from './store/listeners/claudeCliSideNoteListeners';
 import { initWindowFocusListeners } from './store/listeners/windowFocusListeners';
 import { initCodexUsageListeners } from './store/listeners/codexUsageListeners';
 import { initGeminiUsageListeners } from './store/listeners/geminiUsageListeners';
@@ -429,6 +430,7 @@ export default function App() {
     const cleanupClaude = initClaudeUsageListeners();
     const cleanupPromptSuggestion = initPromptSuggestionListeners();
     const cleanupClaudeCliTerminal = initClaudeCliTerminalListeners();
+    const cleanupClaudeCliSideNotes = initClaudeCliSideNoteListeners();
     const cleanupWindowFocus = initWindowFocusListeners();
     const cleanupCodex = initCodexUsageListeners();
     const cleanupGemini = initGeminiUsageListeners();
@@ -483,6 +485,7 @@ export default function App() {
       cleanupClaude?.();
       cleanupPromptSuggestion?.();
       cleanupClaudeCliTerminal?.();
+      cleanupClaudeCliSideNotes?.();
       cleanupWindowFocus?.();
       cleanupCodex?.();
       cleanupGemini?.();

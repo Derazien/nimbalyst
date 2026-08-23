@@ -55,6 +55,7 @@ import {
 } from './claudeCliSubagentSidecarReader';
 import { createAttributedTurnQueue, type AttributedTurnQueue } from './claudeCliAttributedTurnQueue';
 import { resolveClaudeCliSubagentsDir } from './claudeCliJsonlPath';
+import { broadcastSideNote, claimSideAnswer, clearSideQuestions } from './claudeCliSideQuestion';
 import { resolveClaudeConfigDir } from '@nimbalyst/runtime/ai/server/providers/claudeCode/claudeConfigDir';
 import { trackClaudeCliFileEdits } from './claudeCliFileTracking';
 import { sessionFileTracker } from '../SessionFileTracker';
@@ -245,6 +246,10 @@ export async function startClaudeCliProxyObservation(opts: {
     console.warn(`[ClaudeCliObservation] not following non-loopback ANTHROPIC_BASE_URL from Claude settings: ${ignoredClaudeSettingsBaseUrl}`);
   }
 
+  // Turns claimed as a `/btw` answer, so onPersisted can tell them from a real
+  // lead turn (they produced no row and are not the session's answer).
+  const claimedSideAnswerIds = new Set<string>();
+
   // Serial so the row ids the transcript is ordered by follow observation order,
   // even though attribution costs a variable sidecar read per turn.
   // Annotated because the resolver closes over the queue to read its lead ids.
@@ -260,13 +265,28 @@ export async function startClaudeCliProxyObservation(opts: {
         // Keeps a fork from claiming the lead turn it forked from.
         leadMessageIds: turnQueue.leadMessageIds(),
       }),
-    persist: (turn, parentToolUseId) =>
-      persistAssistantTurn(sessionId, workspacePath, turn.message, parentToolUseId),
+    persist: async (turn, parentToolUseId) => {
+      // A pending `/btw` answer never becomes a transcript row. Only an
+      // UNATTRIBUTED turn can be one: a sub-agent's turn is never the answer,
+      // and claiming it would hide that agent's work.
+      if (!parentToolUseId) {
+        const note = claimSideAnswer(sessionId, extractAssistantText(turn.message), Date.now());
+        if (note) {
+          claimedSideAnswerIds.add(turn.messageId);
+          broadcastSideNote(findWindowByWorkspace, sessionId, workspacePath, note);
+          return;
+        }
+      }
+      await persistAssistantTurn(sessionId, workspacePath, turn.message, parentToolUseId);
+    },
     onPersisted: (turn, parentToolUseId) => {
       // Only a lead turn counts as visible output for the failure-surfacing
       // policy, and only a lead turn belongs in the "Response Ready" body, so a
       // sub-agent's text and tools do not surface as the session's answer.
       if (parentToolUseId) return;
+      // A claimed side answer produced no row and is not the session's answer
+      // either, so it must not drive the completion notification.
+      if (claimedSideAnswerIds.delete(turn.messageId)) return;
       errorSurfacePolicy.noteAssistantMessage(true);
       const toolNames = turn.message.content
         .filter((b): b is Extract<typeof b, { type: 'tool_use' }> => b.type === 'tool_use')
@@ -380,6 +400,7 @@ export async function startClaudeCliProxyObservation(opts: {
       clearSeenToolResultIds(sessionId);
       clearClaudeCliTurnSummary(sessionId);
       clearSubAgentTracking(sessionId);
+      clearSideQuestions(sessionId);
       clearClaudeCliObserved1mSupport(sessionId);
     },
   };

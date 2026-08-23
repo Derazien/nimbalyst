@@ -17,6 +17,7 @@
  */
 
 import type { ChatAttachment, PromptProvenance } from '@nimbalyst/runtime/ai/server/types';
+import { parseSideQuestion } from './claudeCliSideQuestion';
 import {
   composeClaudeCliPtySubmission,
   type ClaudeCliDocumentContext,
@@ -93,6 +94,17 @@ export interface SubmitClaudeCliPromptDeps {
    * is what the pure unit tests and any caller without a live PID do.
    */
   hasTurnStarted?: (sessionId: string) => boolean | Promise<boolean>;
+  /**
+   * Record a `/btw` side question instead of logging it as a user turn. Omit to
+   * treat `/btw` as ordinary text, which is what it was before.
+   */
+  onSideQuestion?: (input: {
+    sessionId: string;
+    workspacePath: string;
+    prompt: string;
+    /** False when a turn was already running, so the CLI queued the command. */
+    sessionWasIdle: boolean;
+  }) => void;
 }
 
 /** How long to wait between checks that the turn actually started. */
@@ -151,6 +163,16 @@ export async function submitClaudeCliPrompt(
 ): Promise<{ submitted: boolean }> {
   const prompt = (input.prompt ?? '').trim();
   const attachments = input.attachments ?? [];
+
+  // A `/btw` side question must not enter the conversation, so it is recorded as
+  // a side note rather than a user turn. Whether a turn is ALREADY running is
+  // read before we type: the CLI queues a command typed mid-turn, which decides
+  // whether its answer can be told apart from the lead's output later.
+  const sideQuestion = deps.onSideQuestion
+    ? parseSideQuestion(prompt, {
+        sessionIsBusy: deps.hasTurnStarted ? !!(await deps.hasTurnStarted(input.sessionId)) : false,
+      })
+    : null;
 
   // NIM-819: the claude TUI only opens its slash-command/memory mode when
   // / or # arrives as the FIRST interactive keystroke on an empty prompt — a
@@ -211,15 +233,26 @@ export async function submitClaudeCliPrompt(
     await confirmEnterStartedTurn(input.sessionId, deps);
   }
 
-  // Log the CLEAN typed prompt (+ attachment chips), NOT the path-augmented PTY
-  // line. Best-effort: the CLI turn already started.
-  await deps.logUserPrompt({
-    sessionId: input.sessionId,
-    workspacePath: input.workspacePath,
-    prompt,
-    attachments,
-    promptProvenance: input.documentContext?.promptProvenance,
-  });
+  if (sideQuestion) {
+    // No user row: the whole point of `/btw` is that the exchange stays out of
+    // the conversation, and the CLI keeps it out of its own history too.
+    deps.onSideQuestion?.({
+      sessionId: input.sessionId,
+      workspacePath: input.workspacePath,
+      prompt: sideQuestion.question,
+      sessionWasIdle: sideQuestion.canClaimAnswer,
+    });
+  } else {
+    // Log the CLEAN typed prompt (+ attachment chips), NOT the path-augmented PTY
+    // line. Best-effort: the CLI turn already started.
+    await deps.logUserPrompt({
+      sessionId: input.sessionId,
+      workspacePath: input.workspacePath,
+      prompt,
+      attachments,
+      promptProvenance: input.documentContext?.promptProvenance,
+    });
+  }
 
   deps.sendAnalytics({
     messageLength: prompt.length,

@@ -46,6 +46,7 @@ import { recordCodexActivity } from '../../store/listeners/codexUsageListeners';
 import { PendingReviewBanner } from '../AIChat/PendingReviewBanner';
 import { WakeupBanner } from '../AIChat/WakeupBanner';
 import { McpLockdownBanner } from '../AIChat/McpLockdownBanner';
+import { SideNotesStrip } from './SideNotesStrip';
 import type { AIMode } from './ModeTag';
 // Note: ExitPlanMode, AskUserQuestion, and ToolPermission use inline widgets via InteractiveWidgetHost (in runtime package)
 import { SlashCommandSuggestions } from './SlashCommandSuggestions';
@@ -2763,6 +2764,12 @@ const LocalSessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscrip
             />
           </div>
         </div>
+      )}
+
+      {/* Side notes have no transcript rows by design, so this is the only place
+          a /btw answer can appear. Renders nothing until one is asked. */}
+      {provider === 'claude-code-cli' && !collapseTranscript && (
+        <SideNotesStrip sessionId={sessionId} />
       )}
 
       {/* Wakeup + pending review banners - only in chat mode, hidden when collapsed */}

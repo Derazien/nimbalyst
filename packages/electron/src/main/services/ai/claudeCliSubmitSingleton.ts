@@ -8,6 +8,8 @@ import { claimExternalSessionForLocalExecution } from '../externalSessions/Exter
  */
 
 import type { ChatAttachment, PromptProvenance } from '@nimbalyst/runtime/ai/server/types';
+import { broadcastSideNote, noteSideQuestion } from './claudeCliSideQuestion';
+import { findWindowByWorkspace } from '../../window/WindowManager';
 import { getTerminalSessionManager } from '../TerminalSessionManager';
 import { AnalyticsService } from '../analytics/AnalyticsService';
 import { bucketMessageLength } from './aiServiceUtils';
@@ -73,6 +75,11 @@ export async function submitClaudeCliPromptProduction(
     // treated as started, so a genuinely stranded prompt still gets a retry.
     hasTurnStarted: async (sessionId: string) =>
       (await manager.getClaudeCliLiveTurnState(sessionId)) === 'running',
+    // `/btw` is a side question: recorded as a side note, never as a user turn.
+    onSideQuestion: ({ sessionId, workspacePath, prompt, sessionWasIdle }) => {
+      const note = noteSideQuestion(sessionId, { question: prompt, canClaimAnswer: sessionWasIdle }, Date.now());
+      broadcastSideNote(findWindowByWorkspace, sessionId, workspacePath, note);
+    },
   });
 
   // The CLI never runs through MessageStreamingHandler, so its human turns
