@@ -67,13 +67,37 @@ function toRawBlock(block: AssembledContentBlock): RawAssistantBlock {
   }
 }
 
+/** Optional attribution for a turn a sub-agent produced rather than the lead. */
+export interface BuildAssistantRawContentOptions {
+  /**
+   * The `Agent`/`Task` tool_use id that spawned the agent this turn belongs to.
+   *
+   * The proxy wire carries no such field: the CLI runs sub-agents in-process and
+   * their `/v1/messages` calls are indistinguishable per-request from the lead's.
+   * `claudeCliSubagentIndex` recovers it by joining the observed Anthropic message
+   * id against the CLI's per-agent sidecar. Setting it here is the entire reason
+   * the sub-agent tree renders on this path: `ClaudeCodeRawParser` already nests
+   * every event carrying `parent_tool_use_id` under the matching subagent node.
+   *
+   * Omit for a lead turn. Never guess it: a wrong value nests the lead's own
+   * output under an agent.
+   */
+  parentToolUseId?: string;
+}
+
 /**
  * Serialize an assembled assistant turn into the `ai_agent_messages.content`
  * JSON `ClaudeCodeRawParser` projects (mirrors the SDK `type:'assistant'` row).
  */
-export function buildAssistantRawContent(msg: AssembledAssistantMessage): string {
+export function buildAssistantRawContent(
+  msg: AssembledAssistantMessage,
+  options: BuildAssistantRawContentOptions = {},
+): string {
   return JSON.stringify({
     type: "assistant",
+    // Only present on an attributed sub-agent turn, so a lead row stays byte
+    // identical to what this bridge has always written.
+    ...(options.parentToolUseId ? { parent_tool_use_id: options.parentToolUseId } : {}),
     message: {
       id: msg.id,
       role: "assistant",
