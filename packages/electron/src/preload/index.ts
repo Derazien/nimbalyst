@@ -2249,6 +2249,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // SIGINT, re-checking the PID turn state between steps.
     interruptClaudeCli: (sessionId: string) =>
       ipcRenderer.invoke('claude-cli:interrupt', sessionId),
+    // Locate a sub-agent's own transcript from the tool_use id that spawned it,
+    // so its node can offer to open it. Null when there is none on disk.
+    resolveClaudeCliSubagentTranscript: (payload: {
+      sessionId: string;
+      workspacePath: string;
+      cwd?: string;
+      spawnToolUseId: string;
+    }) => ipcRenderer.invoke('claude-cli:resolve-subagent-transcript', payload),
     isActive: (terminalId: string) =>
       ipcRenderer.invoke('terminal:is-active', terminalId),
     write: (terminalId: string, data: string) =>

@@ -114,6 +114,12 @@ export interface ClaudeCliSubagentIndex {
   /** The `Agent`/`Task` tool_use id that spawned this agent, if resolvable. */
   spawnToolUseIdForAgentId(agentId: string): string | undefined;
   /**
+   * The agent a spawning tool_use id produced, i.e. the inverse of
+   * `spawnToolUseIdForAgentId`. This is what turns a transcript node (keyed by
+   * tool_use id) back into a sidecar file name.
+   */
+  agentIdForSpawnToolUseId(toolUseId: string): string | undefined;
+  /**
    * The value to write as `parent_tool_use_id` on an observed turn, which is what
    * `ClaudeCodeRawParser` needs to nest it under its agent. Undefined means the
    * turn is either the lead's or not yet attributable.
@@ -262,10 +268,16 @@ export function buildClaudeCliSubagentIndex(input: {
     if (viaOutputFile) spawnByAgentId.set(agentId, viaOutputFile);
   }
 
+  const agentBySpawn = new Map<string, string>();
+  for (const [agentId, toolUseId] of spawnByAgentId) {
+    if (!agentBySpawn.has(toolUseId)) agentBySpawn.set(toolUseId, agentId);
+  }
+
   return {
     agentCount: metaByAgentId.size,
     agentIdForMessageId: (messageId) => agentIdByMessageId.get(messageId),
     spawnToolUseIdForAgentId: (agentId) => spawnByAgentId.get(agentId),
+    agentIdForSpawnToolUseId: (toolUseId) => agentBySpawn.get(toolUseId),
     parentToolUseIdForMessageId: (messageId) => {
       const agentId = agentIdByMessageId.get(messageId);
       return agentId ? spawnByAgentId.get(agentId) : undefined;

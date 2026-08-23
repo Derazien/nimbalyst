@@ -48,6 +48,8 @@ interface AgentTranscriptPanelProps {
   initialSettings?: TranscriptSettings;
   /** `location` is set when the clicked link carried a `:line[:col]` suffix. */
   onFileClick?: (filePath: string, location?: TranscriptFileLocation) => void;
+  /** Optional: open a sub-agent's own transcript, keyed by its spawning tool_use id. */
+  onOpenSubagentTranscript?: (spawnToolUseId: string) => void;
   /** Optional: Navigate to a session by ID (for @@session reference links) */
   onOpenSession?: (sessionId: string) => void;
   hideSidebar?: boolean;  // Hide the prompts/files sidebar
@@ -147,6 +149,7 @@ const AgentTranscriptPanelComponent = React.forwardRef<
   showSettings,
   initialSettings,
   onFileClick,
+  onOpenSubagentTranscript,
   onOpenSession,
   hideSidebar = false,
   showFloatingActions,
@@ -333,6 +336,7 @@ const AgentTranscriptPanelComponent = React.forwardRef<
           hideEmptyHelp={hideEmptyHelp}
           readFile={readFile}
           onOpenFile={onFileClick}
+          onOpenSubagentTranscript={onOpenSubagentTranscript}
           onOpenSession={onOpenSession}
           onCompact={onCompact}
           promptAdditions={promptAdditions}

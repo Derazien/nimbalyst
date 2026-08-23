@@ -28,6 +28,8 @@ export interface TranscriptToolShared {
   workspacePath?: string;
   readFile?: (filePath: string) => Promise<{ success: boolean; content?: string; error?: string }>;
   onOpenFile?: (filePath: string, location?: TranscriptFileLocation) => void;
+  /** Open a sub-agent's own transcript by the tool_use id that spawned it; hidden when absent. */
+  onOpenSubagentTranscript?: (spawnToolUseId: string) => void;
   onOpenSession?: (sessionId: string) => void;
   renderEmbeddedFile?: (params: { filePath: string; defaultExpanded?: boolean }) => React.ReactNode;
   canEmbedFile?: (filePath: string) => boolean;
@@ -584,7 +586,7 @@ export const TranscriptToolCard = React.memo(function TranscriptToolCard({
   // extension enable/disable must swap widgets without a session reload.
   useTranscriptToolWidgetRegistryVersion();
 
-  const { sessionId, workspacePath, readFile, onOpenFile, onOpenSession, renderEmbeddedFile, canEmbedFile, loadToolCallDiffs, onToggleTool } = shared;
+  const { sessionId, workspacePath, readFile, onOpenFile, onOpenSubagentTranscript, onOpenSession, renderEmbeddedFile, canEmbedFile, loadToolCallDiffs, onToggleTool } = shared;
   const tool = toolMsg.toolCall;
   const toolId = getToolExpandId(toolMsg, toolIndex);
   const onToggle = useCallback(() => onToggleTool(toolId), [onToggleTool, toolId]);
@@ -721,6 +723,20 @@ export const TranscriptToolCard = React.memo(function TranscriptToolCard({
               <span className="rich-transcript-tool-subagent-type text-[var(--nim-primary)] font-semibold"> [{toolMsg.subagent?.agentType}]</span>
             )}
           </span>
+          {isSubAgent && onOpenSubagentTranscript && toolMsg.subagentId && (
+            <button
+              type="button"
+              className="rich-transcript-subagent-open-transcript shrink-0 bg-transparent border-none p-0 m-0 cursor-pointer text-[var(--nim-text-muted)] hover:text-[var(--nim-link)]"
+              aria-label="Open this agent's transcript"
+              title="Open this agent's transcript"
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenSubagentTranscript(toolMsg.subagentId!);
+              }}
+            >
+              <MaterialSymbol icon="open_in_new" size={14} />
+            </button>
+          )}
           {subagentAuditLabel && (
             <span
               className="rich-transcript-subagent-audit min-w-0 max-w-40 truncate text-[11px] text-[var(--nim-text-muted)]"

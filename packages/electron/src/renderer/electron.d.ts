@@ -1191,6 +1191,13 @@ interface ElectronAPI {
     setClaudeCliModel: (sessionId: string, model: string) => Promise<{ success: boolean; cliArg: string }>;
     setClaudeCliEffort: (sessionId: string, effortLevel: string) => Promise<{ success: boolean; level: string }>;
     interruptClaudeCli: (sessionId: string) => Promise<{ success: boolean; resolvedAfter?: 'first-interrupt' | 'second-interrupt' | 'sigint' | 'unresolved' }>;
+    /** Locate a sub-agent's own transcript from the tool_use id that spawned it. */
+    resolveClaudeCliSubagentTranscript: (payload: {
+      sessionId: string;
+      workspacePath: string;
+      cwd?: string;
+      spawnToolUseId: string;
+    }) => Promise<{ filePath: string; agentId: string; agentType?: string; description?: string } | null>;
     isActive: (terminalId: string) => Promise<boolean>;
     write: (terminalId: string, data: string) => Promise<void>;
     resize: (terminalId: string, cols: number, rows: number) => Promise<void>;

@@ -392,6 +392,13 @@ interface RichTranscriptViewProps {
   readFile?: (filePath: string) => Promise<{ success: boolean; content?: string; error?: string }>;
   /** Optional: Open a file in the editor, optionally scrolled to a line */
   onOpenFile?: (filePath: string, location?: TranscriptFileLocation) => void;
+  /**
+   * Optional: open a sub-agent's own transcript, keyed by the tool_use id that
+   * spawned it. Only hosts that can reach the agent's on-disk transcript supply
+   * this (the Claude CLI writes one per agent); the affordance is hidden when
+   * absent, so nothing renders a control that cannot work.
+   */
+  onOpenSubagentTranscript?: (spawnToolUseId: string) => void;
   /** Optional: Navigate to a session by ID (for @@session reference links) */
   onOpenSession?: (sessionId: string) => void;
   /** Optional: Callback to trigger /compact command */
@@ -522,7 +529,7 @@ const getTranscriptMessageKey = (
 export const RichTranscriptView = React.forwardRef<
   { scrollToMessage: (index: number) => void; scrollToTop: () => void },
   RichTranscriptViewProps
->(({ sessionId, sessionStatus, isProcessing, hasPendingInteractivePrompt, messages, provider, settings: propsSettings, onSettingsChange, showSettings, documentContext, workspacePath, renderEmptyExtra, hideEmptyHelp, readFile, onOpenFile, onOpenSession, onCompact, promptAdditions, currentTeammates, waitingForNoun, backgroundTasks, appStartTime, renderEmbeddedFile, canEmbedFile, loadToolCallDiffs, onSearchBarVisibilityChange, persistScrollState = true }, ref) => {
+>(({ sessionId, sessionStatus, isProcessing, hasPendingInteractivePrompt, messages, provider, settings: propsSettings, onSettingsChange, showSettings, documentContext, workspacePath, renderEmptyExtra, hideEmptyHelp, readFile, onOpenFile, onOpenSubagentTranscript, onOpenSession, onCompact, promptAdditions, currentTeammates, waitingForNoun, backgroundTasks, appStartTime, renderEmbeddedFile, canEmbedFile, loadToolCallDiffs, onSearchBarVisibilityChange, persistScrollState = true }, ref) => {
   const [collapsedMessages, setCollapsedMessages] = useState<Set<number>>(new Set());
   const [expandedTools, setExpandedTools] = useState<Set<string>>(new Set());
   const scrollButtonRef = useRef<HTMLDivElement>(null);
@@ -991,13 +998,14 @@ export const RichTranscriptView = React.forwardRef<
       workspacePath,
       readFile,
       onOpenFile,
+      onOpenSubagentTranscript,
       onOpenSession,
       renderEmbeddedFile,
       canEmbedFile,
       loadToolCallDiffs,
       onToggleTool: toggleToolExpand,
     }),
-    [sessionId, workspacePath, readFile, onOpenFile, onOpenSession, renderEmbeddedFile, canEmbedFile, loadToolCallDiffs, toggleToolExpand]
+    [sessionId, workspacePath, readFile, onOpenFile, onOpenSubagentTranscript, onOpenSession, renderEmbeddedFile, canEmbedFile, loadToolCallDiffs, toggleToolExpand]
   );
 
   // Neighbour-derived row state in one pass. Unchanged infos keep their

@@ -989,6 +989,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Worktree actions were greyed out inside a git repository until another part of the app happened to check first.
 - A Claude Code turn that ended in an error completed twice, so its token usage and turn-end snapshot were dropped.
 - Sub-agents in a Claude Code CLI session now appear as their own expandable entries with their tool calls nested underneath, instead of every sub-agent's output being mixed into the main conversation.
+- Sub-agents in a Claude Code CLI session now appear as their own expandable entries with their tool calls nested underneath, and each one can open its full transcript, instead of every sub-agent's output being mixed into the main conversation.
 - The voice mode context ring now shows the live context of the last turn against the model's real window (128K for gpt-realtime-2, 32K for gpt-realtime) instead of a running total that grew every turn.
 
 ### Removed

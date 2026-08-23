@@ -14,6 +14,11 @@ import type { ClaudeCliDocumentContext } from '../services/ai/claudeCliPromptCom
 import type { ChatAttachment } from '@nimbalyst/runtime/ai/server/types';
 import { ShellDetector } from '../services/ShellDetector';
 import { safeHandle } from '../utils/ipcRegistry';
+import { resolveSubagentTranscript } from '../services/ai/claudeCliSubagentTranscriptPath';
+import { nodeSubagentSidecarFs } from '../services/ai/claudeCliSubagentSidecarReader';
+import { resolveClaudeCliSubagentsDir } from '../services/ai/claudeCliJsonlPath';
+import { getSubagentSpawns } from '../services/ai/claudeCliSubAgentTracker';
+import { resolveClaudeConfigDir } from '@nimbalyst/runtime/ai/server/providers/claudeCode/claudeConfigDir';
 import { ulid } from 'ulid';
 import { AnalyticsService } from '../services/analytics/AnalyticsService';
 import {
@@ -435,6 +440,42 @@ export function registerTerminalHandlers(): void {
     }
     return manager.interruptClaudeCliTurn(sessionId);
   });
+
+  /**
+   * Locate a sub-agent's own transcript so the app can open it from the agent's
+   * node. The node is keyed by the spawning tool_use id while the file is named
+   * for the agent id, so this cannot be derived in the renderer.
+   *
+   * Returns null when there is no such agent on disk, which the caller treats as
+   * "no transcript to offer" rather than an error.
+   */
+  safeHandle(
+    'claude-cli:resolve-subagent-transcript',
+    async (
+      _event,
+      payload: { sessionId: string; workspacePath: string; cwd?: string; spawnToolUseId: string },
+    ) => {
+      if (!payload?.sessionId || typeof payload.sessionId !== 'string') {
+        throw new Error('sessionId is required and must be a string');
+      }
+      if (!payload?.workspacePath || typeof payload.workspacePath !== 'string') {
+        throw new Error('workspacePath is required and must be a string');
+      }
+      if (!payload?.spawnToolUseId || typeof payload.spawnToolUseId !== 'string') {
+        throw new Error('spawnToolUseId is required and must be a string');
+      }
+      return resolveSubagentTranscript({
+        fs: nodeSubagentSidecarFs(),
+        subagentsDir: resolveClaudeCliSubagentsDir({
+          configDir: resolveClaudeConfigDir(),
+          cwd: payload.cwd || payload.workspacePath,
+          sessionId: payload.sessionId,
+        }),
+        spawnToolUseId: payload.spawnToolUseId,
+        spawns: getSubagentSpawns(payload.sessionId),
+      });
+    },
+  );
 
   /**
    * Write data to a terminal (user input)
