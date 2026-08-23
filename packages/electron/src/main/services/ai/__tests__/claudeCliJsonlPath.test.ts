@@ -3,7 +3,7 @@ import path from 'path';
 import {
   encodeClaudeProjectDirName,
   resolveClaudeCliJsonlPath,
-  shouldResumeClaudeCliSession,
+  shouldResumeClaudeCliSession,  resolveClaudeCliSubagentsDir,
 } from '../claudeCliJsonlPath';
 
 /**
@@ -55,6 +55,33 @@ describe('claudeCliJsonlPath', () => {
           sessionId: 'abc',
         }),
       ).toBe(path.join('D:\\claude-config', 'projects', '-repo', 'abc.jsonl'));
+    });
+  });
+
+  describe('resolveClaudeCliSubagentsDir', () => {
+    it('sits beside the session jsonl, under a directory named for the session', () => {
+      expect(
+        resolveClaudeCliSubagentsDir({
+          configDir: '/Users/ghinkle/.claude',
+          cwd: '/Users/ghinkle/sources/stravu-editor',
+          sessionId: 'c261169b-d681-43e7-9c59-de4035b65cef',
+        }),
+      ).toBe(
+        path.join(
+          '/Users/ghinkle/.claude',
+          'projects',
+          '-Users-ghinkle-sources-stravu-editor',
+          'c261169b-d681-43e7-9c59-de4035b65cef',
+          'subagents',
+        ),
+      );
+    });
+
+    it('uses the same encoding as the jsonl path, so the two never diverge', () => {
+      const input = { configDir: 'D:\claude-config', cwd: 'C:\work\repo', sessionId: 'abc' };
+      expect(resolveClaudeCliSubagentsDir(input)).toBe(
+        path.join(resolveClaudeCliJsonlPath(input).replace(/.jsonl$/, ''), 'subagents'),
+      );
     });
   });
 

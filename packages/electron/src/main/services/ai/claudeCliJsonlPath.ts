@@ -49,6 +49,28 @@ export function resolveClaudeCliJsonlPath(input: ResolveClaudeCliJsonlPathInput)
 }
 
 /**
+ * Where the CLI keeps a session's per-agent sidecars (verified live 2026-08-23):
+ *
+ *   <claude config>/projects/<encoded-cwd>/<sessionId>/subagents/
+ *     agent-<agentId>.jsonl        the agent's own transcript
+ *     agent-<agentId>.meta.json    agentType, description, toolUseId, spawnDepth…
+ *
+ * A sibling directory of the session jsonl, not a sibling of the project dir, so
+ * it is derived from the same encoded path rather than guessed. Sub-agent
+ * transcripts persist independently of the main conversation.
+ */
+export function resolveClaudeCliSubagentsDir(input: ResolveClaudeCliJsonlPathInput): string {
+  const { configDir, cwd, sessionId } = input;
+  return path.join(
+    configDir,
+    'projects',
+    encodeClaudeProjectDirName(cwd),
+    sessionId,
+    'subagents',
+  );
+}
+
+/**
  * Resume (vs start fresh) iff the CLI's jsonl for this id already exists. Pure so
  * the policy is unit-testable independent of the filesystem touch.
  */
