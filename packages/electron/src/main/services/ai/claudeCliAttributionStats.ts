@@ -102,8 +102,12 @@ export function recordAttributionSample(
   return summarizeAttribution(samples);
 }
 
-/** The session's summary so far, or null when it never attributed anything. */
-export function takeAttributionSummary(sessionId: string): AttributionSummary | null {
+/**
+ * The session's summary so far, or null when it never attributed anything.
+ * Peeks rather than consumes: every caller wants the running total, so a big
+ * fan-out reports cumulatively rather than resetting mid-flight.
+ */
+export function peekAttributionSummary(sessionId: string): AttributionSummary | null {
   const samples = bySession.get(sessionId);
   if (!samples || samples.length === 0) return null;
   return summarizeAttribution(samples);

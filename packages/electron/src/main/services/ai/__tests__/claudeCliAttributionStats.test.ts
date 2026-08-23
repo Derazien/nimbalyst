@@ -5,7 +5,7 @@ import {
   formatAttributionSummary,
   recordAttributionSample,
   summarizeAttribution,
-  takeAttributionSummary,
+  peekAttributionSummary,
 } from '../claudeCliAttributionStats';
 
 const SID = 'session-1';
@@ -76,17 +76,17 @@ describe('recordAttributionSample', () => {
   it('summarises everything so far, not just the last window', () => {
     for (let i = 0; i < 4; i++) recordAttributionSample(SID, { elapsedMs: 1, timedOut: false }, 2);
 
-    expect(takeAttributionSummary(SID)?.total).toBe(4);
+    expect(peekAttributionSummary(SID)?.total).toBe(4);
   });
 
   it('reports nothing for a session that never attributed anything', () => {
-    expect(takeAttributionSummary('never-ran')).toBeNull();
+    expect(peekAttributionSummary('never-ran')).toBeNull();
   });
 
   it('clears per session', () => {
     recordAttributionSample(SID, { elapsedMs: 1, timedOut: false }, 1);
     clearAttributionStats(SID);
 
-    expect(takeAttributionSummary(SID)).toBeNull();
+    expect(peekAttributionSummary(SID)).toBeNull();
   });
 });

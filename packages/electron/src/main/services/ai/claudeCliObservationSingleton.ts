@@ -58,7 +58,7 @@ import {
   clearAttributionStats,
   formatAttributionSummary,
   recordAttributionSample,
-  takeAttributionSummary,
+  peekAttributionSummary,
 } from './claudeCliAttributionStats';
 import { createAttributedTurnQueue, type AttributedTurnQueue } from './claudeCliAttributedTurnQueue';
 import { resolveClaudeCliSubagentsDir } from './claudeCliJsonlPath';
@@ -137,6 +137,16 @@ async function notifyClaudeCliTurnComplete(
  * there's no observed summary (terminal-only mode / a turn that produced nothing).
  */
 export function fireClaudeCliTurnCompletion(sessionId: string, workspacePath: string): void {
+  // Attribution timing, reported at the whole-turn boundary. The every-25 emit
+  // covers progress DURING a long fan-out (which is a single turn and can run for
+  // many minutes); this covers the end of it, so a run smaller than 25 still
+  // reports without waiting for the session to close. Cumulative, and self-guards
+  // to nothing when the session never attributed anything.
+  const attribution = peekAttributionSummary(sessionId);
+  if (attribution) {
+    console.log(formatAttributionSummary(sessionId, attribution, SIDECAR_WAIT_BUDGET_MS));
+  }
+
   const summary = takeClaudeCliTurnSummary(sessionId);
   if (!summary) return;
   void notifyClaudeCliTurnComplete(sessionId, workspacePath, summary.lastAssistantText);
@@ -427,7 +437,7 @@ export async function startClaudeCliProxyObservation(opts: {
       // Drop the per-session seen-set so a later relaunch re-seeds from the DB.
       clearSeenToolResultIds(sessionId);
       clearClaudeCliTurnSummary(sessionId);
-      const finalAttribution = takeAttributionSummary(sessionId);
+      const finalAttribution = peekAttributionSummary(sessionId);
       if (finalAttribution) {
         console.log(formatAttributionSummary(sessionId, finalAttribution, SIDECAR_WAIT_BUDGET_MS));
       }
