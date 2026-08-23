@@ -90,17 +90,36 @@ export interface ClaudeCliSubagentSidecarReader {
     messageId: string;
     spawns?: readonly ClaudeCliAgentSpawn[];
     leadMessageIds?: Iterable<string>;
-    attempts?: number;
-    delayMs?: number;
+    /** Delays between attempts. Defaults to `SIDECAR_WAIT_BACKOFF_MS`. */
+    backoffMs?: readonly number[];
     sleep?: (ms: number) => Promise<void>;
-  }): Promise<string | undefined>;
+    /** Injected clock so the measured lag is testable. */
+    now?: () => number;
+  }): Promise<{ parentToolUseId?: string; elapsedMs: number; timedOut: boolean }>;
   /** Drop all cached state for this session. */
   clear(): void;
 }
 
-/** Total budget is `ATTEMPTS * DELAY_MS`, kept short: the lag is milliseconds. */
-export const SIDECAR_WAIT_ATTEMPTS = 6;
-export const SIDECAR_WAIT_DELAY_MS = 50;
+/**
+ * Backoff schedule for the sidecar wait, in milliseconds between attempts.
+ *
+ * PROVISIONAL. This is reasoned, not measured, and `claudeCliAttributionStats`
+ * exists to replace the reasoning with data: run a real fan-out, read the
+ * `[ClaudeCliAttribution]` summary line, and set this above the reported p95.
+ *
+ * The rationale for this shape. The two mistakes cost very differently. Waiting
+ * longer costs latency on a turn that already took seconds, and only in a session
+ * that has spawned an agent. Giving up early costs the whole feature for that
+ * turn: it falls back to sitting in the lead's transcript, which is the defect
+ * being fixed. So the schedule starts far shorter than the old flat 50ms, because
+ * the common case is a race of a few milliseconds and should resolve almost
+ * immediately, then backs off well past the old 300ms total because the tail is
+ * where the cost is asymmetric. Total budget is 1.27s across 7 tries.
+ */
+export const SIDECAR_WAIT_BACKOFF_MS: readonly number[] = [10, 20, 40, 80, 160, 320, 640];
+
+/** Total wait before giving up, for logging alongside the measured percentiles. */
+export const SIDECAR_WAIT_BUDGET_MS = SIDECAR_WAIT_BACKOFF_MS.reduce((a, b) => a + b, 0);
 
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -207,22 +226,31 @@ export function createClaudeCliSubagentSidecarReader(
         messageId,
         spawns,
         leadMessageIds,
-        attempts = SIDECAR_WAIT_ATTEMPTS,
-        delayMs = SIDECAR_WAIT_DELAY_MS,
+        backoffMs = SIDECAR_WAIT_BACKOFF_MS,
         sleep = defaultSleep,
+        now = () => Date.now(),
       } = input;
 
-      for (let attempt = 0; attempt < Math.max(1, attempts); attempt++) {
+      const startedAt = now();
+      const attempts = Math.max(1, backoffMs.length);
+
+      for (let attempt = 0; attempt < attempts; attempt++) {
         const fresh = await refresh({ subagentsDir, spawns, leadMessageIds });
         const parentToolUseId = fresh.parentToolUseIdForMessageId(messageId);
-        if (parentToolUseId) return parentToolUseId;
+        if (parentToolUseId) {
+          return { parentToolUseId, elapsedMs: now() - startedAt, timedOut: false };
+        }
         // Knowing the agent but not its spawn means a teammate whose tool_result
         // has not landed yet. Waiting cannot help, since the spawn arrives on the
-        // wire rather than on disk.
-        if (fresh.agentIdForMessageId(messageId)) return undefined;
-        if (attempt < attempts - 1) await sleep(delayMs);
+        // wire rather than on disk, so this is a give-up rather than a timeout.
+        if (fresh.agentIdForMessageId(messageId)) {
+          return { elapsedMs: now() - startedAt, timedOut: false };
+        }
+        if (attempt < attempts - 1) await sleep(backoffMs[attempt]);
       }
-      return undefined;
+      // Budget exhausted. The turn stays unattributed and shows at the top level,
+      // exactly as it did before any of this existed.
+      return { elapsedMs: now() - startedAt, timedOut: true };
     },
   };
 }

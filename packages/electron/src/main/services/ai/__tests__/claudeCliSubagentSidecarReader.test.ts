@@ -3,6 +3,8 @@ import { describe, it, expect } from 'vitest';
 import {
   createClaudeCliSubagentSidecarReader,
   type SubagentSidecarFs,
+  SIDECAR_WAIT_BACKOFF_MS,
+  SIDECAR_WAIT_BUDGET_MS,
 } from '../claudeCliSubagentSidecarReader';
 
 const DIR = '/proj/sess/subagents';
@@ -194,10 +196,10 @@ describe('claudeCliSubagentSidecarReader', () => {
       };
 
       const parent = await reader.waitForParentToolUseId({
-        subagentsDir: DIR, messageId: 'msg_late', sleep, delayMs: 0,
+        subagentsDir: DIR, messageId: 'msg_late', sleep, backoffMs: [0, 0, 0, 0, 0, 0],
       });
 
-      expect(parent).toBe('toolu_spawn1');
+      expect(parent.parentToolUseId).toBe('toolu_spawn1');
       expect(slept).toBe(2);
     });
 
@@ -210,11 +212,12 @@ describe('claudeCliSubagentSidecarReader', () => {
 
       let slept = 0;
       const parent = await reader.waitForParentToolUseId({
-        subagentsDir: DIR, messageId: 'msg_lead', attempts: 3, delayMs: 0,
+        subagentsDir: DIR, messageId: 'msg_lead', backoffMs: [0, 0, 0],
         sleep: async () => { slept++; },
       });
 
-      expect(parent).toBeUndefined();
+      expect(parent.parentToolUseId).toBeUndefined();
+      expect(parent.timedOut).toBe(true);
       expect(slept).toBe(2); // one sleep between each of the three attempts
     });
 
@@ -229,11 +232,13 @@ describe('claudeCliSubagentSidecarReader', () => {
 
       let slept = 0;
       const parent = await reader.waitForParentToolUseId({
-        subagentsDir: DIR, messageId: 'msg_team', attempts: 5, delayMs: 0,
+        subagentsDir: DIR, messageId: 'msg_team', backoffMs: [0, 0, 0, 0, 0],
         sleep: async () => { slept++; },
       });
 
-      expect(parent).toBeUndefined();
+      expect(parent.parentToolUseId).toBeUndefined();
+      // Not a timeout: we know the agent, its spawn just has not been observed.
+      expect(parent.timedOut).toBe(false);
       expect(slept).toBe(0);
     });
 
@@ -248,10 +253,10 @@ describe('claudeCliSubagentSidecarReader', () => {
         subagentsDir: DIR,
         messageId: 'msg_team',
         spawns: [{ toolUseId: 'toolu_team', resultText: 'agent_id: atlas@session-x' }],
-        delayMs: 0,
+        backoffMs: [0],
       });
 
-      expect(parent).toBe('toolu_team');
+      expect(parent.parentToolUseId).toBe('toolu_team');
     });
 
     it('never attributes a lead message id that a fork also carries', async () => {
@@ -262,13 +267,16 @@ describe('claudeCliSubagentSidecarReader', () => {
       const reader = createClaudeCliSubagentSidecarReader(harness.fs);
 
       const leadMessageIds = ['msg_forkpoint'];
-      expect(await reader.waitForParentToolUseId({
-        subagentsDir: DIR, messageId: 'msg_forkpoint', leadMessageIds, attempts: 2, delayMs: 0,
+      const forkPoint = await reader.waitForParentToolUseId({
+        subagentsDir: DIR, messageId: 'msg_forkpoint', leadMessageIds, backoffMs: [0, 0],
         sleep: async () => {},
-      })).toBeUndefined();
-      expect(await reader.waitForParentToolUseId({
-        subagentsDir: DIR, messageId: 'msg_forkown', leadMessageIds, delayMs: 0,
-      })).toBe('toolu_fork');
+      });
+      expect(forkPoint.parentToolUseId).toBeUndefined();
+
+      const forkOwn = await reader.waitForParentToolUseId({
+        subagentsDir: DIR, messageId: 'msg_forkown', leadMessageIds, backoffMs: [0],
+      });
+      expect(forkOwn.parentToolUseId).toBe('toolu_fork');
     });
   });
 
@@ -285,5 +293,57 @@ describe('claudeCliSubagentSidecarReader', () => {
 
     await reader.refresh({ subagentsDir: DIR });
     expect(harness.calls.filter(c => c.op === 'readRange' && c.start === 0)).toHaveLength(2);
+  });
+});
+
+describe('the wait budget is measured, not assumed', () => {
+  it('reports how long attribution took, so the budget can be tuned from data', async () => {
+    const harness = fakeFs({
+      [`${DIR}/agent-a1.meta.json`]: META({ toolUseId: 'toolu_spawn1' }),
+      [`${DIR}/agent-a1.jsonl`]: '',
+    });
+    const reader = createClaudeCliSubagentSidecarReader(harness.fs);
+
+    let clock = 0;
+    const result = await reader.waitForParentToolUseId({
+      subagentsDir: DIR,
+      messageId: 'msg_late',
+      backoffMs: [0, 0, 0],
+      now: () => clock,
+      sleep: async () => {
+        clock += 40;
+        harness.write(`${DIR}/agent-a1.jsonl`, assistantRow('a1', 'msg_late'));
+      },
+    });
+
+    expect(result.parentToolUseId).toBe('toolu_spawn1');
+    expect(result.timedOut).toBe(false);
+    expect(result.elapsedMs).toBe(40);
+  });
+
+  it('marks an exhausted budget as a timeout, and still fails gracefully', async () => {
+    // A timeout must degrade to today's behaviour, not to a guessed owner.
+    const harness = fakeFs({
+      [`${DIR}/agent-a1.meta.json`]: META({ toolUseId: 'toolu_spawn1' }),
+      [`${DIR}/agent-a1.jsonl`]: '',
+    });
+    const reader = createClaudeCliSubagentSidecarReader(harness.fs);
+
+    let clock = 0;
+    const result = await reader.waitForParentToolUseId({
+      subagentsDir: DIR, messageId: 'msg_never', backoffMs: [0, 0],
+      now: () => clock, sleep: async () => { clock += 10; },
+    });
+
+    expect(result.parentToolUseId).toBeUndefined();
+    expect(result.timedOut).toBe(true);
+    expect(result.elapsedMs).toBe(10);
+  });
+
+  it('starts far shorter than it ends, so the common case resolves fast', () => {
+    // The first retry is cheap because the usual lag is a race of milliseconds;
+    // the tail is long because giving up early loses the whole feature.
+    expect(SIDECAR_WAIT_BACKOFF_MS[0]).toBeLessThan(SIDECAR_WAIT_BACKOFF_MS.at(-1)!);
+    expect(SIDECAR_WAIT_BUDGET_MS).toBe(SIDECAR_WAIT_BACKOFF_MS.reduce((a, b) => a + b, 0));
   });
 });

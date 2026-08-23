@@ -52,7 +52,14 @@ import {
 import {
   createClaudeCliSubagentSidecarReader,
   nodeSubagentSidecarFs,
+  SIDECAR_WAIT_BUDGET_MS,
 } from './claudeCliSubagentSidecarReader';
+import {
+  clearAttributionStats,
+  formatAttributionSummary,
+  recordAttributionSample,
+  takeAttributionSummary,
+} from './claudeCliAttributionStats';
 import { createAttributedTurnQueue, type AttributedTurnQueue } from './claudeCliAttributedTurnQueue';
 import { resolveClaudeCliSubagentsDir } from './claudeCliJsonlPath';
 import { broadcastSideNote, claimSideAnswer, clearSideQuestions } from './claudeCliSideQuestion';
@@ -257,23 +264,44 @@ export async function startClaudeCliProxyObservation(opts: {
     createAttributedTurnQueue<AssembledAssistantMessage>({
     // Sessions that never spawn an agent skip the sidecar read entirely.
     shouldAttribute: () => hasAnySubagentSpawn(sessionId),
-    resolveParentToolUseId: (turn) =>
-      sidecarReader.waitForParentToolUseId({
+    resolveParentToolUseId: async (turn) => {
+      const result = await sidecarReader.waitForParentToolUseId({
         subagentsDir,
         messageId: turn.messageId,
         spawns: getSubagentSpawns(sessionId),
         // Keeps a fork from claiming the lead turn it forked from.
         leadMessageIds: turnQueue.leadMessageIds(),
-      }),
+      });
+      // The wait budget is provisional; this is the data that replaces the guess.
+      const summary = recordAttributionSample(sessionId, {
+        elapsedMs: result.elapsedMs,
+        timedOut: result.timedOut,
+      });
+      if (summary) {
+        console.log(formatAttributionSummary(sessionId, summary, SIDECAR_WAIT_BUDGET_MS));
+      }
+      return result.parentToolUseId;
+    },
     persist: async (turn, parentToolUseId) => {
       // A pending `/btw` answer never becomes a transcript row. Only an
       // UNATTRIBUTED turn can be one: a sub-agent's turn is never the answer,
       // and claiming it would hide that agent's work.
       if (!parentToolUseId) {
-        const note = claimSideAnswer(sessionId, extractAssistantText(turn.message), Date.now());
-        if (note) {
+        const verdict = claimSideAnswer(
+          sessionId,
+          {
+            text: extractAssistantText(turn.message),
+            hasToolCalls: turn.message.content.some((b) => b.type === 'tool_use'),
+          },
+          Date.now(),
+        );
+        if (verdict.outcome !== 'none') {
+          broadcastSideNote(findWindowByWorkspace, sessionId, workspacePath, verdict.note);
+        }
+        // Only a claimed turn is withheld. A declined one is somebody else's
+        // output and goes into the conversation exactly as it would have.
+        if (verdict.outcome === 'claimed') {
           claimedSideAnswerIds.add(turn.messageId);
-          broadcastSideNote(findWindowByWorkspace, sessionId, workspacePath, note);
           return;
         }
       }
@@ -399,6 +427,11 @@ export async function startClaudeCliProxyObservation(opts: {
       // Drop the per-session seen-set so a later relaunch re-seeds from the DB.
       clearSeenToolResultIds(sessionId);
       clearClaudeCliTurnSummary(sessionId);
+      const finalAttribution = takeAttributionSummary(sessionId);
+      if (finalAttribution) {
+        console.log(formatAttributionSummary(sessionId, finalAttribution, SIDECAR_WAIT_BUDGET_MS));
+      }
+      clearAttributionStats(sessionId);
       clearSubAgentTracking(sessionId);
       clearSideQuestions(sessionId);
       clearClaudeCliObserved1mSupport(sessionId);
