@@ -43,11 +43,19 @@ import { logClaudeCliUpstreamError } from './claudeCliErrorLog';
 import { extractToolResults } from './claudeCliObservation/claudeApiRequestParser';
 import { buildProxyPassthroughEnv } from './claudeCliObservation/proxyPassthroughEnv';
 import {
-  isSubAgentTurnInFlight,
-  noteAssistantTaskCalls,
-  noteToolResultsCompleteTasks,
   clearSubAgentTracking,
+  getSubagentSpawns,
+  hasAnySubagentSpawn,
+  noteAssistantSubagentSpawns,
+  noteSubagentSpawnResults,
 } from './claudeCliSubAgentTracker';
+import {
+  createClaudeCliSubagentSidecarReader,
+  nodeSubagentSidecarFs,
+} from './claudeCliSubagentSidecarReader';
+import { createAttributedTurnQueue, type AttributedTurnQueue } from './claudeCliAttributedTurnQueue';
+import { resolveClaudeCliSubagentsDir } from './claudeCliJsonlPath';
+import { resolveClaudeConfigDir } from '@nimbalyst/runtime/ai/server/providers/claudeCode/claudeConfigDir';
 import { trackClaudeCliFileEdits } from './claudeCliFileTracking';
 import { sessionFileTracker } from '../SessionFileTracker';
 import { findWindowByWorkspace } from '../../window/WindowManager';
@@ -138,19 +146,19 @@ async function persistAssistantTurn(
   sessionId: string,
   workspacePath: string,
   msg: AssembledAssistantMessage,
-  hidden: boolean,
+  parentToolUseId: string | undefined,
 ): Promise<void> {
   try {
     await AgentMessagesRepository.create({
       sessionId,
       source: 'claude-code',
       direction: 'output',
-      // Sub-agent (`Task`) turns are persisted but HIDDEN so they don't pollute
-      // the visible transcript (the B3 wire has no parent_tool_use_id to filter
-      // on — see claudeCliSubAgentTracker). File-edit attribution below still runs
-      // for them, so a sub-agent's edits are tracked.
-      content: buildAssistantRawContent(msg),
-      hidden,
+      // A sub-agent turn carries the tool_use id that spawned it, so the parser
+      // nests it under that agent instead of interleaving it into the lead's
+      // transcript. Nothing is hidden any more: an unattributed turn is one we
+      // could not identify, and unknown output is shown, not swallowed.
+      content: buildAssistantRawContent(msg, { parentToolUseId }),
+      hidden: false,
       createdAt: new Date(),
     });
     notifyMessageLogged(sessionId, workspacePath);
@@ -190,8 +198,20 @@ async function persistAssistantTurn(
 export async function startClaudeCliProxyObservation(opts: {
   sessionId: string;
   workspacePath: string;
+  /** The cwd the CLI is launched in. Differs from workspacePath in a worktree. */
+  cwd?: string;
 }): Promise<{ baseUrl: string; env: Record<string, string>; stop: () => void } | null> {
   const { sessionId, workspacePath } = opts;
+
+  // Sub-agent attribution (see claudeCliSubagentIndex). The sidecars live beside
+  // the session jsonl, so the directory is derived from the CLI's own cwd, which
+  // is the worktree path rather than the workspace path for a worktree session.
+  const subagentsDir = resolveClaudeCliSubagentsDir({
+    configDir: resolveClaudeConfigDir(),
+    cwd: opts.cwd || workspacePath,
+    sessionId,
+  });
+  const sidecarReader = createClaudeCliSubagentSidecarReader(nodeSubagentSidecarFs());
 
   // tool_result blocks re-appear in every subsequent request body — dedup so each
   // is persisted once for the lifetime of this observation session (Slice E).
@@ -225,32 +245,58 @@ export async function startClaudeCliProxyObservation(opts: {
     console.warn(`[ClaudeCliObservation] not following non-loopback ANTHROPIC_BASE_URL from Claude settings: ${ignoredClaudeSettingsBaseUrl}`);
   }
 
+  // Serial so the row ids the transcript is ordered by follow observation order,
+  // even though attribution costs a variable sidecar read per turn.
+  // Annotated because the resolver closes over the queue to read its lead ids.
+  const turnQueue: AttributedTurnQueue<AssembledAssistantMessage> =
+    createAttributedTurnQueue<AssembledAssistantMessage>({
+    // Sessions that never spawn an agent skip the sidecar read entirely.
+    shouldAttribute: () => hasAnySubagentSpawn(sessionId),
+    resolveParentToolUseId: (turn) =>
+      sidecarReader.waitForParentToolUseId({
+        subagentsDir,
+        messageId: turn.messageId,
+        spawns: getSubagentSpawns(sessionId),
+        // Keeps a fork from claiming the lead turn it forked from.
+        leadMessageIds: turnQueue.leadMessageIds(),
+      }),
+    persist: (turn, parentToolUseId) =>
+      persistAssistantTurn(sessionId, workspacePath, turn.message, parentToolUseId),
+    onPersisted: (turn, parentToolUseId) => {
+      // Only a lead turn counts as visible output for the failure-surfacing
+      // policy, and only a lead turn belongs in the "Response Ready" body, so a
+      // sub-agent's text and tools do not surface as the session's answer.
+      if (parentToolUseId) return;
+      errorSurfacePolicy.noteAssistantMessage(true);
+      const toolNames = turn.message.content
+        .filter((b): b is Extract<typeof b, { type: 'tool_use' }> => b.type === 'tool_use')
+        .map((b) => b.name);
+      recordClaudeCliTurnMessage(sessionId, {
+        text: extractAssistantText(turn.message),
+        toolNames,
+      });
+    },
+    onError: (error) => {
+      console.warn('[ClaudeCliObservation] sub-agent attribution failed:', error);
+    },
+  });
+
   const observation = new ClaudeCliProxyObservation({
     sessionId,
     upstreamUrl: apiUpstreamUrl,
     onAssistantMessage: (msg) => {
-      // Is this turn a `Task` sub-agent's? (A Task was in flight BEFORE this
-      // message.) The parent message that CARRIES the Task call is itself still
-      // a visible parent turn — we note its Task calls only after this check.
-      const isSubAgentTurn = isSubAgentTurnInFlight(sessionId);
-      // A produced turn means the session is unblocked: allow the next failure
-      // episode to surface, and (for visible turns) mark that startup is past so
-      // a mid-session rate-limit/overload can surface.
-      errorSurfacePolicy.noteAssistantMessage(!isSubAgentTurn);
-      void persistAssistantTurn(sessionId, workspacePath, msg, isSubAgentTurn);
-      noteAssistantTaskCalls(sessionId, msg);
+      // Record this turn's `Agent`/`Task` calls before anything else: a later
+      // turn's attribution can depend on a spawn observed in this one.
+      noteAssistantSubagentSpawns(sessionId, msg);
+      // A produced turn means the session is unblocked, so let the next failure
+      // episode surface. Whether it counts as VISIBLE output waits for
+      // attribution and is decided in the queue's onPersisted.
+      errorSurfacePolicy.noteAssistantMessage(false);
       // Refresh the context-window fill indicator from this turn's usage (Slice E).
       void logClaudeCliContextUsage({ sessionId, usage: msg.usage });
-      // Accumulate the turn summary (text + tool names) for the completion
-      // notification — VISIBLE (parent) turns only, so a sub-agent's text/tools
-      // don't surface in the "Response Ready" body. The side effects fire from the
-      // launcher's PID `idle` transition (the whole-turn boundary), NOT per message.
-      if (!isSubAgentTurn) {
-        const toolNames = msg.content
-          .filter((b): b is Extract<typeof b, { type: 'tool_use' }> => b.type === 'tool_use')
-          .map((b) => b.name);
-        recordClaudeCliTurnMessage(sessionId, { text: extractAssistantText(msg), toolNames });
-      }
+      // Persistence goes through the serial queue so transcript order follows
+      // observation order regardless of how long each attribution takes.
+      turnQueue.enqueue({ messageId: msg.id, message: msg });
     },
     onRequestBody: (body, info) => {
       // The CLI decides per account + model whether to request the 1M window, and
@@ -262,16 +308,15 @@ export async function startClaudeCliProxyObservation(opts: {
       // tool_results ride in the next request body's trailing user message.
       const results = extractToolResults(body);
       if (results.length > 0) {
-        // A `Task` tool_result here ends that sub-agent's in-flight window. Mark
-        // completions FIRST, then decide whether this body is still sub-agent
-        // traffic: a sub-agent's own intermediate tool_results (Bash/Read) keep
-        // the window open and are NOT logged (they'd orphan against hidden rows);
-        // the parent's Task result closes it and IS logged (attaches to the
-        // visible parent Task tool_use).
-        noteToolResultsCompleteTasks(sessionId, results.map((r) => r.toolUseId));
-        if (!isSubAgentTurnInFlight(sessionId)) {
-          void logClaudeCliToolResults({ sessionId, workspacePath, results, seen: seenToolResultIds });
-        }
+        // An `Agent`/`Task` result carries the mailbox handle that ties an
+        // in-process teammate to the call that spawned it, so capture it before
+        // logging.
+        noteSubagentSpawnResults(sessionId, results);
+        // Every result is logged now, including a sub-agent's own intermediate
+        // ones. They used to be dropped because they would orphan against hidden
+        // rows; the rows are no longer hidden, so each result completes the tool
+        // card sitting under its agent in the tree.
+        void logClaudeCliToolResults({ sessionId, workspacePath, results, seen: seenToolResultIds });
       }
     },
     onError: (err) => {

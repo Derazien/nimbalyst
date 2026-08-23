@@ -70,6 +70,8 @@ export interface ClaudeCliSessionLauncherDeps {
   startObservation?: (opts: {
     sessionId: string;
     workspacePath: string;
+    /** The cwd the CLI is spawned in; the sub-agent sidecar path derives from it. */
+    cwd: string;
   }) => Promise<{ baseUrl: string; env?: Record<string, string>; stop: () => void } | null>;
   /** Directory for temp MCP config files. Defaults to `os.tmpdir()/nimbalyst-claude-cli`. */
   tempDir?: string;
@@ -276,7 +278,7 @@ export class ClaudeCliSessionLauncher {
     > = null;
     if (this.deps.startObservation) {
       try {
-        observation = await this.deps.startObservation({ sessionId, workspacePath });
+        observation = await this.deps.startObservation({ sessionId, workspacePath, cwd });
       } catch (err) {
         // Observation is best-effort: never block the genuine CLI from launching.
         console.warn('[ClaudeCliSessionLauncher] startObservation failed; launching without proxy:', err);

@@ -1,9 +1,11 @@
+// @vitest-environment node
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
-  isSubAgentTurnInFlight,
-  noteAssistantTaskCalls,
-  noteToolResultsCompleteTasks,
   clearSubAgentTracking,
+  getSubagentSpawns,
+  hasAnySubagentSpawn,
+  noteAssistantSubagentSpawns,
+  noteSubagentSpawnResults,
 } from '../claudeCliSubAgentTracker';
 
 const SID = 'session-1';
@@ -13,45 +15,58 @@ const turn = (blocks: Array<{ type: string; name?: string; id?: string }>) => ({
 describe('claudeCliSubAgentTracker', () => {
   beforeEach(() => clearSubAgentTracking(SID));
 
-  it('treats turns as visible until a Task is in flight, hides them during, then restores', () => {
-    // Parent turn ends with a Task call — itself still visible (checked before noting).
-    expect(isSubAgentTurnInFlight(SID)).toBe(false);
-    noteAssistantTaskCalls(SID, turn([{ type: 'tool_use', name: 'Task', id: 'toolu_task1' }]));
+  it('records spawns under either tool name, since 2.1.63 renamed Task to Agent', () => {
+    // Matching only `Task` is what let a dozen sub-agents' turns interleave into
+    // the lead transcript on every modern CLI.
+    expect(hasAnySubagentSpawn(SID)).toBe(false);
 
-    // Sub-agent turns observed while the Task runs are in flight (→ hidden).
-    expect(isSubAgentTurnInFlight(SID)).toBe(true);
+    noteAssistantSubagentSpawns(SID, turn([
+      { type: 'tool_use', name: 'Agent', id: 'toolu_agent' },
+      { type: 'tool_use', name: 'Task', id: 'toolu_task' },
+      { type: 'tool_use', name: 'Bash', id: 'toolu_bash' },
+      { type: 'text' },
+    ]));
 
-    // A sub-agent's own Bash result does NOT end the window (not a Task id).
-    noteToolResultsCompleteTasks(SID, ['toolu_bash_inner']);
-    expect(isSubAgentTurnInFlight(SID)).toBe(true);
-
-    // The Task's tool_result (in the parent's next body) closes the window.
-    noteToolResultsCompleteTasks(SID, ['toolu_task1']);
-    expect(isSubAgentTurnInFlight(SID)).toBe(false);
+    expect(getSubagentSpawns(SID).map(s => s.toolUseId).sort())
+      .toEqual(['toolu_agent', 'toolu_task']);
+    expect(hasAnySubagentSpawn(SID)).toBe(true);
   });
 
-  it('handles two parallel Tasks — window stays open until both resolve', () => {
-    noteAssistantTaskCalls(
-      SID,
-      turn([
-        { type: 'tool_use', name: 'Task', id: 'toolu_a' },
-        { type: 'tool_use', name: 'Task', id: 'toolu_b' },
-      ]),
-    );
-    expect(isSubAgentTurnInFlight(SID)).toBe(true);
-    noteToolResultsCompleteTasks(SID, ['toolu_a']);
-    expect(isSubAgentTurnInFlight(SID)).toBe(true);
-    noteToolResultsCompleteTasks(SID, ['toolu_b']);
-    expect(isSubAgentTurnInFlight(SID)).toBe(false);
+  it('attaches result text to its spawn and ignores unrelated tool results', () => {
+    // The text is load-bearing: an in-process teammate has no toolUseId in its
+    // sidecar meta, so `agent_id: name@team` here is its only link to the spawn.
+    noteAssistantSubagentSpawns(SID, turn([{ type: 'tool_use', name: 'Agent', id: 'toolu_agent' }]));
+    noteSubagentSpawnResults(SID, [
+      { toolUseId: 'toolu_bash_inner', content: 'unrelated' },
+      { toolUseId: 'toolu_agent', content: 'agent_id: atlas@session-x' },
+    ]);
+
+    expect(getSubagentSpawns(SID)).toEqual([
+      { toolUseId: 'toolu_agent', resultText: 'agent_id: atlas@session-x' },
+    ]);
   });
 
-  it('ignores non-Task tool_use blocks and is isolated per session', () => {
-    noteAssistantTaskCalls(SID, turn([{ type: 'tool_use', name: 'Bash', id: 'toolu_x' }]));
-    expect(isSubAgentTurnInFlight(SID)).toBe(false);
+  it('reports a spawn before its result lands, with no result text yet', () => {
+    noteAssistantSubagentSpawns(SID, turn([{ type: 'tool_use', name: 'Agent', id: 'toolu_agent' }]));
 
-    noteAssistantTaskCalls('other-session', turn([{ type: 'tool_use', name: 'Task', id: 'toolu_y' }]));
-    expect(isSubAgentTurnInFlight(SID)).toBe(false);
-    expect(isSubAgentTurnInFlight('other-session')).toBe(true);
-    clearSubAgentTracking('other-session');
+    expect(getSubagentSpawns(SID)).toEqual([{ toolUseId: 'toolu_agent', resultText: null }]);
+  });
+
+  it('keeps a spawn recorded after it completes, since attribution outlives the run', () => {
+    // A background agent's turns can still be attributed after its tool_result
+    // has landed, so the registry never forgets a spawn mid-session.
+    noteAssistantSubagentSpawns(SID, turn([{ type: 'tool_use', name: 'Agent', id: 'toolu_agent' }]));
+    noteSubagentSpawnResults(SID, [{ toolUseId: 'toolu_agent', content: 'done' }]);
+
+    expect(hasAnySubagentSpawn(SID)).toBe(true);
+    expect(getSubagentSpawns(SID)[0].resultText).toBe('done');
+  });
+
+  it('clears per session', () => {
+    noteAssistantSubagentSpawns(SID, turn([{ type: 'tool_use', name: 'Agent', id: 'toolu_agent' }]));
+    clearSubAgentTracking(SID);
+
+    expect(hasAnySubagentSpawn(SID)).toBe(false);
+    expect(getSubagentSpawns(SID)).toEqual([]);
   });
 });

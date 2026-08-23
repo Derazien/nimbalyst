@@ -368,7 +368,13 @@ describe('ClaudeCliSessionLauncher', () => {
 
     await launcher.launch(baseInput);
 
-    expect(startObservation).toHaveBeenCalledWith({ sessionId: 'sess-01HABC', workspacePath: '/work' });
+    // cwd rides along because the sub-agent sidecar directory derives from the
+    // CLI's own cwd, which is the worktree path for a worktree session.
+    expect(startObservation).toHaveBeenCalledWith({
+      sessionId: 'sess-01HABC',
+      workspacePath: '/work',
+      cwd: '/work',
+    });
     const opts = createClaudeCliTerminal.mock.calls[0][1];
     expect(opts.spawnConfig.env.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:51234');
     // Teardown wired but not yet fired (PTY still alive).
