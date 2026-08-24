@@ -147,6 +147,16 @@ interface MetaAgentToolFns {
     metaSessionId: string,
     workspaceId: string
   ) => Promise<string>;
+  archiveSession: (
+    metaSessionId: string,
+    workspaceId: string,
+    targetSessionId: string
+  ) => Promise<string>;
+  unarchiveSession: (
+    metaSessionId: string,
+    workspaceId: string,
+    targetSessionId: string
+  ) => Promise<string>;
 }
 
 let toolFns: MetaAgentToolFns | null = null;
@@ -481,6 +491,36 @@ export const META_AGENT_TOOL_DEFS: Array<{
       properties: {},
     },
   },
+  {
+    name: "archive_session",
+    description:
+      "Archive a session: it leaves the sidebar and its provider is released, freeing the runtime it was holding. Use when a piece of work is finished. Archiving is reversible with unarchive_session, and the conversation is kept either way. An agent that can create sessions but never archive them leaves them to pile up.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sessionId: {
+          type: "string",
+          description: "ID of the session to archive.",
+        },
+      },
+      required: ["sessionId"],
+    },
+  },
+  {
+    name: "unarchive_session",
+    description:
+      "Bring an archived session back into the sidebar so work can continue in it. Use before sending a prompt to a session that is archived: a prompt to an archived session lands somewhere nobody is looking.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sessionId: {
+          type: "string",
+          description: "ID of the session to unarchive.",
+        },
+      },
+      required: ["sessionId"],
+    },
+  },
 ];
 
 /**
@@ -509,6 +549,8 @@ const EXTENSION_META_AGENT_ALLOWED_TOOLS = new Set<string>([
   "notify_user",
   "respond_to_prompt",
   "list_spawned_sessions",
+  "archive_session",
+  "unarchive_session",
 ]);
 
 export function getMetaAgentOpenAITools(): MetaAgentOpenAITool[] {
@@ -600,6 +642,18 @@ export async function dispatchMetaAgentTool(
       return toolFns.respondToPrompt(aiSessionId, effectiveWorkspaceId, (args ?? {}) as RespondToPromptArgs);
     case "list_spawned_sessions":
       return toolFns.listSpawnedSessions(aiSessionId, effectiveWorkspaceId);
+    case "archive_session":
+      return toolFns.archiveSession(
+        aiSessionId,
+        effectiveWorkspaceId,
+        (args?.sessionId as string) ?? ""
+      );
+    case "unarchive_session":
+      return toolFns.unarchiveSession(
+        aiSessionId,
+        effectiveWorkspaceId,
+        (args?.sessionId as string) ?? ""
+      );
     default:
       throw new Error(`Unknown tool: ${name}`);
   }

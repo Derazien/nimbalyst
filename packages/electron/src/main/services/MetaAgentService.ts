@@ -42,6 +42,8 @@ import type { NotificationOptions, NotificationResult } from './NotificationServ
 import type { MobilePushResult } from '@nimbalyst/runtime/sync/types';
 import { composeNotificationTitle } from '../../shared/notificationTitle';
 import { resolveCrossWorkspaceAccess, sessionNotReachableMessage } from './crossWorkspaceMessaging';
+import { archiveSessionsAndDestroyProviders } from './ai/archiveSessionProviderLifecycle';
+import { ProviderFactory } from '@nimbalyst/runtime/ai/server';
 
 type SessionStatusValue = 'idle' | 'running' | 'waiting_for_input' | 'error' | 'interrupted';
 type PromptType = 'permission_request' | 'ask_user_question_request' | 'exit_plan_mode_request';
@@ -293,6 +295,10 @@ export class MetaAgentService {
           this.respondToPrompt(workspaceId, args, metaSessionId),
         listSpawnedSessions: (metaSessionId, workspaceId) =>
           this.listSpawnedSessionsJson(metaSessionId, workspaceId),
+        archiveSession: (metaSessionId, workspaceId, targetSessionId) =>
+          this.setSessionArchivedJson(metaSessionId, workspaceId, targetSessionId, true),
+        unarchiveSession: (metaSessionId, workspaceId, targetSessionId) =>
+          this.setSessionArchivedJson(metaSessionId, workspaceId, targetSessionId, false),
       });
 
       // MCP consolidation Phase 7: meta-agent tools are served by the unified
@@ -1659,6 +1665,101 @@ export class MetaAgentService {
       throw new Error(sessionNotReachableMessage(targetSessionId, access.mode));
     }
     return session;
+  }
+
+  /**
+   * Archive or unarchive one session, for an agent rather than a person.
+   *
+   * WHY THIS EXISTS. The sidebar could archive and nothing else could. An agent that creates
+   * sessions but can never archive them leaves them to pile up, and `update_session_board` does
+   * not help: it sets a kanban phase, so marking work "complete" moves a card and leaves the
+   * session exactly where it was. The column has always been there
+   * (ai_sessions.is_archived); only the tool was missing.
+   *
+   * ARCHIVING RELEASES THE RUNTIME. This goes through the same
+   * `archiveSessionsAndDestroyProviders` path the worktree flow uses, so the provider is
+   * destroyed after the archive write succeeds. That is the point as much as the tidier list:
+   * an idle session still holds its provider and everything the provider started.
+   *
+   * A CALLER MAY NOT ARCHIVE ITSELF. Doing so would destroy the provider running the very call,
+   * mid-call. The sidebar cannot hit this case because a person is not a session; an agent can,
+   * so it is refused by name here rather than left to fail strangely.
+   *
+   * Unarchiving deliberately does NOT start a provider. It puts the session back where it can be
+   * seen and prompted, and the next prompt brings it up the ordinary way.
+   */
+  private async setSessionArchivedJson(
+    callerSessionId: string | null | undefined,
+    callerWorkspaceId: string,
+    targetSessionId: string,
+    archived: boolean
+  ): Promise<string> {
+    const verb = archived ? 'archive' : 'unarchive';
+    if (!targetSessionId) {
+      return JSON.stringify({ ok: false, error: `sessionId is required to ${verb} a session` });
+    }
+    if (callerSessionId && callerSessionId === targetSessionId) {
+      return JSON.stringify({
+        ok: false,
+        error: 'A session cannot archive itself: that would release the provider running this call.',
+      });
+    }
+
+    const session = await this.resolveSessionForCaller(callerSessionId, callerWorkspaceId, targetSessionId);
+    const already = Boolean((session as { isArchived?: boolean }).isArchived);
+    if (already === archived) {
+      return JSON.stringify({
+        ok: true,
+        sessionId: targetSessionId,
+        title: session.title ?? null,
+        archived,
+        changed: false,
+        message: `Session was already ${archived ? 'archived' : 'not archived'}.`,
+      });
+    }
+
+    if (!archived) {
+      await AISessionsRepository.updateMetadata(targetSessionId, { isArchived: false });
+      return JSON.stringify({
+        ok: true,
+        sessionId: targetSessionId,
+        title: session.title ?? null,
+        archived: false,
+        changed: true,
+        message: 'Session is back in the sidebar. Send it a prompt to continue the work.',
+      });
+    }
+
+    const result = await archiveSessionsAndDestroyProviders([targetSessionId], {
+      archiveSession: async (id) => {
+        await AISessionsRepository.updateMetadata(id, { isArchived: true });
+      },
+      destroyProvider: (id) => ProviderFactory.destroyProvider(id),
+      onArchiveError: (id, error) => {
+        console.error(`[MetaAgentService] archive_session: archive write failed for ${id}:`, error);
+      },
+      onProviderCleanupError: (id, error) => {
+        console.error(`[MetaAgentService] archive_session: provider cleanup failed for ${id}:`, error);
+      },
+    });
+
+    if (result.archiveFailures > 0) {
+      return JSON.stringify({ ok: false, sessionId: targetSessionId, error: 'Could not archive the session.' });
+    }
+    return JSON.stringify({
+      ok: true,
+      sessionId: targetSessionId,
+      title: session.title ?? null,
+      archived: true,
+      changed: true,
+      // Reported rather than swallowed: the session IS archived either way, but a provider that
+      // refused to die is still holding what it held, which is the half a caller cares about.
+      providerReleased: result.providerCleanupFailures === 0,
+      message:
+        result.providerCleanupFailures === 0
+          ? 'Session archived and its runtime released.'
+          : 'Session archived, but its provider did not shut down cleanly and may still be holding resources.',
+    });
   }
 
   private async ensurePlanTrackerItem(workspaceId: string, sessionId: string, result: SessionResultData): Promise<void> {
