@@ -30,6 +30,14 @@ import {
   LIST_CITABLE_INPUTS_TOOL_SCHEMA,
 } from "../services/pageCitations/listCitableInputs";
 import { handleListCitableInputs } from "../services/pageCitations/listCitableInputsHandler";
+import {
+  isCrossWorkspaceAccessAllowed,
+  readCrossWorkspaceMessagingMode,
+} from "../services/crossWorkspaceMessaging";
+import {
+  hasLiveWindowForWorkspace,
+  listOpenWorkspacePaths,
+} from "../window/windowState";
 
 // ─── Utilities ──────────────────────────────────────────────────────
 
@@ -423,35 +431,66 @@ async function handleGetWorkstreamOverview(
   return lines.join("\n");
 }
 
-async function handleListRecentSessions(
+/** Exported for tests, like `fetchLastAssistantResponse` above it. */
+export async function handleListRecentSessions(
   query: string | undefined,
   limit: number,
   offset: number,
   workspaceId: string,
   currentSessionId: string,
   includeArchived: boolean,
-  searchField: "title" | "content" | "both" = "both"
+  searchField: "title" | "content" | "both" = "both",
+  workspacePaths?: string[]
 ): Promise<string> {
-  let sessions: SessionMeta[];
+  const scopes =
+    workspacePaths && workspacePaths.length > 0 ? workspacePaths : [workspaceId];
+  const multi = scopes.length > 1 || scopes[0] !== workspaceId;
+  const mode = multi ? readCrossWorkspaceMessagingMode() : "off";
 
   const options = { includeArchived };
   const trimmedQuery = query?.trim() ?? "";
-  if (trimmedQuery.length > 0) {
-    if (searchField === "title") {
-      // Title-only: list everything in the workspace, then case-insensitive
-      // substring match on title. Avoids the FTS path which also matches
-      // conversation content. See #83.
-      const all = await AISessionsRepository.list(workspaceId, options);
-      const needle = trimmedQuery.toLowerCase();
-      sessions = all.filter((s) =>
-        (s.title ?? "").toLowerCase().includes(needle)
-      );
+
+  const gathered: SessionMeta[] = [];
+  for (const scope of scopes) {
+    let got: SessionMeta[];
+    if (trimmedQuery.length > 0) {
+      if (searchField === "title") {
+        // Title-only: list everything in the workspace, then case-insensitive
+        // substring match on title. Avoids the FTS path which also matches
+        // conversation content. See #83.
+        const all = await AISessionsRepository.list(scope, options);
+        const needle = trimmedQuery.toLowerCase();
+        got = all.filter((s) => (s.title ?? "").toLowerCase().includes(needle));
+      } else {
+        got = await AISessionsRepository.search(scope, trimmedQuery, options);
+      }
     } else {
-      sessions = await AISessionsRepository.search(workspaceId, trimmedQuery, options);
+      got = await AISessionsRepository.list(scope, options);
     }
-  } else {
-    sessions = await AISessionsRepository.list(workspaceId, options);
+
+    if (scope !== workspaceId) {
+      got = got.filter((s) =>
+        isCrossWorkspaceAccessAllowed({
+          mode,
+          callerSessionId: currentSessionId,
+          callerWorkspaceId: workspaceId,
+          target: {
+            workspacePath:
+              (s as { workspacePath?: string | null }).workspacePath ?? scope,
+            createdBySessionId:
+              (s as { createdBySessionId?: string | null }).createdBySessionId ?? null,
+          },
+          isWorkspaceLoaded: hasLiveWindowForWorkspace,
+        })
+      );
+    }
+    gathered.push(...got);
   }
+
+  // Newest first across every workspace, so a merged list still reads as one timeline.
+  const sessions = multi
+    ? gathered.sort((a, b) => Number(b.updatedAt ?? 0) - Number(a.updatedAt ?? 0))
+    : gathered;
 
   const leafSessions = sessions.filter(
     (s) => s.sessionType !== "workstream"
@@ -744,7 +783,7 @@ export const SESSION_CONTEXT_TOOL_SCHEMAS = [
   {
     name: "list_recent_sessions",
     description:
-      "List recent AI sessions in the current workspace. Optionally search by title or content. Use this when the user references a previous session or asks about past work (e.g., 'implement the plan from our session about X'). By default, archived sessions are excluded -- pass includeArchived: true to search across archived sessions as well. To find a session by name when the search term appears frequently in conversations, pass searchField: 'title' to restrict matching to session titles only.",
+      "List recent AI sessions. Defaults to the current workspace; pass workspacePath to list another project, or allWorkspaces: true to list every project currently open. Reaching past your own workspace obeys the same agent.crossWorkspaceMessaging setting that governs send_prompt, so sessions you may not message are not listed either. Optionally search by title or content. Use this when the user references a previous session or asks about past work (e.g., 'implement the plan from our session about X'). By default, archived sessions are excluded -- pass includeArchived: true to search across archived sessions as well. To find a session by name when the search term appears frequently in conversations, pass searchField: 'title' to restrict matching to session titles only.",
     inputSchema: {
       type: "object",
       properties: {
@@ -773,6 +812,16 @@ export const SESSION_CONTEXT_TOOL_SCHEMAS = [
           type: "boolean",
           description:
             "If true, include archived sessions in the results. Defaults to false. Archived sessions are marked with [ARCHIVED] in the output.",
+        },
+        workspacePath: {
+          type: "string",
+          description:
+            "List sessions in this workspace path instead of the current one. Subject to the agent.crossWorkspaceMessaging setting.",
+        },
+        allWorkspaces: {
+          type: "boolean",
+          description:
+            "If true, list sessions across every workspace currently open in a window, newest first. Subject to the agent.crossWorkspaceMessaging setting.",
         },
       },
       required: [],
@@ -925,6 +974,16 @@ export async function dispatchSessionContextTool(
           rawSearchField === "title" || rawSearchField === "content"
             ? rawSearchField
             : "both";
+        const allWorkspaces = Boolean(args?.allWorkspaces);
+        const askedWorkspace =
+          typeof args?.workspacePath === "string" ? args.workspacePath.trim() : "";
+        // undefined means "just my own workspace", which keeps the single-workspace path
+        // byte for byte what it was before this parameter existed.
+        const listScopes = allWorkspaces
+          ? listOpenWorkspacePaths()
+          : askedWorkspace
+            ? [askedWorkspace]
+            : undefined;
         const result = await handleListRecentSessions(
           args?.query as string | undefined,
           limit,
@@ -932,7 +991,8 @@ export async function dispatchSessionContextTool(
           workspaceId,
           aiSessionId,
           includeArchived,
-          searchField
+          searchField,
+          listScopes
         );
         return {
           content: [{ type: "text", text: result }],
