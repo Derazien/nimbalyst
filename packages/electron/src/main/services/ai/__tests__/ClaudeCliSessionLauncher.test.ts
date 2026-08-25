@@ -16,6 +16,7 @@ describe('ClaudeCliSessionLauncher', () => {
     pathExists?: (p: string) => boolean;
     homedir?: () => string;
     hasEnterpriseMcpLockdown?: () => boolean;
+    baseEnv?: Record<string, string | undefined>;
   } = {}) {
     const writes: Array<{ file: string; data: string }> = [];
     const createClaudeCliTerminal =
@@ -35,7 +36,7 @@ describe('ClaudeCliSessionLauncher', () => {
       resolveClaudeExecutable: () => '/usr/local/bin/claude',
       getEnhancedPath: () => '/opt/bin:/usr/bin',
       terminalManager: { createClaudeCliTerminal },
-      baseEnv: { ANTHROPIC_API_KEY: 'sk-ant-leak', HOME: '/Users/me' },
+      baseEnv: opts.baseEnv ?? { ANTHROPIC_API_KEY: 'sk-ant-leak', HOME: '/Users/me' },
       tempDir: '/tmp/claude-cli-test',
       mkdir: vi.fn(async () => undefined),
       writeFile: vi.fn(async (file: string, data: string) => {
@@ -94,12 +95,43 @@ describe('ClaudeCliSessionLauncher', () => {
    * resolved level never reached the spawned process. The SDK path sets the
    * same variable via sdkOptionsBuilder.
    */
-  it('forwards the resolved effort level to the spawned CLI as CLAUDE_CODE_EFFORT_LEVEL', async () => {
-    const { launcher, createClaudeCliTerminal } = makeHarness();
+  /**
+   * THE FORK DELIBERATE DIVERGENCE, GUARDED RATHER THAN CONTRADICTED.
+   *
+   * Upstream forwards effort as CLAUDE_CODE_EFFORT_LEVEL on both the SDK and the interactive
+   * CLI path, and this test used to assert that. But the env var is inherited by every process
+   * the CLI spawns and it OUTRANKS --effort: with it set, the binary answers a mid-session
+   * /effort with "Not applied: CLAUDE_CODE_EFFORT_LEVEL=<x> overrides effort this session". So
+   * this path passes the flag and CLEARS any inherited value, and only the Agent SDK path
+   * (sdkOptionsBuilder) uses the variable.
+   *
+   * Asserting upstream behaviour here failed permanently and invited exactly the wrong repair:
+   * changing the code to match the test, which re-breaks /effort. It now pins what the fork
+   * actually intends, so a rebase that reintroduces env forwarding turns this red on purpose.
+   */
+  it('passes effort as --effort and clears an inherited env var, so /effort still switches', async () => {
+    const { launcher, createClaudeCliTerminal } = makeHarness({
+      baseEnv: { HOME: '/Users/me', CLAUDE_CODE_EFFORT_LEVEL: 'low' },
+    });
     await launcher.launch({ ...baseInput, effortLevel: 'max' });
 
     const [, opts] = createClaudeCliTerminal.mock.calls[0];
-    expect(opts.spawnConfig.env.CLAUDE_CODE_EFFORT_LEVEL).toBe('max');
+    const args = opts.spawnConfig.args;
+    expect(args).toContain('--effort');
+    expect(args[args.indexOf('--effort') + 1]).toBe('max');
+    // The inherited value would have outranked the flag, so it must be gone.
+    expect(opts.spawnConfig.env.CLAUDE_CODE_EFFORT_LEVEL).toBeUndefined();
+  });
+
+  it('leaves an exported effort alone when we select none of our own', async () => {
+    const { launcher, createClaudeCliTerminal } = makeHarness({
+      baseEnv: { HOME: '/Users/me', CLAUDE_CODE_EFFORT_LEVEL: 'low' },
+    });
+    await launcher.launch(baseInput);
+
+    const [, opts] = createClaudeCliTerminal.mock.calls[0];
+    expect(opts.spawnConfig.args).not.toContain('--effort');
+    expect(opts.spawnConfig.env.CLAUDE_CODE_EFFORT_LEVEL).toBe('low');
   });
 
   it('leaves CLAUDE_CODE_EFFORT_LEVEL unset when no effort is resolved', async () => {

@@ -139,16 +139,19 @@ export interface LaunchClaudeCliSessionInput {
   /**
    * Resolved effort level for this session, passed to the CLI as `--effort`.
    * Omit to leave the CLI on whatever the user already configured.
+   *
+   * FLAG HERE, ENV ON THE SDK PATH, AND THEY MUST NOT BE MERGED. Upstream forwards effort as
+   * `CLAUDE_CODE_EFFORT_LEVEL` on both paths. That variable is inherited by every process the
+   * CLI spawns and it OUTRANKS `--effort`, so setting it here would make mid-session /effort
+   * switching impossible: the binary prints "Not applied: CLAUDE_CODE_EFFORT_LEVEL=<x> overrides
+   * effort this session". The Agent SDK path keeps the env var (`sdkOptionsBuilder`); this,
+   * the interactive CLI path, uses the flag and clears any inherited value
+   * (`buildClaudeCliSpawnConfig`). A rebase that reintroduces an env-forwarding twin of this
+   * field is re-breaking /effort, not fixing a divergence.
    */
   effortLevel?: string;
   /** Resume an existing CLI session id (`--resume <id>`). */
   resumeSessionId?: string;
-  /**
-   * Resolved effort level for this session, forwarded to the CLI as
-   * `CLAUDE_CODE_EFFORT_LEVEL` (parity with the Agent SDK path). Omit to leave
-   * the CLI on its own default.
-   */
-  effortLevel?: string;
   cols?: number;
   rows?: number;
   /**
@@ -337,7 +340,6 @@ export class ClaudeCliSessionLauncher {
       baseEnv: this.deps.baseEnv ?? process.env,
       enhancedPath: this.deps.getEnhancedPath(),
       extraEnv,
-      effortLevel: input.effortLevel,
       allowedMcpServerNames,
       settingsJson,
       dangerouslySkipPermissions,

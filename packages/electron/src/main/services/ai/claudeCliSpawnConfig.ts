@@ -81,9 +81,12 @@ export interface ClaudeCliSpawnInput {
   /** Resolved Claude model variant (e.g. `opus`, `sonnet`). */
   model?: string;
   /**
-   * Effort level for the session (`--effort`). Omit to leave the CLI on whatever
-   * the user already configured, via their own `CLAUDE_CODE_EFFORT_LEVEL` export
-   * or its built-in default.
+   * Effort level for the session, passed as `--effort`. Omit to leave the CLI on whatever the
+   * user already configured, via their own `CLAUDE_CODE_EFFORT_LEVEL` export or its default.
+   *
+   * NOT forwarded as an env var, deliberately: see the flag-versus-env note on
+   * ClaudeCliSessionLauncher's own `effortLevel`, and the two call sites below that push the
+   * flag and delete the inherited variable.
    */
   effortLevel?: string;
   /** Resume an existing CLI session id (`--resume <id>`). */
@@ -99,14 +102,6 @@ export interface ClaudeCliSpawnInput {
    * to point the CLI at the local SSE-tee proxy. Never used to inject API keys.
    */
   extraEnv?: Record<string, string>;
-  /**
-   * Resolved effort level for this session, forwarded as
-   * `CLAUDE_CODE_EFFORT_LEVEL`. Mirrors the Agent SDK path, which sets the same
-   * variable (`sdkOptionsBuilder`). Every resolved value is forwarded, including
-   * `high`, so the selector matches what the CLI actually runs (#844). Omit to
-   * leave the CLI on its own default.
-   */
-  effortLevel?: string;
   /**
    * Names of trusted MCP servers to pre-allow (NIM-806 BUG 2). Each becomes a
    * server-level `mcp__<server>` entry in `--allowedTools`, so the genuine CLI
