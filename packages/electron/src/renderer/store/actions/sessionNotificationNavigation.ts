@@ -5,6 +5,7 @@ import {
   initSessionList,
   refreshSessionListAtom,
   sessionRegistryAtom,
+  showArchivedSessionsAtom,
 } from '../atoms/sessions';
 import {
   activeWorkspacePathAtom,
@@ -115,7 +116,7 @@ async function lookupTarget(
     showUnavailable(target, 'missing');
     return null;
   }
-  if (session.isArchived) {
+  if (session.isArchived && !target.allowArchived) {
     showUnavailable(target, 'archived');
     return null;
   }
@@ -177,7 +178,8 @@ async function hydrateTarget(
 
   let hydrated = fromRegistry();
   if (!hydrated) {
-    await store.set(refreshSessionListAtom);
+    // An archived target is only in the list when archived rows are included.
+    await store.set(refreshSessionListAtom, target.allowArchived ? true : undefined);
     hydrated = fromRegistry();
   }
   return hydrated ?? null;
@@ -205,6 +207,12 @@ export async function navigateToNotificationSession(
 
   if (!await activateWorkspace(target)) return false;
 
+  // An archived session opens the way the sidebar opens one: the archive filter comes on so
+  // the row is on screen, and the session stays archived.
+  if (session.isArchived) {
+    store.set(showArchivedSessionsAtom, true);
+  }
+
   // Prime the workspace-scoped state before selecting. AgentMode performs the
   // same initialization when the project view mounts; these calls make the
   // notification path deterministic even when navigation arrives first.
@@ -220,7 +228,7 @@ export async function navigateToNotificationSession(
   ]);
 
   const hydrated = await hydrateTarget(target);
-  if (!hydrated || hydrated.isArchived) {
+  if (!hydrated || (hydrated.isArchived && !target.allowArchived)) {
     // A registry miss after the pre-flight lookup succeeded is stale renderer
     // state, not a missing session -- see hydrateTarget.
     return showUnavailable(target, hydrated?.isArchived ? 'archived' : 'lookup-failed');

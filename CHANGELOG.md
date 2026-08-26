@@ -965,7 +965,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Agents can archive and unarchive a session, including one in another open project, and the session list updates to match.
 - New Cross-project sessions experimental feature (Settings > Advanced): an agent can start a session in another open project, pick the provider and model it runs on, and list the sessions it started anywhere. Off by default.
 - Extensions can open a session or a file that belongs to another of your open projects, and it lands in the window showing that project instead of reporting that it does not exist.
-- Sessions and files named in a transcript now show which project they belong to, with that project's rail badge: a session from another project opens in that project, and a file from another project opens here with a badge that jumps there.
+- Sessions and files named in a transcript now show which project they belong to, with that project's rail badge: a session from another project opens in that project (an archived one opens too and stays archived, as from the sidebar), and a file from another project opens here with a badge that jumps there.
 
 ### Changed
 <!-- Changes to existing functionality go here -->

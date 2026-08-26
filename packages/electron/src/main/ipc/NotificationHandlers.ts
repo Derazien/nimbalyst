@@ -87,6 +87,9 @@ export function registerNotificationHandlers(): void {
             typeof args?.sourceLabel === 'string' && args.sourceLabel.trim()
               ? args.sourceLabel.trim()
               : `Session ${sessionId.slice(0, 8)}`,
+          // A deliberate open, unlike a notification click: an archived session opens and stays
+          // archived, as it does from the sidebar.
+          allowArchived: true,
         });
       } catch (error) {
         logger.main.error('[NotificationHandlers] sessions:open-in-project failed:', error);
