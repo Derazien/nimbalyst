@@ -131,38 +131,44 @@ async function lookupTarget(
  * main scoped to the previous project.
  */
 async function activateWorkspace(target: SessionNotificationNavigationTarget): Promise<boolean> {
-  if (store.get(activeWorkspacePathAtom) === target.workspacePath) return true;
+  if (await activateProject(target.workspacePath)) return true;
+  return showUnavailable(target, 'project-unavailable');
+}
+
+/**
+ * Make `workspacePath` the project this window shows, registering it with main and adding it
+ * to the rail if it is not there yet. False when it cannot: the rail is at its cap, or main
+ * refused the registration. Shared by session navigation and by opening a file that belongs to
+ * another project, so both switch the rail the same way.
+ */
+export async function activateProject(workspacePath: string): Promise<boolean> {
+  if (store.get(activeWorkspacePathAtom) === workspacePath) return true;
 
   const alreadyOpen = store
     .get(openProjectsAtom)
-    .some((project) => project.path === target.workspacePath);
+    .some((project) => project.path === workspacePath);
 
   if (!alreadyOpen) {
     try {
       const registration = await window.electronAPI.invoke(
         'workspace:register-additional',
-        { workspacePath: target.workspacePath },
+        { workspacePath },
       );
-      if (!registration?.success) {
-        return showUnavailable(target, 'project-unavailable');
-      }
+      if (!registration?.success) return false;
     } catch {
-      return showUnavailable(target, 'project-unavailable');
+      return false;
     }
   }
 
   store.set(addOpenProjectAtom, {
-    path: target.workspacePath,
-    name: target.workspacePath.split(/[\\/]/).filter(Boolean).pop() || target.workspacePath,
+    path: workspacePath,
+    name: workspacePath.split(/[\\/]/).filter(Boolean).pop() || workspacePath,
     openedAt: Date.now(),
   });
 
   // `addOpenProjectAtom` silently no-ops when the rail is at its cap; without
-  // this check we would go on to select a session against the wrong workspace.
-  if (store.get(activeWorkspacePathAtom) !== target.workspacePath) {
-    return showUnavailable(target, 'project-unavailable');
-  }
-  return true;
+  // this check we would go on to act against the wrong workspace.
+  return store.get(activeWorkspacePathAtom) === workspacePath;
 }
 
 /**
