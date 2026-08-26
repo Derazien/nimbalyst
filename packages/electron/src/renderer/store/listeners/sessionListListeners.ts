@@ -17,7 +17,18 @@ import {
   sessionParentIdAtom,
 } from '../atoms/sessions';
 import { workstreamStateAtom } from '../atoms/workstreamState';
-import { sessionRefMapAtom, type SessionRefMeta } from '@nimbalyst/runtime/ui/AgentTranscript/session/sessionRefAtoms';
+import {
+  sessionRefMapAtom,
+  sessionRefResolverAtom,
+  resolvedSessionRefsAtom,
+  type SessionRefMeta,
+} from '@nimbalyst/runtime/ui/AgentTranscript/session/sessionRefAtoms';
+import {
+  fileOriginResolverAtom,
+  clearFileOriginsAtom,
+} from '@nimbalyst/runtime/ui/AgentTranscript/session/fileOriginAtoms';
+import { projectBadgeFor } from '../../utils/projectBadge';
+import { activeWorkspacePathAtom } from '../atoms/openProjects';
 import type { AgentRole } from '@nimbalyst/runtime/ai/server/types';
 
 // Track pending refresh to debounce rapid-fire events
@@ -218,12 +229,65 @@ export function initSessionListListeners(): () => void {
         phase: meta.phase,
         provider: meta.provider,
         isAwaitingInput: meta.hasPendingInteractivePrompt || undefined,
+        // The registry is the project on screen, so nothing in it is foreign.
+        project: meta.workspaceId ? { ...projectBadgeFor(meta.workspaceId), foreign: false } : undefined,
       });
     }
     store.set(sessionRefMapAtom, next);
   };
   mirrorSessionRefs();
   cleanups.push(store.sub(sessionRegistryAtom, mirrorSessionRefs));
+
+  // A chip for a session the registry does not know asks main where it lives. Main answers
+  // only while the Cross-project sessions feature is on; otherwise the chip stays a dim id,
+  // exactly as before.
+  store.set(sessionRefResolverAtom, {
+    resolve: async (sessionId: string) => {
+      const located = (await window.electronAPI.invoke('sessions:locate', { sessionId })) as
+        | { workspacePath: string | null; foreign: boolean; title: string | null; provider: string | null; phase: string | null }
+        | null;
+      if (!located?.workspacePath) return null;
+      return {
+        id: sessionId,
+        title: located.title || 'Untitled Session',
+        provider: located.provider ?? undefined,
+        phase: located.phase ?? undefined,
+        project: { ...projectBadgeFor(located.workspacePath), foreign: located.foreign },
+      };
+    },
+  });
+  cleanups.push(() => store.set(sessionRefResolverAtom, null));
+
+  // The same for files a transcript names: main says which known project owns the path, and
+  // the badge's click opens the file in that project's window.
+  store.set(fileOriginResolverAtom, {
+    resolve: async (filePath: string) => {
+      const located = (await window.electronAPI.invoke('workspace:locate-path', { filePath })) as
+        | { project: string | null; name: string | null; isOpen: boolean; foreign: boolean }
+        | null;
+      if (!located) return null;
+      const badge = located.project ? projectBadgeFor(located.project, located.name ?? undefined) : null;
+      return {
+        project: located.project,
+        name: badge?.name ?? null,
+        initials: badge?.initials ?? null,
+        color: badge?.color ?? null,
+        foreign: located.foreign,
+      };
+    },
+    openInProject: (filePath: string, project: string) =>
+      window.electronAPI.invoke('workspace:open-file-in-project', { workspacePath: project, filePath }),
+  });
+  cleanups.push(() => store.set(fileOriginResolverAtom, null));
+
+  // "Foreign" is relative to the project on screen, so every remembered answer is stale the
+  // moment the rail switches.
+  cleanups.push(
+    store.sub(activeWorkspacePathAtom, () => {
+      store.set(clearFileOriginsAtom);
+      store.set(resolvedSessionRefsAtom, new Map());
+    })
+  );
 
   // Cleanup function
   return () => {

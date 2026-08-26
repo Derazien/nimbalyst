@@ -16,6 +16,9 @@ import {
 } from '../atoms/sessions';
 import { clearSessionUnreadAtom } from '../atoms/sessionActivity';
 import { setWindowModeAtom } from '../atoms/windowMode';
+import { activeWorkspacePathAtom } from '../atoms/openProjects';
+import { navigateToNotificationSession } from '../actions/sessionNotificationNavigation';
+import { pathsEqual } from '../../../shared/projectLocator';
 import { syncConfigAtom, type SyncConfig } from '../atoms/appSettings';
 
 /**
@@ -37,6 +40,15 @@ export function initTrayListeners(): () => void {
   const handleNavigateToSession = (data: { sessionId: string; workspacePath: string }) => {
     const { sessionId, workspacePath } = data;
     if (!sessionId || !workspacePath) return;
+
+    // Main picked this window because it hosts the session's project, but with the project
+    // rail that project may not be the one on screen. The registry lookups below only know
+    // the project on screen, so hand any other project to the navigator, which switches the
+    // rail first.
+    if (!pathsEqual(store.get(activeWorkspacePathAtom), workspacePath)) {
+      void navigateToNotificationSession({ sessionId, workspacePath, sourceLabel: 'Tray' });
+      return;
+    }
 
     // Switch to agent mode (kanban exit is handled globally by
     // onWorkstreamSelectedCallbackAtom when setSelectedWorkstreamAtom fires)

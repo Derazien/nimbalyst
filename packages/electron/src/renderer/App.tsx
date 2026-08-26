@@ -79,6 +79,7 @@ import {
   initSessionList,
 } from './store/atoms/sessions';
 import { dispatchCreateNewSession } from './store/actions/sessionHistoryActions';
+import { openSessionById, hostOpenSessionDeps } from './store/actions/openSessionReference';
 import { NavigationGutter } from './components/NavigationGutter';
 // NOTE: useTabs and useTabNavigation removed - EditorMode manages tabs now
 import type { ContentMode } from './types/WindowModeTypes';
@@ -2317,12 +2318,16 @@ export default function App() {
         });
       }
 
-      setActiveMode('agent');
+      // A session in another project opens in that project; the host routes it there. Only a
+      // session of this project, or one the host cannot place, opens in this window.
+      await openSessionById(sessionId, hostOpenSessionDeps(async (id) => {
+        setActiveMode('agent');
 
-      // Open the session using the AgentMode ref
-      if (agentModeRef.current) {
-        await agentModeRef.current.openSessionInTab(sessionId);
-      }
+        // Open the session using the AgentMode ref
+        if (agentModeRef.current) {
+          await agentModeRef.current.openSessionInTab(id);
+        }
+      }));
     };
 
     window.addEventListener('open-ai-session', handleOpenAiSession as unknown as EventListener);

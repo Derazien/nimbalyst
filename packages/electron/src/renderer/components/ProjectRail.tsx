@@ -51,6 +51,7 @@ import { ProjectIcon } from './ProjectIcon';
 import { requestConfirmation } from '../dialogs/requestConfirmation';
 import { errorNotificationService } from '../services/ErrorNotificationService';
 import { useProjectRailDrag } from './hooks/useProjectRailDrag';
+import { projectInitials } from '../utils/projectBadge';
 import './ProjectRail.css';
 
 const REVEAL_LABEL = getShowInFileBrowserLabel();
