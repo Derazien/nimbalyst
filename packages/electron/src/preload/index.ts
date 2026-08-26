@@ -577,6 +577,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('ai:sendMessage', message, documentContext, sessionId, workspacePath),
   aiGetSessions: (workspacePath?: string) => ipcRenderer.invoke('ai:getSessions', workspacePath),
   aiLoadSession: (sessionId: string, workspacePath?: string, trackAsResume?: boolean) => ipcRenderer.invoke('ai:loadSession', sessionId, workspacePath, trackAsResume),
+  /**
+   * Bring a session on screen, in this project or any other open one. Unlike `aiLoadSession`,
+   * which returns the record and changes nothing visible, this routes to the window that owns
+   * the project and selects the session there.
+   */
+  openSessionInProject: (args: { sessionId: string; workspacePath: string; sourceLabel?: string }) =>
+    ipcRenderer.invoke('sessions:open-in-project', args),
   aiClearSession: () => ipcRenderer.invoke('ai:clearSession'),
   aiUpdateSessionMessages: (sessionId: string, messages: any[], workspacePath?: string) =>
     ipcRenderer.invoke('ai:updateSessionMessages', sessionId, messages, workspacePath),

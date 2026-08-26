@@ -15,7 +15,7 @@ import { getSyncId, removeFileFromIndex } from '../services/DocSyncService';
 const { writeFile, mkdir, rename, unlink, rmdir, copyFile, readFile, rm, stat, cp } = fsPromises;
 
 const execAsync = promisify(exec);
-import { windowStates, getWindowId, createWindow, markRecentlyDeleted, clearRecentlyDeleted } from '../window/WindowManager';
+import { windowStates, getWindowId, createWindow, findWindowByWorkspace, markRecentlyDeleted, clearRecentlyDeleted } from '../window/WindowManager';
 // Aliased: this module has a local `windows` (BrowserWindow[]) further down.
 import { syncRepresentedFilename, windows as windowsById } from '../window/windowState';
 import { startFileWatcher, stopFileWatcher } from '../file/FileWatcher';
@@ -866,6 +866,42 @@ export function registerWorkspaceHandlers() {
             return { success: true };
         } catch (error: any) {
             console.error('Error opening file in workspace:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
+    /**
+     * Open a file in the window that owns a NAMED project.
+     *
+     * `workspace:open-file` above sends `open-document` to whichever window called it, which
+     * is right for a file in that window's own project and wrong for anything else: the
+     * document opens in a window whose workspace does not contain it. This routes by project
+     * instead.
+     *
+     * A project with no window is refused rather than opened. That matches the rule the
+     * cross-project session tools already use, and it keeps this handler honest: opening a
+     * window and hoping its renderer is ready for a document it has not been told about is
+     * how a "success" that shows nothing gets made.
+     */
+    safeHandle('workspace:open-file-in-project', async (_event, options: { workspacePath?: string; filePath?: string }) => {
+        const workspacePath = typeof options?.workspacePath === 'string' ? options.workspacePath.trim() : '';
+        const filePath = typeof options?.filePath === 'string' ? options.filePath.trim() : '';
+        if (!workspacePath || !filePath) {
+            return { success: false, error: 'workspace:open-file-in-project requires workspacePath and filePath' };
+        }
+        try {
+            const target = findWindowByWorkspace(workspacePath);
+            if (!target || target.isDestroyed()) {
+                return { success: false, error: `Project ${workspacePath} is not open in a window` };
+            }
+            const absoluteFilePath = path.isAbsolute(filePath) ? filePath : path.join(workspacePath, filePath);
+            if (target.isMinimized()) target.restore();
+            target.focus();
+            target.show();
+            target.webContents.send('open-document', { path: absoluteFilePath, workspacePath });
+            return { success: true };
+        } catch (error: any) {
+            console.error('Error opening file in another project:', error);
             return { success: false, error: error.message };
         }
     });

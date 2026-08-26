@@ -209,12 +209,46 @@ class PanelHostImpl implements PanelHost {
     };
   }
 
-  openFile(path: string): void {
-    this.onOpenFile(path);
+  /**
+   * Additive: without `project` this is exactly the old one-argument call, so every existing
+   * extension keeps working. With another project it has to go through main, because this
+   * window cannot open a document belonging to a project it is not showing.
+   */
+  openFile(path: string, options?: { project?: string }): void {
+    const project = options?.project?.trim();
+    if (!project || project === this.workspacePath) {
+      this.onOpenFile(path);
+      return;
+    }
+    void window.electronAPI
+      .invoke('workspace:open-file-in-project', { workspacePath: project, filePath: path })
+      .catch((error: unknown) => {
+        console.error('[PanelHost] openFile across projects failed:', error);
+      });
   }
 
   openPanel(panelId: string): void {
     this.onOpenPanel(panelId);
+  }
+
+  /**
+   * Goes through main rather than touching this window's DOM, so a session in another project
+   * lands in the window that actually shows that project.
+   */
+  async openSession(sessionId: string, options?: { project?: string }): Promise<boolean> {
+    const id = sessionId?.trim();
+    if (!id) return false;
+    try {
+      const result = await window.electronAPI.invoke('sessions:open-in-project', {
+        sessionId: id,
+        workspacePath: options?.project?.trim() || this.workspacePath,
+        sourceLabel: this.extensionId,
+      });
+      return (result as { ok?: boolean })?.ok === true;
+    } catch (error) {
+      console.error('[PanelHost] openSession failed:', error);
+      return false;
+    }
   }
 
   close(): void {

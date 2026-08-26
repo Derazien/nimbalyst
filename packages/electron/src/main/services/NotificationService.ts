@@ -409,32 +409,69 @@ class NotificationService {
       return;
     }
 
-    const navigation: SessionNotificationNavigationTarget = {
+    this.routeSessionNavigation({
       sessionId: options.sessionId,
       workspacePath: options.workspacePath,
       sourceLabel: this.getSourceLabel(options),
+    });
+  }
+
+  /**
+   * Take a session/project pair to the window that owns that project.
+   *
+   * This is the only correct way to open a session that may live in another project, and until
+   * now a desktop notification click was the only thing that could reach it. Every other
+   * surface improvised a same-window version: they look for the row in the current window's
+   * DOM or registry, which cannot work for a project that window is not showing, and report
+   * "not found" for a session that exists.
+   *
+   * Three window states, all handled: showing the project (send straight to it), still opening
+   * it (replace the queued target so repeated calls are idempotent rather than stacking), and
+   * not open at all (open the project, queue the target for its renderer to drain on mount).
+   */
+  routeSessionNavigation(navigation: SessionNotificationNavigationTarget): {
+    ok: boolean;
+    delivered?: 'window' | 'opening';
+    error?: string;
+  } {
+    if (!navigation?.sessionId || !navigation?.workspacePath) {
+      // Deliberately not "raise whatever window is around": a half-specified target that
+      // pulls focus somewhere arbitrary is worse than a refusal the caller can report.
+      return { ok: false, error: 'sessionId and workspacePath are both required to open a session' };
+    }
+
+    const { workspacePath } = navigation;
+    const targetWindow = findWindowByWorkspace(workspacePath);
+    const focusExisting = (): void => {
+      if (!targetWindow || targetWindow.isDestroyed()) return;
+      if (targetWindow.isMinimized()) {
+        targetWindow.restore();
+      }
+      targetWindow.focus();
+      targetWindow.show();
     };
 
-    if (this.takeLivePendingNavigation(options.workspacePath)) {
-      // A window for this workspace is still opening. Keep only the latest
-      // target so repeated clicks are idempotent rather than queued.
-      this.pendingNavigations.set(options.workspacePath, {
-        target: navigation,
-        queuedAt: Date.now(),
-      });
+    if (this.takeLivePendingNavigation(workspacePath)) {
+      // A window for this workspace is still opening. Keep only the latest target so repeated
+      // calls are idempotent rather than queued.
+      this.pendingNavigations.set(workspacePath, { target: navigation, queuedAt: Date.now() });
       focusExisting();
-      return;
+      return { ok: true, delivered: 'opening' };
     }
 
     if (!targetWindow || targetWindow.isDestroyed()) {
       this.openWorkspaceForNavigation(navigation);
-      return;
+      return { ok: true, delivered: 'opening' };
     }
-
-    // logger.main.info('[NotificationService] Found window for workspace:', options.workspacePath);
 
     focusExisting();
     targetWindow.webContents.send('notification-clicked', navigation);
+    return { ok: true, delivered: 'window' };
+  }
+
+  /** Drop every queued navigation. Test seam; nothing in the app needs it. */
+  clearPendingNavigations(): void {
+    this.pendingNavigations.clear();
   }
 
   /**

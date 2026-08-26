@@ -964,6 +964,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Agents can message and inspect sessions in another open project when the new Cross-workspace messaging setting (Agent Features) allows it; it is off by default, with "sessions it created" and "any session in an open project" as the two wider levels.
 - Agents can archive and unarchive a session, including one in another open project, and the session list updates to match.
 - New Cross-project sessions experimental feature (Settings > Advanced): an agent can start a session in another open project, pick the provider and model it runs on, and list the sessions it started anywhere. Off by default.
+- Extensions can open a session or a file that belongs to another of your open projects, and it lands in the window showing that project instead of reporting that it does not exist.
 
 ### Changed
 <!-- Changes to existing functionality go here -->

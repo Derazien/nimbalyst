@@ -64,6 +64,37 @@ export function registerNotificationHandlers(): void {
     return notificationService.consumePendingNavigation(workspacePath);
   });
 
+  /**
+   * Open a session, in this project or another one, from anywhere.
+   *
+   * Same routing a notification click uses. Any surface that knows a session id and the
+   * project it belongs to can call this instead of hunting for the row in its own window,
+   * which is what every improvised opener did and why they broke across projects.
+   */
+  safeHandle(
+    'sessions:open-in-project',
+    async (_event, args: { sessionId?: string; workspacePath?: string; sourceLabel?: string }) => {
+      const sessionId = typeof args?.sessionId === 'string' ? args.sessionId.trim() : '';
+      const workspacePath = typeof args?.workspacePath === 'string' ? args.workspacePath.trim() : '';
+      if (!sessionId || !workspacePath) {
+        return { ok: false, error: 'sessions:open-in-project requires sessionId and workspacePath' };
+      }
+      try {
+        return notificationService.routeSessionNavigation({
+          sessionId,
+          workspacePath,
+          sourceLabel:
+            typeof args?.sourceLabel === 'string' && args.sourceLabel.trim()
+              ? args.sourceLabel.trim()
+              : `Session ${sessionId.slice(0, 8)}`,
+        });
+      } catch (error) {
+        logger.main.error('[NotificationHandlers] sessions:open-in-project failed:', error);
+        return { ok: false, error: error instanceof Error ? error.message : String(error) };
+      }
+    }
+  );
+
   // Get OS notifications enabled status
   safeHandle('notifications:get-enabled', async () => {
     try {

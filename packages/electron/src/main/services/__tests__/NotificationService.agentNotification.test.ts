@@ -695,3 +695,57 @@ describe('NotificationService agent notifications', () => {
     );
   });
 });
+
+/**
+ * The same routing, reachable by something other than a desktop notification.
+ *
+ * The three window cases (open, opening, closed) were already solved here and only a
+ * notification click could get at them, so every other surface that wanted to open a session
+ * improvised a same-window version that cannot cross a project boundary. This is the door.
+ */
+describe('NotificationService.routeSessionNavigation', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.findWindowByWorkspace.mockReturnValue(null);
+    mocks.getMostRecentlyFocusedWorkspaceWindow.mockReturnValue(null);
+    mocks.createWindow.mockReturnValue(makeFakeWindow());
+    notificationService.clearPendingNavigations();
+  });
+
+  it('routes to the window that owns the project, raising it first', () => {
+    const target = makeFakeWindow();
+    mocks.findWindowByWorkspace.mockReturnValue(target);
+
+    const result = notificationService.routeSessionNavigation({
+      sessionId: 'sess-1',
+      workspacePath: '/ws/other',
+      sourceLabel: 'Lea',
+    });
+
+    expect(result).toEqual({ ok: true, delivered: 'window' });
+    expect(target.show).toHaveBeenCalled();
+    expect(target.webContents.send).toHaveBeenCalledWith('notification-clicked', {
+      sessionId: 'sess-1',
+      workspacePath: '/ws/other',
+      sourceLabel: 'Lea',
+    });
+  });
+
+  it('opens a project that has no window and queues the target for its renderer', () => {
+    const result = notificationService.routeSessionNavigation({
+      sessionId: 'sess-2',
+      workspacePath: '/ws/closed',
+      sourceLabel: 'Lea',
+    });
+
+    expect(result).toEqual({ ok: true, delivered: 'opening' });
+    expect(mocks.createWindow).toHaveBeenCalledWith(false, true, '/ws/closed');
+    expect(notificationService.consumePendingNavigation('/ws/closed')).toMatchObject({ sessionId: 'sess-2' });
+  });
+
+  it('refuses without both a session and a project rather than raising a random window', () => {
+    expect(notificationService.routeSessionNavigation({ sessionId: '', workspacePath: '/ws/x', sourceLabel: 'x' }).ok).toBe(false);
+    expect(notificationService.routeSessionNavigation({ sessionId: 's', workspacePath: '', sourceLabel: 'x' }).ok).toBe(false);
+    expect(mocks.createWindow).not.toHaveBeenCalled();
+  });
+});
