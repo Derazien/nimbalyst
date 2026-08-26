@@ -41,7 +41,13 @@ import { extractMessageText, extractUserPrompts } from './metaAgentMessageText';
 import type { NotificationOptions, NotificationResult } from './NotificationService';
 import type { MobilePushResult } from '@nimbalyst/runtime/sync/types';
 import { composeNotificationTitle } from '../../shared/notificationTitle';
-import { resolveCrossWorkspaceAccess, sessionNotReachableMessage } from './crossWorkspaceMessaging';
+import {
+  resolveCrossWorkspaceAccess,
+  sessionNotReachableMessage,
+  resolveCrossProjectSpawn,
+  crossProjectSpawnRefusal,
+  readCrossProjectFeatureEnabled,
+} from './crossWorkspaceMessaging';
 import { archiveSessionsAndDestroyProviders } from './ai/archiveSessionProviderLifecycle';
 import { ProviderFactory } from '@nimbalyst/runtime/ai/server';
 
@@ -98,6 +104,12 @@ interface CreateChildSessionArgs {
   effortLevel?: string;
   /** none (default) | final | messages; see childReporting.ts. */
   reporting?: string;
+  /**
+   * Absolute path of another of the user's open projects to create the session in. Omit for
+   * the caller's own project, which is the only behaviour that existed before and the only
+   * one that does not consult a setting.
+   */
+  project?: string;
 }
 
 /**
@@ -143,6 +155,17 @@ interface SpawnSessionArgs {
   prompt: string;
   useWorktree?: boolean;
   model?: string;
+  /**
+   * Explicit provider for the new session. Without it the provider is read off `model`, then
+   * inherited from the caller. Set it to launch a session on a different engine than the one
+   * calling (e.g. a claude-code caller starting an openai-codex session).
+   */
+  provider?: string;
+  /**
+   * Absolute path of another of the user's open projects to spawn into. See
+   * `CreateChildSessionArgs.project`.
+   */
+  project?: string;
   /**
    * When true and `model` is not explicitly set, the new session uses the
    * caller's model instead of the global app default. Ignored if `model` is
@@ -293,8 +316,8 @@ export class MetaAgentService {
           this.notifyUserJson(callerSessionId, workspaceId, args),
         respondToPrompt: (metaSessionId, workspaceId, args) =>
           this.respondToPrompt(workspaceId, args, metaSessionId),
-        listSpawnedSessions: (metaSessionId, workspaceId) =>
-          this.listSpawnedSessionsJson(metaSessionId, workspaceId),
+        listSpawnedSessions: (metaSessionId, workspaceId, options) =>
+          this.listSpawnedSessionsJson(metaSessionId, workspaceId, options),
         archiveSession: (metaSessionId, workspaceId, targetSessionId) =>
           this.setSessionArchivedJson(metaSessionId, workspaceId, targetSessionId, true),
         unarchiveSession: (metaSessionId, workspaceId, targetSessionId) =>
@@ -460,8 +483,26 @@ export class MetaAgentService {
     args: CreateChildSessionArgs
   ): Promise<string> {
     const childReporting = resolveChildReporting(args.reporting);
-    const result = await this.createChildSessionInternal(metaSessionId, workspaceId, { ...args, childReporting });
-    return JSON.stringify({ ...result, reporting: childReporting }, null, 2);
+    const targetWorkspaceId = this.resolveSpawnTargetWorkspace(workspaceId, args.project);
+    const result = await this.createChildSessionInternal(metaSessionId, targetWorkspaceId, { ...args, childReporting });
+    return JSON.stringify({ ...result, reporting: childReporting, project: targetWorkspaceId }, null, 2);
+  }
+
+  /**
+   * Which project a new session goes into, refusing rather than silently falling back.
+   *
+   * Falling back to the caller's project on a refused `project` would be the worst outcome:
+   * the tool would report success and the session would appear somewhere the caller did not
+   * ask for, which is exactly the class of bug this whole surface exists to remove.
+   */
+  private resolveSpawnTargetWorkspace(callerWorkspaceId: string, project: string | undefined): string {
+    const target = project?.trim() || callerWorkspaceId;
+    if (target === callerWorkspaceId) return target;
+    const decision = resolveCrossProjectSpawn(callerWorkspaceId, target);
+    if (!decision.allowed) {
+      throw new Error(crossProjectSpawnRefusal(target, decision));
+    }
+    return target;
   }
 
   private async createChildSessionInternal(
@@ -764,7 +805,13 @@ export class MetaAgentService {
     // registered under; keep writing that (#1551).
     const workspaceKey = resolveStoredWorkspaceId(parent.workspacePath, workspaceId);
 
-    const isolated = args.isolated === true;
+    const targetWorkspaceId = this.resolveSpawnTargetWorkspace(workspaceKey, args.project);
+    const crossProject = targetWorkspaceId !== workspaceKey;
+
+    // A workstream groups sessions that share a checkout, a files-edited view and a set of
+    // tabs. None of that survives crossing into another project, so a cross-project spawn is
+    // top level whatever `isolated` says, rather than building an incoherent container.
+    const isolated = crossProject || args.isolated === true;
     const reporting = resolveChildReporting(args.reporting, args.notifyOnComplete === true);
     // An isolated session is top-level; one that reports back is really a
     // worker, and would be filed outside the caller's tree (#1876).
@@ -783,8 +830,10 @@ export class MetaAgentService {
     // worktree-resident parent silently lands in the project root and any edits
     // it makes go to the wrong tree. Skip inheritance only when the caller
     // explicitly asked for a brand-new worktree (useWorktree=true).
+    // Never across projects: the caller's worktree is a checkout of the caller's repository,
+    // so inheriting it would send the new session's edits into the wrong tree entirely.
     const inheritedWorktreeId =
-      !args.useWorktree && parent.worktreeId ? parent.worktreeId : undefined;
+      !crossProject && !args.useWorktree && parent.worktreeId ? parent.worktreeId : undefined;
 
     // Resolve effective model: explicit `model` wins; otherwise `inheritModel`
     // copies the caller's model so the new session keeps the same provider/model
@@ -793,11 +842,12 @@ export class MetaAgentService {
     const effectiveModel =
       args.model ?? (args.inheritModel ? parent.model ?? undefined : undefined);
 
-    const childResult = await this.createChildSessionInternal(parentSessionId, workspaceKey, {
+    const childResult = await this.createChildSessionInternal(parentSessionId, targetWorkspaceId, {
       title: args.title,
       prompt: args.prompt,
-      useWorktree: !!args.useWorktree,
+      useWorktree: !crossProject && !!args.useWorktree,
       worktreeId: inheritedWorktreeId,
+      provider: args.provider,
       model: effectiveModel,
       effortLevel: args.effortLevel,
       parentSessionIdOverride: workstreamId,
@@ -813,6 +863,10 @@ export class MetaAgentService {
       workstreamId,
       promotedParent,
       reporting,
+      // Reported so the caller can tell a cross-project spawn landed where it asked, without
+      // having to look the session up again.
+      project: targetWorkspaceId,
+      crossProject,
     }, null, 2);
   }
 
@@ -1166,21 +1220,65 @@ export class MetaAgentService {
     }, null, 2);
   }
 
-  private async listSpawnedSessionsJson(metaSessionId: string, workspaceId: string): Promise<string> {
-    const sessions = await this.getSpawnedSessions(metaSessionId, workspaceId);
+  private async listSpawnedSessionsJson(
+    metaSessionId: string,
+    workspaceId: string,
+    options: { allProjects?: boolean } = {}
+  ): Promise<string> {
+    const sessions = await this.getSpawnedSessions(metaSessionId, workspaceId, options.allProjects === true);
     return JSON.stringify(sessions, null, 2);
   }
 
-  private async getSpawnedSessions(metaSessionId: string, workspaceId: string): Promise<Array<Record<string, unknown>>> {
+  /**
+   * The sessions this caller created. `allProjects` drops the workspace filter so a caller can
+   * find what it spawned elsewhere; without it, spawning into another project produced a
+   * session that became invisible the moment it was created.
+   *
+   * Widening is gated twice, and neither gate is new: the `cross-project` toggle, then the same
+   * `crossWorkspaceMessaging` predicate every write path uses, applied per row. Listing can
+   * therefore never show more than the caller is allowed to act on.
+   */
+  private async getSpawnedSessions(
+    metaSessionId: string,
+    workspaceId: string,
+    allProjects = false
+  ): Promise<Array<Record<string, unknown>>> {
+    if (allProjects && !readCrossProjectFeatureEnabled()) {
+      throw new Error(
+        'Listing spawned sessions across projects needs the Cross-project sessions experimental feature (Settings > Advanced > Alpha Features).'
+      );
+    }
+
     // Children are filed under the caller's own workspace key -- the spelling
     // the project was opened by, not the one a worktree caller resolves to
     // (#1551) -- so the caller's spelling finds no rows.
     const workspaceKey = (await this.resolveSessionWorkspaceKey(metaSessionId, workspaceId)) ?? workspaceId;
-    const rows = await getSpawnedSessionRows(metaSessionId, workspaceKey);
+    const rows = allProjects
+      ? (
+          await databaseWorker.query<any>(
+            `SELECT id, title, provider, model, status, last_activity, created_at, updated_at, worktree_id, agent_role, created_by_session_id, workspace_id
+             FROM ai_sessions
+             WHERE created_by_session_id = $1
+               AND (is_archived = FALSE OR is_archived IS NULL)
+             ORDER BY created_at DESC`,
+            [metaSessionId]
+          )
+        ).rows
+      : await getSpawnedSessionRows(metaSessionId, workspaceKey);
 
     const sessions: Array<Record<string, unknown>> = [];
     for (const row of rows) {
-      const data = await this.buildSessionResultData(row.id, workspaceKey, {
+      const rowWorkspace: string = row.workspace_id || workspaceKey;
+      if (
+        rowWorkspace !== workspaceKey &&
+        !resolveCrossWorkspaceAccess(metaSessionId, workspaceKey, {
+          workspacePath: rowWorkspace,
+          createdBySessionId: row.created_by_session_id,
+        }).allowed
+      ) {
+        continue;
+      }
+      const data = await this.buildSessionResultData(row.id, rowWorkspace, {
         title: row.title || 'Untitled Session',
         provider: row.provider,
         model: row.model || null,
@@ -1204,6 +1302,9 @@ export class MetaAgentService {
         createdAt: data.createdAt,
         updatedAt: data.updatedAt,
         worktreeId: data.worktreeId || null,
+        // Which project the session is in. Always present, so a caller never has to know
+        // whether it asked for one project or all of them to act on what it got back.
+        project: rowWorkspace,
       });
     }
 

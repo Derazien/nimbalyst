@@ -46,6 +46,13 @@ export const ALPHA_FEATURES: readonly AlphaFeatureDefinition[] = [
       "Enable meta-agent sessions that orchestrate and delegate work to child sessions.",
     icon: "hub",
   },
+  {
+    tag: "cross-project",
+    name: "Cross-project sessions",
+    description:
+      "Let an agent spawn, list and open sessions in your other open projects. Reach is still governed by the Cross-workspace messaging setting.",
+    icon: "workspaces",
+  },
 ] as const;
 
 /**

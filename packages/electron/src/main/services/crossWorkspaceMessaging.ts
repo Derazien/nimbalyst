@@ -21,6 +21,7 @@
 
 import { getSettingsService } from './SettingsService';
 import { hasLiveWindowForWorkspace } from '../window/windowState';
+import { getAlphaFeatures } from '../utils/store';
 
 export type CrossWorkspaceMessagingMode = 'off' | 'creator' | 'allow';
 
@@ -107,4 +108,98 @@ export function resolveCrossWorkspaceAccess(
     isWorkspaceLoaded: hasLiveWindowForWorkspace,
   });
   return { allowed, mode };
+}
+
+/* ------------------------------------------------------------------ spawning into a project */
+
+/**
+ * Spawning a NEW session into another project.
+ *
+ * This is a different act from reaching a session that already exists there, and it cannot
+ * reuse `isCrossWorkspaceAccessAllowed`: there is no target session, so `created_by` has
+ * nothing to compare against. Three facts decide it:
+ *
+ *   1. the `cross-project` experimental toggle is on (this whole surface is opt-in)
+ *   2. `agent.crossWorkspaceMessaging` is not `off` (the estate-wide master switch)
+ *   3. the target project is open in a live window
+ *
+ * `creator` is enough for (2). A caller that spawns a session elsewhere is by definition its
+ * creator, so under `creator` it can reach the session it just made; the two compose rather
+ * than leaving a session it may not talk to.
+ *
+ * (3) exists because a session in a project with no window has nothing to show it and no
+ * services warmed for it. Refusing is honest; spawning into the void is not.
+ */
+export interface CrossProjectSpawnInput {
+  /** The `cross-project` alpha feature toggle. */
+  featureEnabled: boolean;
+  mode: CrossWorkspaceMessagingMode;
+  callerWorkspaceId: string;
+  /** Where the caller wants the new session to live. */
+  targetWorkspacePath: string;
+  isWorkspaceLoaded: (workspacePath: string) => boolean;
+}
+
+export function isCrossProjectSpawnAllowed(input: CrossProjectSpawnInput): boolean {
+  const { featureEnabled, mode, callerWorkspaceId, targetWorkspacePath, isWorkspaceLoaded } = input;
+  if (!targetWorkspacePath) return false;
+  if (targetWorkspacePath === callerWorkspaceId) return true;
+  if (!featureEnabled) return false;
+  if (mode === 'off') return false;
+  return isWorkspaceLoaded(targetWorkspacePath);
+}
+
+export interface CrossProjectSpawnDecision {
+  allowed: boolean;
+  mode: CrossWorkspaceMessagingMode;
+  featureEnabled: boolean;
+}
+
+/** Is the `cross-project` toggle on? Fails closed if the store cannot be read. */
+export function readCrossProjectFeatureEnabled(): boolean {
+  try {
+    return getAlphaFeatures()['cross-project'] === true;
+  } catch (err) {
+    console.warn('[crossWorkspaceMessaging] could not read the cross-project toggle, treating as off:', err);
+    return false;
+  }
+}
+
+/** Runtime check used by MetaAgentService, binding the predicate to the stores. */
+export function resolveCrossProjectSpawn(
+  callerWorkspaceId: string,
+  targetWorkspacePath: string,
+): CrossProjectSpawnDecision {
+  // The caller's own project is the overwhelmingly common case and must not pay for two
+  // store reads, nor be gated by an experimental toggle it has nothing to do with.
+  if (targetWorkspacePath && targetWorkspacePath === callerWorkspaceId) {
+    return { allowed: true, mode: 'off', featureEnabled: false };
+  }
+  const featureEnabled = readCrossProjectFeatureEnabled();
+  const mode = readCrossWorkspaceMessagingMode();
+  const allowed = isCrossProjectSpawnAllowed({
+    featureEnabled,
+    mode,
+    callerWorkspaceId,
+    targetWorkspacePath,
+    isWorkspaceLoaded: hasLiveWindowForWorkspace,
+  });
+  return { allowed, mode, featureEnabled };
+}
+
+/**
+ * Name the ONE switch that is in the way. A refusal that lists every precondition makes the
+ * caller guess; this says which thing to change and stops.
+ */
+export function crossProjectSpawnRefusal(
+  targetWorkspacePath: string,
+  decision: CrossProjectSpawnDecision,
+): string {
+  if (!decision.featureEnabled) {
+    return `Cannot spawn into ${targetWorkspacePath}: turn on the Cross-project sessions experimental feature (Settings > Advanced > Alpha Features).`;
+  }
+  if (decision.mode === 'off') {
+    return `Cannot spawn into ${targetWorkspacePath} (crossWorkspaceMessaging=off): set Cross-workspace messaging to "sessions it created" or wider.`;
+  }
+  return `Cannot spawn into ${targetWorkspacePath}: that project is not open in a window.`;
 }

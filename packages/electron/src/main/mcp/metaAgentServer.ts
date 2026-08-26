@@ -25,6 +25,8 @@ type CreateSessionArgs = {
   toolScope?: string;
   effortLevel?: string;
   reporting?: string;
+  /** Absolute path of another open project to create the session in. */
+  project?: string;
 };
 
 type SpawnSessionArgs = {
@@ -32,6 +34,9 @@ type SpawnSessionArgs = {
   prompt: string;
   useWorktree?: boolean;
   model?: string;
+  provider?: string;
+  /** Absolute path of another open project to spawn into. */
+  project?: string;
   notifyOnComplete?: boolean;
   reporting?: string;
   /**
@@ -145,7 +150,8 @@ interface MetaAgentToolFns {
   ) => Promise<string>;
   listSpawnedSessions: (
     metaSessionId: string,
-    workspaceId: string
+    workspaceId: string,
+    options: { allProjects?: boolean }
   ) => Promise<string>;
   archiveSession: (
     metaSessionId: string,
@@ -254,6 +260,11 @@ export const META_AGENT_TOOL_DEFS: Array<{
             "Optional reasoning effort for the child. Omit to leave it on the app-wide default — an omitted value is NOT inherited from the caller. Levels above the model's ceiling are clamped down (Claude models stop at max; only some Codex models reach ultra). Use a lower level for mechanical work and a higher one for hard reasoning.",
         },
         reporting: REPORTING_SCHEMA,
+        project: {
+          type: "string",
+          description:
+            "Optional absolute path of ANOTHER open project to create the session in. Omit for the current project. Requires the Cross-project sessions experimental feature, a Cross-workspace messaging setting other than off, and the target project open in a window; otherwise the call is refused rather than falling back to the current project.",
+        },
       },
     },
   },
@@ -312,6 +323,16 @@ export const META_AGENT_TOOL_DEFS: Array<{
           enum: ["low", "medium", "high", "xhigh", "max", "ultra"],
           description:
             "Optional reasoning effort for the new session (e.g. model 'openai-codex:gpt-6-astra' with effortLevel 'medium'). Omit to leave it on the app-wide default — unlike `model` there is no inherit-from-caller mode. Levels above the model's ceiling are clamped down (Claude models stop at max; only some Codex models reach ultra). Use a lower level for mechanical work and a higher one for hard reasoning.",
+        },
+        provider: {
+          type: "string",
+          description:
+            "Optional explicit provider (e.g. 'claude-code', 'openai-codex'). When omitted the provider is read off `model`, then inherited from the caller. Set it to start the new session on a different engine than the one calling; if you set it, pass a matching `model`.",
+        },
+        project: {
+          type: "string",
+          description:
+            "Optional absolute path of ANOTHER open project to spawn into. Omit for the current project. A cross-project spawn is always top level (no workstream, no inherited worktree) because neither can span two projects. Requires the Cross-project sessions experimental feature, a Cross-workspace messaging setting other than off, and the target project open in a window; otherwise the call is refused rather than falling back to the current project.",
         },
       },
       required: ["prompt"],
@@ -485,10 +506,16 @@ export const META_AGENT_TOOL_DEFS: Array<{
   {
     name: "list_spawned_sessions",
     description:
-      "List all child sessions created by this meta-agent session, including current status and a short summary.",
+      "List all child sessions created by this meta-agent session, including current status and a short summary. Each entry reports the project it lives in. Pass allProjects to include sessions this caller spawned into other projects.",
     inputSchema: {
       type: "object",
-      properties: {},
+      properties: {
+        allProjects: {
+          type: "boolean",
+          description:
+            "Default false. When true, include sessions this caller created in ANY project, not just the current one. Requires the Cross-project sessions experimental feature; entries are still filtered by the Cross-workspace messaging setting, so the listing never shows a session you could not message.",
+        },
+      },
     },
   },
   {
@@ -641,7 +668,9 @@ export async function dispatchMetaAgentTool(
     case "respond_to_prompt":
       return toolFns.respondToPrompt(aiSessionId, effectiveWorkspaceId, (args ?? {}) as RespondToPromptArgs);
     case "list_spawned_sessions":
-      return toolFns.listSpawnedSessions(aiSessionId, effectiveWorkspaceId);
+      return toolFns.listSpawnedSessions(aiSessionId, effectiveWorkspaceId, {
+        allProjects: args?.allProjects === true,
+      });
     case "archive_session":
       return toolFns.archiveSession(
         aiSessionId,
