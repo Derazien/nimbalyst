@@ -21,6 +21,7 @@ import {
   type FileDirectoryNode,
 } from '@nimbalyst/extension-sdk/file-tree';
 import { getShowInFileBrowserLabel } from '../utils/fileBrowserLabel';
+import { FileOriginBadge } from '../session/FileOriginBadge';
 
 interface FileEditsSidebarProps {
   fileEdits: FileEditSummary[];
@@ -637,6 +638,7 @@ export const FileEditsSidebar: React.FC<FileEditsSidebarProps> = ({
             )}
           </div>
         </button>
+        <FileOriginBadge filePath={filePath} />
         {peekSupported && !isDeleted && (
           <button
             type="button"

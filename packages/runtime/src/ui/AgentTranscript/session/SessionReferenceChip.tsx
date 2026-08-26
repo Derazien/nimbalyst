@@ -11,12 +11,13 @@
 
 import type { JSX } from 'react';
 import * as React from 'react';
-import { useAtomValue } from 'jotai';
+import { useAtomValue, useSetAtom } from 'jotai';
 
 import { MaterialSymbol } from '../../icons/MaterialSymbol';
 import { resolveProviderIcon } from '../../icons/ProviderIcons';
 import {
   sessionRefByIdAtom,
+  lookupSessionRefAtom,
   openSessionReference,
   type SessionRefMeta,
 } from './sessionRefAtoms';
@@ -72,6 +73,13 @@ export function SessionReferenceChip({
   onOpen: onOpenOverride,
 }: SessionReferenceChipProps): JSX.Element {
   const liveMeta = useAtomValue(sessionRefByIdAtom(sessionId));
+  const lookup = useSetAtom(lookupSessionRefAtom);
+  // A session the registry does not know may live in another project. Ask the host once;
+  // the atom records hits, misses and in-flight ids, so this is cheap on every render.
+  React.useEffect(() => {
+    if (!liveMeta) void lookup(sessionId);
+  }, [liveMeta, lookup, sessionId]);
+
   const meta: SessionRefMeta | null =
     liveMeta ?? (fallbackMeta ? { id: sessionId, title: '', ...fallbackMeta } : null);
 
@@ -81,8 +89,9 @@ export function SessionReferenceChip({
     meta?.phase && PHASE_PRESENTATION[meta.phase]
       ? PHASE_PRESENTATION[meta.phase].label
       : undefined;
+  const foreignProject = meta?.project?.foreign ? meta.project : null;
   const tooltip = meta
-    ? `${meta.title || 'Session'}${phase ? ` · ${phase}` : ''} — open session`
+    ? `${meta.title || 'Session'}${phase ? ` · ${phase}` : ''}${foreignProject ? ` · in ${foreignProject.name}` : ''} — open session${foreignProject ? ' in that project' : ''}`
     : `Session ${shortSessionId(sessionId)} — open session`;
 
   const onOpen = React.useCallback(
@@ -103,6 +112,7 @@ export function SessionReferenceChip({
       data-session-id={sessionId}
       data-resolved={meta ? 'true' : 'false'}
       data-phase={meta?.phase}
+      data-foreign={foreignProject ? 'true' : 'false'}
       title={tooltip}
       style={{
         display: 'inline-flex',
@@ -116,7 +126,8 @@ export function SessionReferenceChip({
         verticalAlign: 'baseline',
         cursor: 'pointer',
         background: 'var(--nim-bg-secondary)',
-        border: '1px solid var(--nim-border)',
+        // The ring is the other project's rail color, so the chip reads as that rail entry.
+        border: `1px solid ${foreignProject ? foreignProject.color : 'var(--nim-border)'}`,
         color: 'var(--nim-text)',
         whiteSpace: 'nowrap',
         maxWidth: '40ch',
@@ -152,6 +163,21 @@ export function SessionReferenceChip({
           flexShrink: 0,
         }}
       />
+      {foreignProject ? (
+        <span
+          className="session-reference-chip-project"
+          aria-label={`in ${foreignProject.name}`}
+          style={{
+            color: foreignProject.color,
+            fontWeight: 700,
+            fontSize: '0.8em',
+            letterSpacing: '0.02em',
+            flexShrink: 0,
+          }}
+        >
+          {foreignProject.initials}
+        </span>
+      ) : null}
       <span
         className="session-reference-chip-title"
         style={{

@@ -15,6 +15,7 @@ import type { ToolCallDiffLoadResult, ToolCallDiffResult } from '../../../ai/ser
 import { DiffViewer } from './DiffViewer';
 import { NewFilePreview } from './NewFilePreview';
 import { toProjectRelative } from '../utils/pathResolver';
+import { FileOriginBadge } from '../session/FileOriginBadge';
 
 interface ToolCallChangesProps {
   diffs: ToolCallDiffResult[] | null | undefined;
@@ -228,6 +229,7 @@ export const ToolCallChanges: React.FC<ToolCallChangesProps> = ({
                       {relPath}
                     </code>
                   )}
+                  <FileOriginBadge filePath={diff.filePath} />
                   {/* Line count stats */}
                   {(diff.linesAdded != null || diff.linesRemoved != null) && (
                     <span className="text-[0.65rem] text-nim-faint shrink-0 font-mono">

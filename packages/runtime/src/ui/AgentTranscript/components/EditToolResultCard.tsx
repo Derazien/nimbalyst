@@ -5,6 +5,7 @@ import { NewFilePreview } from './NewFilePreview';
 import { toProjectRelative, shortenPath } from '../utils/pathResolver';
 import { formatToolDisplayName } from '../utils/toolNameFormatter';
 import { MaterialSymbol } from '../../icons/MaterialSymbol';
+import { FileOriginBadge } from '../session/FileOriginBadge';
 
 /** Returns true if the edit represents a new file creation (content only, no diff) */
 const isNewFileEdit = (edit: any): boolean => {
@@ -137,6 +138,7 @@ export const EditToolResultCard: React.FC<EditToolResultCardProps> = ({
                 ) : (
                   <span className="rich-transcript-edit-card__file text-nim-muted font-normal">{prettyPath}</span>
                 )}
+                {firstEditPath ? <FileOriginBadge filePath={firstEditPath} /> : null}
               </>
             )}
           </div>

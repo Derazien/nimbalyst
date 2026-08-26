@@ -18,6 +18,7 @@ import { isTrackerReferenceKey } from '../../../plugins/TrackerLinkPlugin/tracke
 import { trackerIssueKeyPrefixesKeyAtom } from '../../../plugins/TrackerPlugin/trackerDataAtoms';
 import { SessionReferenceChip } from '../session/SessionReferenceChip';
 import { sessionRefIdsKeyAtom } from '../session/sessionRefAtoms';
+import { FileOriginBadge } from '../session/FileOriginBadge';
 import {
   dispatchAppActionHref,
   isAppActionHref,
@@ -917,6 +918,7 @@ export const MarkdownRenderer = React.memo(function MarkdownRenderer({
       const filePath = fileTarget?.path ?? null;
       const isInternalLink = Boolean(filePath) || appActionLink;
       return (
+        <>
         <a
           {...props}
           href={href}
@@ -943,6 +945,8 @@ export const MarkdownRenderer = React.memo(function MarkdownRenderer({
         >
           {children}
         </a>
+        {filePath ? <FileOriginBadge filePath={filePath} /> : null}
+        </>
       );
     },
     // Lists
