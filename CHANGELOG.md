@@ -962,6 +962,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Asking a Claude Code CLI session a side question with `/btw` now keeps it out of the conversation and collects it under Side notes, instead of the question and answer landing in the transcript like a normal turn.
 - The effort level for a Claude Code CLI session can now be changed mid-session instead of only at launch.
 - Agents can message and inspect sessions in another open project when the new Cross-workspace messaging setting (Agent Features) allows it; it is off by default, with "sessions it created" and "any session in an open project" as the two wider levels.
+- Agents can archive and unarchive a session, including one in another open project, and the session list updates to match.
 
 ### Changed
 <!-- Changes to existing functionality go here -->

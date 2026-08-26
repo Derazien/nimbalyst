@@ -1668,6 +1668,21 @@ export class MetaAgentService {
   }
 
   /**
+   * Tell the windows that a project's session list changed.
+   *
+   * `workspacePath` must be the session's OWN project, not the caller's: the renderer listener
+   * drops any refresh whose path is not the list it is currently showing, so naming the caller
+   * refreshes a list the session was never in and leaves the one it was in stale.
+   */
+  private broadcastSessionListRefresh(workspacePath: string, sessionId: string): void {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) {
+        window.webContents.send('sessions:refresh-list', { workspacePath, sessionId });
+      }
+    }
+  }
+
+  /**
    * Archive or unarchive one session, for an agent rather than a person.
    *
    * WHY THIS EXISTS. The sidebar could archive and nothing else could. An agent that creates
@@ -1718,8 +1733,11 @@ export class MetaAgentService {
       });
     }
 
+    const targetWorkspacePath = session.workspacePath || callerWorkspaceId;
+
     if (!archived) {
       await AISessionsRepository.updateMetadata(targetSessionId, { isArchived: false });
+      this.broadcastSessionListRefresh(targetWorkspacePath, targetSessionId);
       return JSON.stringify({
         ok: true,
         sessionId: targetSessionId,
@@ -1746,6 +1764,7 @@ export class MetaAgentService {
     if (result.archiveFailures > 0) {
       return JSON.stringify({ ok: false, sessionId: targetSessionId, error: 'Could not archive the session.' });
     }
+    this.broadcastSessionListRefresh(targetWorkspacePath, targetSessionId);
     return JSON.stringify({
       ok: true,
       sessionId: targetSessionId,
