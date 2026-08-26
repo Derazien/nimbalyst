@@ -31,6 +31,9 @@ import {
     getAppSetting
 } from '../utils/store';
 import { loadFileIntoWindow } from '../file/FileOperations';
+import { getRecentItems } from '../utils/store';
+import { resolveActiveWorkspacePathForWindowId, listOpenWorkspacePaths } from '../window/windowState';
+import { locatePathAmongProjects, type KnownProject } from '../../shared/projectLocator';
 import { safeHandle, safeOn } from '../utils/ipcRegistry';
 import {
     getLocalKeyPrefixConfig,
@@ -868,6 +871,30 @@ export function registerWorkspaceHandlers() {
             console.error('Error opening file in workspace:', error);
             return { success: false, error: error.message };
         }
+    });
+
+    /**
+     * Which known project a file belongs to, for the window asking.
+     *
+     * "Known" is every project open in a window (primary or rail) plus the recent-projects
+     * list, so a file an agent edited in another checkout gets that project's badge, and a
+     * file in a directory nobody registered is still marked as not from here.
+     */
+    safeHandle('workspace:locate-path', async (event, args: { filePath?: string }) => {
+        const filePath = typeof args?.filePath === 'string' ? args.filePath.trim() : '';
+        if (!filePath) return null;
+        const window = BrowserWindow.fromWebContents(event.sender);
+        const activeWorkspace = resolveActiveWorkspacePathForWindowId(getWindowId(window)) ?? null;
+        const open = new Set(listOpenWorkspacePaths());
+        const known = new Map<string, KnownProject>();
+        for (const p of open) {
+            known.set(p, { path: p, name: basename(p) || p, isOpen: true });
+        }
+        for (const recent of getRecentItems('workspaces')) {
+            if (!recent?.path || known.has(recent.path)) continue;
+            known.set(recent.path, { path: recent.path, name: recent.name || basename(recent.path) || recent.path, isOpen: false });
+        }
+        return locatePathAmongProjects(filePath, [...known.values()], activeWorkspace);
     });
 
     /**

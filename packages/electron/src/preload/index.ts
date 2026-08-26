@@ -584,6 +584,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
    */
   openSessionInProject: (args: { sessionId: string; workspacePath: string; sourceLabel?: string }) =>
     ipcRenderer.invoke('sessions:open-in-project', args),
+  /** Which project a session lives in, and whether that is not the one this window shows. */
+  locateSession: (args: { sessionId: string }) => ipcRenderer.invoke('sessions:locate', args),
+  /** Which known project a file path belongs to, and whether that is not this window's. */
+  locatePath: (args: { filePath: string }) => ipcRenderer.invoke('workspace:locate-path', args),
   aiClearSession: () => ipcRenderer.invoke('ai:clearSession'),
   aiUpdateSessionMessages: (sessionId: string, messages: any[], workspacePath?: string) =>
     ipcRenderer.invoke('ai:updateSessionMessages', sessionId, messages, workspacePath),

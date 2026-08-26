@@ -23,6 +23,9 @@ import { trackCreateAiSession } from '../services/analytics/sessionLaunchAnalyti
 import { SessionCommitService } from '../services/SessionCommitService';
 import { getSessionsForFile } from '../services/fileSessionLookup';
 import { normalizeSessionPhaseMetadataUpdate } from '../services/session/sessionPhaseTransition';
+import { getWindowIdForWindow, resolveActiveWorkspacePathForWindowId } from '../window/windowState';
+import { readCrossProjectFeatureEnabled } from '../services/crossWorkspaceMessaging';
+import { locateSessionProject } from '../../shared/projectLocator';
 import { validateAgentRoleTransition } from '../services/session/agentRoleTransition';
 import { releaseSessionRuntime } from '../services/ai/archiveSessionProviderLifecycle';
 import { getTerminalSessionManager } from '../services/TerminalSessionManager';
@@ -330,6 +333,35 @@ export async function registerSessionHandlers() {
     // Update session provider and model (when switching between providers)
     safeHandle('sessions:update-provider-and-model', async (event, sessionId: string, provider: string, model: string) => {
         await sessionManager.updateSessionProviderAndModel(sessionId, provider, model);
+    });
+
+    /**
+     * Which project a session lives in, for the window asking.
+     *
+     * A transcript chip only knows the sessions of the project its window is showing; a
+     * session from another project drew as an unknown id. This answers with the session's
+     * project and whether it is foreign to the asking window, so the chip can wear the other
+     * project's badge and open it there. Off unless the Cross-project sessions experimental
+     * feature is on, in which case a foreign id stays unknown, exactly as before.
+     */
+    safeHandle('sessions:locate', async (event, args: { sessionId?: string }) => {
+        const sessionId = typeof args?.sessionId === 'string' ? args.sessionId.trim() : '';
+        if (!sessionId) return null;
+        if (!readCrossProjectFeatureEnabled()) return null;
+        const session = await AISessionsRepository.get(sessionId);
+        if (!session) return null;
+        const window = BrowserWindow.fromWebContents(event.sender);
+        const activeWorkspace = resolveActiveWorkspacePathForWindowId(getWindowIdForWindow(window)) ?? null;
+        const location = locateSessionProject(session.workspacePath ?? null, activeWorkspace);
+        const metadata = (session.metadata ?? {}) as { phase?: string };
+        return {
+            sessionId,
+            workspacePath: location.project,
+            foreign: location.foreign,
+            title: session.title ?? null,
+            provider: session.provider ?? null,
+            phase: typeof metadata.phase === 'string' ? metadata.phase : null,
+        };
     });
 
     // Update session draft input
