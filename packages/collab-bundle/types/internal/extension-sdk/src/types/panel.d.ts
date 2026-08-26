@@ -262,15 +262,38 @@ export interface PanelHost {
     /**
      * Open a file in the editor.
      *
+     * Pass `project` when the file belongs to another of the user's projects: the host routes
+     * to the window showing that project. Without it the file opens in this panel's own project,
+     * which is what the one-argument call has always done.
+     *
      * @param path Absolute or workspace-relative path
+     * @param options.project Absolute path of the project the file belongs to
      */
-    openFile(path: string): void;
+    openFile(path: string, options?: {
+        project?: string;
+    }): void;
     /**
      * Switch to another panel.
      *
      * @param panelId Full panel ID (extensionId.panelId) or just panelId for same extension
      */
     openPanel(panelId: string): void;
+    /**
+     * Bring an AI session on screen and select it.
+     *
+     * Pass `project` when the session belongs to another of the user's projects: the host
+     * routes to the window showing that project, opening it if it is closed. Without it the
+     * session is looked for in this panel's own project.
+     *
+     * Resolves false when the session could not be reached (no such session, or the project
+     * could not be opened).
+     *
+     * @param sessionId The session to open
+     * @param options.project Absolute path of the project the session belongs to
+     */
+    openSession(sessionId: string, options?: {
+        project?: string;
+    }): Promise<boolean>;
     /**
      * Close this panel (for floating panels).
      */
