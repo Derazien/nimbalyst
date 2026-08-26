@@ -33,6 +33,8 @@ import { handleListCitableInputs } from "../services/pageCitations/listCitableIn
 import {
   isCrossWorkspaceAccessAllowed,
   readCrossWorkspaceMessagingMode,
+  resolveCrossWorkspaceAccess,
+  sessionNotReachableMessage,
 } from "../services/crossWorkspaceMessaging";
 import {
   hasLiveWindowForWorkspace,
@@ -139,8 +141,12 @@ async function handleGetSessionSummary(
   const sessionId = targetSessionId || currentSessionId;
 
   const session = await AISessionsRepository.get(sessionId);
-  if (!session) {
-    return `Error: Session ${sessionId} not found`;
+  // Same boundary as every session-targeting tool in MetaAgentService. Without it a session id
+  // that list_recent_sessions refused to show could still be read here on the strength of the
+  // id alone, and the two answers disagreed about what the setting means.
+  const access = resolveCrossWorkspaceAccess(currentSessionId, workspaceId, session);
+  if (!session || !access.allowed) {
+    return `Error: ${sessionNotReachableMessage(sessionId, access.mode)}`;
   }
 
   // Phase 3 of canonical-transcript-deprecation: ai_transcript_events is
@@ -352,8 +358,9 @@ async function handleGetWorkstreamOverview(
   const parentId = await findSessionTreeRoot(database, workstreamId || currentSessionId, workspaceId);
 
   const parent = await AISessionsRepository.get(parentId);
-  if (!parent) {
-    return `Error: Workstream session ${parentId} not found`;
+  const parentAccess = resolveCrossWorkspaceAccess(currentSessionId, workspaceId, parent);
+  if (!parent || !parentAccess.allowed) {
+    return `Error: ${sessionNotReachableMessage(parentId, parentAccess.mode)}`;
   }
 
   const rows = await readSessionSubtree(database, parentId, workspaceId);
@@ -1090,6 +1097,16 @@ export async function dispatchSessionContextTool(
         if (tags !== undefined && !Array.isArray(tags)) {
           return {
             content: [{ type: "text", text: "Error: tags must be an array of strings" }],
+            isError: true,
+          };
+        }
+
+        // A write, so the boundary is checked before anything is touched.
+        const target = await AISessionsRepository.get(sessionId);
+        const access = resolveCrossWorkspaceAccess(aiSessionId, workspaceId, target);
+        if (!target || !access.allowed) {
+          return {
+            content: [{ type: "text", text: `Error: ${sessionNotReachableMessage(sessionId, access.mode)}` }],
             isError: true,
           };
         }

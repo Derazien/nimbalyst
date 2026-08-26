@@ -9,11 +9,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // messaging governs listing, so a mode change moves both together.
 
 const sessionsByWorkspace = new Map<string, unknown[]>();
+const sessionsById = new Map<string, unknown>();
+const updateMetadata = vi.fn(async () => {});
 vi.mock('@nimbalyst/runtime', () => ({
   AISessionsRepository: {
     list: vi.fn(async (workspaceId: string) => sessionsByWorkspace.get(workspaceId) ?? []),
     search: vi.fn(async (workspaceId: string) => sessionsByWorkspace.get(workspaceId) ?? []),
     getMany: vi.fn(async () => []),
+    get: vi.fn(async (id: string) => sessionsById.get(id) ?? null),
+    updateMetadata: (...args: unknown[]) => updateMetadata(...(args as [])),
   },
   SessionFilesRepository: { getFilesBySession: vi.fn(async () => []) },
 }));
@@ -35,7 +39,10 @@ vi.mock('../../window/windowState', () => ({
   listOpenWorkspacePaths: () => [...liveWindows],
 }));
 
-import { handleListRecentSessions } from '../sessionContextServer';
+vi.mock('electron', () => ({ BrowserWindow: { getAllWindows: () => [] } }));
+vi.mock('../../database/PGLiteDatabaseWorker', () => ({ database: { query: async () => ({ rows: [] }) } }));
+
+import { dispatchSessionContextTool, handleListRecentSessions } from '../sessionContextServer';
 
 const HOME = '/ws/home';
 const OTHER = '/ws/other';
@@ -118,5 +125,58 @@ describe('list_recent_sessions across workspaces', () => {
     sessionsByWorkspace.set(OTHER, [{ ...s('o1', 'Newer other', OTHER, 'x'), updatedAt: 900 }]);
     const out = await list([HOME, OTHER]);
     expect(out.indexOf('Newer other')).toBeLessThan(out.indexOf('Older home'));
+  });
+});
+
+/**
+ * The two tools here that take a bare session id and did NOT ask. Every session-targeting tool
+ * in MetaAgentService resolves its target through the cross-workspace predicate; these two
+ * read and wrote any session in any project on the strength of its id alone, which made the
+ * "sessions you may not message are not listed either" promise above hollow: the id could not
+ * be listed, but once known it could be read and its board phase rewritten.
+ */
+describe('get_session_summary and update_session_board honour the same boundary', () => {
+  beforeEach(() => {
+    settingsGet.mockReset();
+    settingsGet.mockReturnValue('off');
+    liveWindows.clear();
+    sessionsById.clear();
+    updateMetadata.mockClear();
+    sessionsById.set('o1', { ...s('o1', 'Other project thing', OTHER, 'someone-else'), messages: [] });
+    sessionsById.set('h1', { ...s('h1', 'Home work', HOME), messages: [] });
+  });
+
+  it('refuses to summarise a session in another project while the setting is off', async () => {
+    const out = await dispatchSessionContextTool('get_session_summary', { sessionId: 'o1' }, CALLER, HOME);
+    expect(out.isError).toBe(true);
+    expect(out.content[0].text).toMatch(/crossWorkspaceMessaging=off/);
+  });
+
+  it('summarises it once the setting allows and the project is open', async () => {
+    settingsGet.mockReturnValue('allow');
+    liveWindows.add(OTHER);
+    const out = await dispatchSessionContextTool('get_session_summary', { sessionId: 'o1' }, CALLER, HOME);
+    expect(out.isError).toBe(false);
+    expect(out.content[0].text).toContain('Other project thing');
+  });
+
+  it('still summarises the caller own project with the setting off', async () => {
+    const out = await dispatchSessionContextTool('get_session_summary', { sessionId: 'h1' }, CALLER, HOME);
+    expect(out.isError).toBe(false);
+  });
+
+  it('refuses to move a foreign session on the board, and writes nothing', async () => {
+    const out = await dispatchSessionContextTool('update_session_board', { sessionId: 'o1', phase: 'complete' }, CALLER, HOME);
+    expect(out.isError).toBe(true);
+    expect(out.content[0].text).toMatch(/crossWorkspaceMessaging=off/);
+    expect(updateMetadata).not.toHaveBeenCalled();
+  });
+
+  it('moves it once the setting allows', async () => {
+    settingsGet.mockReturnValue('allow');
+    liveWindows.add(OTHER);
+    const out = await dispatchSessionContextTool('update_session_board', { sessionId: 'o1', phase: 'complete' }, CALLER, HOME);
+    expect(out.isError).toBe(false);
+    expect(updateMetadata).toHaveBeenCalledWith('o1', { metadata: { phase: 'complete' } });
   });
 });
