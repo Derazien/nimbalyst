@@ -44,3 +44,23 @@ describe('resolveTranscriptClickPath', () => {
     expect(resolveTranscriptClickPath('src/foo.ts', undefined)).toBe('src/foo.ts');
   });
 });
+
+/**
+ * Which directory a relative path in a transcript is relative to. It used to be the window's
+ * project, which is wrong for a session that lives elsewhere: an agent working in another
+ * checkout writes paths relative to that checkout, and joining them onto this project's root
+ * produced a file that does not exist.
+ */
+import { transcriptClickBase } from '../resolveTranscriptClickPath';
+
+describe('transcriptClickBase', () => {
+  it('prefers the session worktree, then the session own project, then the window project', () => {
+    expect(transcriptClickBase({ sessionWorktreePath: '/wt/a', sessionWorkspacePath: '/proj/a', windowWorkspacePath: '/proj/w' })).toBe('/wt/a');
+    expect(transcriptClickBase({ sessionWorktreePath: null, sessionWorkspacePath: '/proj/a', windowWorkspacePath: '/proj/w' })).toBe('/proj/a');
+    expect(transcriptClickBase({ sessionWorktreePath: undefined, sessionWorkspacePath: undefined, windowWorkspacePath: '/proj/w' })).toBe('/proj/w');
+  });
+
+  it('ignores blank values rather than joining onto an empty base', () => {
+    expect(transcriptClickBase({ sessionWorktreePath: '', sessionWorkspacePath: '  ', windowWorkspacePath: '/proj/w' })).toBe('/proj/w');
+  });
+});

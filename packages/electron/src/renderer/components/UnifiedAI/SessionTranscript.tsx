@@ -133,7 +133,7 @@ import {
 import { setAgentModeSettingsAtom, showPromptAdditionsAtom, hasExternalEditorAtom, externalEditorNameAtom, openInExternalEditorAtom, defaultAgentModelAtom, defaultEffortLevelAtom, defaultThinkingModeAtom, chatShowToolCallsAtom, developerModeAtom } from '../../store/atoms/appSettings';
 import { supportsEffortLevel, supportsThinkingToggle, parseEffortLevel, resolveThinkingMode, type EffortLevel, type ThinkingMode } from '../../utils/modelUtils';
 import { buildPlanImplementationPrompt, resolvePlanFilePath } from '../../utils/pathUtils';
-import { resolveTranscriptClickPath } from '../../utils/resolveTranscriptClickPath';
+import { resolveTranscriptClickPath, transcriptClickBase } from '../../utils/resolveTranscriptClickPath';
 import { openAgentEditedPage } from '../../utils/agentEditedPage';
 import { saveSessionArchived } from '../../utils/saveSessionArchived';
 import { autoCommitEnabledAtom, setAutoCommitEnabledAtom } from '../../store/atoms/autoCommitAtoms';
@@ -1448,9 +1448,15 @@ const LocalSessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscrip
   }, [provider, sessionId, setIsProcessing, recordClaudeActivity]);
 
   const handleFileClick = useCallback((filePath: string, location?: TranscriptFileLocation) => {
-    const baseDir = sessionWorktreePath ?? workspacePath;
+    // Relative paths are relative to the session's own checkout, which is not this window's
+    // project for a session that lives elsewhere.
+    const baseDir = transcriptClickBase({
+      sessionWorktreePath,
+      sessionWorkspacePath: store.get(sessionStoreAtom(sessionId))?.workspacePath,
+      windowWorkspacePath: workspacePath,
+    });
     onFileClick?.(resolveTranscriptClickPath(filePath, baseDir), location);
-  }, [onFileClick, sessionWorktreePath, workspacePath]);
+  }, [onFileClick, sessionId, sessionWorktreePath, workspacePath]);
 
   // Sidecars are a recent CLI feature, so most older sessions have none at all.
   // Probe once per session and hide the control entirely when there is nothing
