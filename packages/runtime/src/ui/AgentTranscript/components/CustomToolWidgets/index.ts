@@ -235,6 +235,8 @@ const BUILT_IN_TOOL_WIDGETS: CustomToolWidgetRegistry = {
   'get_session_result': CrossSessionToolWidget,
   'list_queued_prompts': CrossSessionToolWidget,
   'list_spawned_sessions': CrossSessionToolWidget,
+  'archive_session': CrossSessionToolWidget,
+  'unarchive_session': CrossSessionToolWidget,
 };
 
 // Identifier used when the host registers built-in widgets to the runtime

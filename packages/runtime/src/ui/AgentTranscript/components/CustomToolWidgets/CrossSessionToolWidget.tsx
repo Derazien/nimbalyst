@@ -31,6 +31,8 @@ const ACTIONS: Record<string, ActionMeta> = {
   get_session_result: { label: 'Get session result', icon: 'task_alt' },
   list_queued_prompts: { label: 'List queued prompts', icon: 'list' },
   list_spawned_sessions: { label: 'List spawned sessions', icon: 'account_tree' },
+  archive_session: { label: 'Archive session', icon: 'archive' },
+  unarchive_session: { label: 'Unarchive session', icon: 'unarchive' },
 };
 
 /** Strip an `mcp__<server>__` prefix to the bare tool name. */

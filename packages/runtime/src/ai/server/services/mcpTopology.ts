@@ -164,6 +164,10 @@ export const HOST_TOOLS: readonly string[] = [
   'get_session_result',
   'list_spawned_sessions',
   'list_worktrees',
+  // A tool missing from this list is dropped from every endpoint's ListTools, so a new
+  // meta-agent tool is invisible until it is named here (metaAgentServer.topology.test.ts).
+  'archive_session',
+  'unarchive_session',
   // NOTE: `applyDiff` / `streamContent` are intentionally NOT declared here.
   // They have live CallTool handlers (httpServer switch) + renderer IPC
   // listeners, but no ListTools schema — they are deliberately unadvertised so

@@ -995,6 +995,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A Claude Code turn that ended in an error completed twice, so its token usage and turn-end snapshot were dropped.
 - Sub-agents in a Claude Code CLI session now appear as their own expandable entries with their tool calls nested underneath, instead of every sub-agent's output being mixed into the main conversation.
 - Reading a session summary or moving a session on the board now respects the Cross-workspace messaging setting like every other session tool; a session id from another project no longer works on its own.
+- The archive and unarchive session tools are now actually offered to agents; they were defined but never listed, so no session could find them.
 - Sub-agents in a Claude Code CLI session now appear as their own expandable entries with their tool calls nested underneath, and each one can open its full transcript, instead of every sub-agent's output being mixed into the main conversation.
 - The voice mode context ring now shows the live context of the last turn against the model's real window (128K for gpt-realtime-2, 32K for gpt-realtime) instead of a running total that grew every turn.
 
