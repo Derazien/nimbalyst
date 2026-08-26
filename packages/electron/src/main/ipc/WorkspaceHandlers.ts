@@ -32,7 +32,7 @@ import {
 } from '../utils/store';
 import { loadFileIntoWindow } from '../file/FileOperations';
 import { getRecentItems } from '../utils/store';
-import { resolveActiveWorkspacePathForWindowId, listOpenWorkspacePaths } from '../window/windowState';
+import { resolveActiveWorkspacePathForWindowId, getWindowIdForWindow, listOpenWorkspacePaths } from '../window/windowState';
 import { locatePathAmongProjects, type KnownProject } from '../../shared/projectLocator';
 import { safeHandle, safeOn } from '../utils/ipcRegistry';
 import {
@@ -884,7 +884,7 @@ export function registerWorkspaceHandlers() {
         const filePath = typeof args?.filePath === 'string' ? args.filePath.trim() : '';
         if (!filePath) return null;
         const window = BrowserWindow.fromWebContents(event.sender);
-        const activeWorkspace = resolveActiveWorkspacePathForWindowId(getWindowId(window)) ?? null;
+        const activeWorkspace = resolveActiveWorkspacePathForWindowId(getWindowIdForWindow(window)) ?? null;
         const open = new Set(listOpenWorkspacePaths());
         const known = new Map<string, KnownProject>();
         for (const p of open) {

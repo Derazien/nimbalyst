@@ -61,7 +61,7 @@ export interface SessionRefMeta {
  * All known sessions keyed by id. Host adapters populate this atom; session
  * chips read from it.
  */
-export const sessionRefMapAtom = atom<Map<string, SessionRefMeta>>(new Map());
+export const sessionRefMapAtom = atom<Map<string, SessionRefMeta>>(new Map<string, SessionRefMeta>());
 
 /**
  * Sorted, comma-joined known session ids. A string, so subscribers (every
@@ -76,10 +76,10 @@ export const sessionRefIdsKeyAtom = atom((get) =>
  * Answers the host resolver gave for ids the registry does not know. `null`
  * records a miss so a chip does not ask again for the same id.
  */
-export const resolvedSessionRefsAtom = atom<Map<string, SessionRefMeta | null>>(new Map());
+export const resolvedSessionRefsAtom = atom<Map<string, SessionRefMeta | null>>(new Map<string, SessionRefMeta | null>());
 
 /** Ids a lookup is currently in flight for, so two chips for one id ask once. */
-const sessionRefInFlightAtom = atom<Set<string>>(new Set());
+const sessionRefInFlightAtom = atom<Set<string>>(new Set<string>());
 
 /**
  * Host-installed lookup for a session id the registry does not know. Returns

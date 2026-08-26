@@ -83,3 +83,44 @@ describe('FileOriginBadge', () => {
     expect(document.querySelector('.file-origin-badge')).toBeNull();
   });
 });
+
+describe('FileOriginBadge, labeled variant for the editor header', () => {
+  it('shows "Open in <project>" and jumps there, without opening the file', async () => {
+    const store = createStore();
+    const openInProject = vi.fn(async () => undefined);
+    store.set(fileOriginResolverAtom, { resolve: vi.fn(async () => ARTINC), openInProject });
+    render(
+      <JotaiProvider store={store}>
+        <FileOriginBadge filePath="C:/work/artificial.inc/docs/plan.md" variant="labeled" />
+      </JotaiProvider>,
+    );
+    const button = await screen.findByRole('button', { name: /Open in artificial\.inc/ });
+    fireEvent.click(button);
+    expect(openInProject).toHaveBeenCalledWith('C:/work/artificial.inc/docs/plan.md', 'C:/work/artificial.inc');
+  });
+
+  it('says a loose file is outside this project, with nothing to click', async () => {
+    const store = createStore();
+    store.set(fileOriginResolverAtom, { resolve: vi.fn(async () => LOOSE), openInProject: vi.fn() });
+    render(
+      <JotaiProvider store={store}>
+        <FileOriginBadge filePath="C:/tmp/x.md" variant="labeled" />
+      </JotaiProvider>,
+    );
+    const badge = (await screen.findAllByText(/Outside this project/i))[0];
+    expect(badge.closest('button')).toBeNull();
+  });
+
+  it('draws nothing in the header for a file of this project', async () => {
+    const store = createStore();
+    const resolve = vi.fn(async () => HOME);
+    store.set(fileOriginResolverAtom, { resolve, openInProject: vi.fn() });
+    render(
+      <JotaiProvider store={store}>
+        <FileOriginBadge filePath="C:/work/notes.md" variant="labeled" />
+      </JotaiProvider>,
+    );
+    await vi.waitFor(() => expect(resolve).toHaveBeenCalled());
+    expect(document.querySelector('.file-origin-badge')).toBeNull();
+  });
+});

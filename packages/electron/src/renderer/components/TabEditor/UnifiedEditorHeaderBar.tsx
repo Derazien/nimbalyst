@@ -23,6 +23,7 @@ import {
   type TrackerTypeInfo,
 } from '@nimbalyst/runtime';
 import { globalRegistry } from '@nimbalyst/runtime/plugins/TrackerPlugin/models';
+import { FileOriginBadge } from '@nimbalyst/runtime';
 import { historyDialogFileAtom } from '../../store';
 import { useFloatingMenu, FloatingPortal } from '../../hooks/useFloatingMenu';
 import { getDocumentService } from '../../services/RendererDocumentService';
@@ -424,7 +425,13 @@ export const UnifiedEditorHeaderBar: React.FC<UnifiedEditorHeaderBarProps> = ({
 
   return (
     <EditorHeaderBar
-      breadcrumb={breadcrumbContent ?? <FilePathBreadcrumb filePath={filePath} workspacePath={workspaceId} />}
+      breadcrumb={(
+        <>
+          {breadcrumbContent ?? <FilePathBreadcrumb filePath={filePath} workspacePath={workspaceId} />}
+          {/* A jump to the file's project when it lives in another one */}
+          {filePath ? <FileOriginBadge filePath={filePath} variant="labeled" /> : null}
+        </>
+      )}
       actions={(
         <>
         {/* AI sessions for this document: chip + caret, or a sparkle icon when there are none */}

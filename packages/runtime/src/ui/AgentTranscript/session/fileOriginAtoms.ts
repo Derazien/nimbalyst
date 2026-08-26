@@ -38,9 +38,9 @@ export interface FileOriginResolver {
 export const fileOriginResolverAtom = atom<FileOriginResolver | null>(null);
 
 /** Answers so far, `null` recording a miss so a path is not asked about twice. */
-export const resolvedFileOriginsAtom = atom<Map<string, FileOrigin | null>>(new Map());
+export const resolvedFileOriginsAtom = atom<Map<string, FileOrigin | null>>(new Map<string, FileOrigin | null>());
 
-const fileOriginInFlightAtom = atom<Set<string>>(new Set());
+const fileOriginInFlightAtom = atom<Set<string>>(new Set<string>());
 
 export const fileOriginByPathAtom = atomFamily((filePath: string) =>
   atom((get) => get(resolvedFileOriginsAtom).get(filePath) ?? null),
