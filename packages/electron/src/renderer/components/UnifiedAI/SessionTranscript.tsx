@@ -1447,16 +1447,34 @@ const LocalSessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscrip
     }
   }, [provider, sessionId, setIsProcessing, recordClaudeActivity]);
 
+  // The session's OWN project, which is not this window's when you are viewing a session that
+  // lives in another project. The session store atom is empty for such a foreign session, so
+  // relative file links resolved against the window opened an empty tab in the wrong project.
+  // Main knows every session's real workspace; ask it once per session.
+  const [sessionOwnWorkspace, setSessionOwnWorkspace] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setSessionOwnWorkspace(null);
+    void window.electronAPI
+      .invoke('sessions:locate', { sessionId })
+      .then((r) => {
+        const located = (r as { workspacePath?: string | null } | null)?.workspacePath;
+        if (!cancelled && typeof located === 'string' && located) setSessionOwnWorkspace(located);
+      })
+      .catch(() => { /* fall back to the window / store workspace below */ });
+    return () => { cancelled = true; };
+  }, [sessionId]);
+
   const handleFileClick = useCallback((filePath: string, location?: TranscriptFileLocation) => {
     // Relative paths are relative to the session's own checkout, which is not this window's
     // project for a session that lives elsewhere.
     const baseDir = transcriptClickBase({
       sessionWorktreePath,
-      sessionWorkspacePath: store.get(sessionStoreAtom(sessionId))?.workspacePath,
+      sessionWorkspacePath: sessionOwnWorkspace ?? store.get(sessionStoreAtom(sessionId))?.workspacePath,
       windowWorkspacePath: workspacePath,
     });
     onFileClick?.(resolveTranscriptClickPath(filePath, baseDir), location);
-  }, [onFileClick, sessionId, sessionWorktreePath, workspacePath]);
+  }, [onFileClick, sessionId, sessionWorktreePath, sessionOwnWorkspace, workspacePath]);
 
   // Sidecars are a recent CLI feature, so most older sessions have none at all.
   // Probe once per session and hide the control entirely when there is nothing
