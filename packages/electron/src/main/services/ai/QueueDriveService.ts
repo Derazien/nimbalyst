@@ -31,6 +31,8 @@ export type DriveReason =
   | 'wakeup'
   | 'agent-wake'
   | 'restart-continuation'
+  // ai:sendMessage reaching a claude-code-cli session, routed onto the CLI rails.
+  | 'cli-send-route'
   | 'safety-sweep'
   | 'drain-follow-up';
 

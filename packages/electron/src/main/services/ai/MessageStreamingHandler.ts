@@ -221,6 +221,13 @@ interface AIServiceInternal {
     targetWindow: Electron.BrowserWindow | null,
     source: string,
   ): Promise<boolean>;
+  deliverPromptToClaudeCliSession(input: {
+    sessionId: string;
+    workspacePath: string;
+    prompt: string;
+    queuedPromptId?: string;
+    attachments?: unknown[];
+  }): Promise<boolean>;
   requestQueueDrive(sessionId: string, workspacePath: string, reason: DriveReason): void;
   runAutoContextCommand(
     session: SessionData,
@@ -448,6 +455,28 @@ export class MessageStreamingHandler {
 
     if (session.providerConfig && 'imported' in session.providerConfig && session.providerConfig.imported === true) {
       await claimExternalSessionForLocalExecution(session.id);
+    }
+
+    // NIM-834 follow-up: claude-code-cli has no in-process turn driver. Its
+    // provider sendMessage is the Phase 1 stub that throws, so every caller of
+    // this handler other than the (already guarded) queue dispatcher — the
+    // extension SDK bridge, a meta-agent drive — stacked "not yet implemented
+    // (Phase 1)" errors into the transcript while the genuine CLI turn ran fine
+    // on its PTY. Route them onto the CLI rails here, where no send path can
+    // miss the guard.
+    if (session.provider === 'claude-code-cli') {
+      if (queuedPromptId) {
+        // The turn never starts, so nothing later clears the dedup mark.
+        this.svc.processingQueuedPromptIds.delete(queuedPromptId);
+      }
+      await this.svc.deliverPromptToClaudeCliSession({
+        sessionId,
+        workspacePath,
+        prompt: message,
+        queuedPromptId,
+        attachments,
+      });
+      return { content: '' };
     }
 
     const inputType = (documentContext as any)?.inputType as string | undefined;

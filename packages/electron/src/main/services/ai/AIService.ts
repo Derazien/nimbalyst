@@ -1061,6 +1061,34 @@ export class AIService {
   }
 
   /**
+   * NIM-834 follow-up: deliver an `ai:sendMessage` prompt to a claude-code-cli
+   * session over the CLI rails instead of the SDK turn driver, whose provider
+   * sendMessage is the Phase 1 stub. Queue the prompt, then drive — the drive
+   * lands on dispatchQueuedPromptToClaudeCliSession above.
+   */
+  public async deliverPromptToClaudeCliSession(input: {
+    sessionId: string;
+    workspacePath: string;
+    prompt: string;
+    queuedPromptId?: string;
+    attachments?: unknown[];
+  }): Promise<boolean> {
+    const { routePromptToClaudeCli } = await import('./claudeCliSendRoute');
+    return routePromptToClaudeCli(
+      {
+        enqueue: async (queued) => {
+          const { getQueuedPromptsStore } = await import('../RepositoryManager');
+          await getQueuedPromptsStore().create(queued);
+        },
+        drive: (sessionId, workspacePath, reason) =>
+          this.triggerQueuedPromptProcessingForSession(sessionId, workspacePath, reason as DriveReason),
+        newPromptId: () => `cli-send-${input.sessionId}-${Date.now()}`,
+      },
+      input,
+    );
+  }
+
+  /**
    * Process the next queued prompt for a session.
    * Called from mobile sync handler to ensure prompts are processed even when session isn't open.
    * Also used by the ai:triggerQueueProcessing IPC handler.
