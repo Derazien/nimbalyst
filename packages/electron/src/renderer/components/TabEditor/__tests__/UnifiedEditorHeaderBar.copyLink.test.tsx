@@ -29,6 +29,9 @@ vi.mock('@nimbalyst/runtime', () => ({
   removeTrackerTypeFromMarkdown: vi.fn(),
   copyToClipboard,
   ProviderIcon: () => null,
+  // The header renders the cross-project origin badge; this suite is about the
+  // link actions, so a stub keeps the module mock complete.
+  FileOriginBadge: () => null,
 }));
 
 vi.mock('../../../store', async () => {
