@@ -48,6 +48,7 @@ import { getExtensionPlatformService } from './ExtensionPlatformService';
 import { registerThemeContribution } from '../editor/themes/registry';
 import { registerCollabContentAdapter } from '@nimbalyst/collab-adapters';
 import { createDeferredExtensionEditor } from './DeferredExtensionEditor';
+import { registerExtensionProviderIcons } from '../ui/icons/ProviderIcons';
 
 const MANIFEST_FILENAME = 'manifest.json';
 
@@ -2493,6 +2494,22 @@ export async function initializeExtensions(): Promise<void> {
       console.info('[ExtensionLoader] Discovering extensions...');
       const discovered = await loader.discoverExtensions();
       console.info(`[ExtensionLoader] Found ${discovered.length} extension(s):`, discovered.map(d => d.manifest.id));
+
+      // Publish every contributed provider icon before anything renders, so the session list,
+      // the reference chips and the settings sidebar draw a glyph instead of the raw
+      // contribution id as a Material Symbols ligature (which the font renders as its letters:
+      // a wordmark where a 16 px icon belongs). Done on DISCOVERED rather than on loaded
+      // extensions on purpose -- a disabled or deferred extension's sessions are still in the
+      // list and still need an icon, and an icon is display metadata, not a capability.
+      registerExtensionProviderIcons(
+        Object.fromEntries(
+          discovered.flatMap((ext) =>
+            (ext.manifest.contributions?.aiAgentProviders ?? []).map(
+              (p) => [p.id, p.icon] as const
+            )
+          )
+        )
+      );
 
       // Resolve which extensions are enabled, then load them all in parallel.
       // Extensions are independent (own context, own registrations) so order doesn't matter.

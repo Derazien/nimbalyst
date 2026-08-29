@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Agent providers contributed by extensions now show their own icon in the session list, on session chips and in settings, instead of their id spelled out as text.
 
 ### Removed
 <!-- Removed features go here -->
