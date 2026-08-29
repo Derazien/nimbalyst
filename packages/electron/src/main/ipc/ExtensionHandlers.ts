@@ -1357,6 +1357,35 @@ export function registerExtensionHandlers(): void {
       await fs.symlink(normalizedPath, symlinkPath, 'junction');
       logger.main.info(`[ExtensionHandlers] Created dev extension symlink: ${symlinkPath} -> ${normalizedPath}`);
 
+      // Catalog the extension's aiAgentProviders, exactly as the marketplace
+      // install path does through initializeExtensionFileTypes. Without this a
+      // dev-installed agent provider is missing from the AgentProviderRegistry
+      // until something else triggers a rescan, and the only thing that does is
+      // the renderer's `extensions:list-installed` call from Settings ->
+      // Extensions. The symptom is a session on that provider whose every turn
+      // fails with "Unknown provider: <id>", cured only by visiting Settings --
+      // and cured again after each app start, because boot registers but a
+      // later dev-install does not. Scrub first so a contribution whose backend
+      // module did not survive validation stays hidden, which is what the
+      // list-installed scan does in the same order.
+      try {
+        validateAndScrubBackendModules(manifest, extensionId, {
+          isBuiltin: false,
+          isSymlink: true,
+        });
+        registerAgentProviderContributions(
+          manifest as ExtensionManifest,
+          extensionId,
+          symlinkPath
+        );
+      } catch (err) {
+        // The symlink is on disk and the extension is installed; a failure to
+        // catalog a provider must not report the install as failed.
+        logger.main.warn(
+          `[ExtensionHandlers] Installed ${extensionId} but could not register its agent providers: ${err}`
+        );
+      }
+
       return { success: true, extensionId, symlinkPath };
     } catch (error) {
       logger.main.error('[ExtensionHandlers] Failed to install dev extension:', error);

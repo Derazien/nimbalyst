@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cursor Agent no longer copies your global MCP server settings, including any secrets, into the project folder.
 - Repository-provided MCP servers no longer start for Grok Build or Cursor Agent in a workspace you have not trusted.
 - The macOS menu bar strip and the panel below it now agree on their status colors: running sessions are green, unread ones blue.
+- An agent provider from a dev-installed extension works as soon as it is installed, instead of failing every turn with "Unknown provider" until Settings > Extensions is opened.
 
 ### Removed
 <!-- Removed features go here -->
