@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 <!-- Bug fixes go here -->
+- An agent provider from a dev-installed extension works as soon as it is installed, instead of failing every turn with "Unknown provider" until Settings > Extensions is opened.
 
 ### Removed
 <!-- Removed features go here -->
