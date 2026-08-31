@@ -51,6 +51,8 @@ import { SlashCommandSuggestions } from './SlashCommandSuggestions';
 import { InlineTipDisplay } from '../../tips/InlineTipDisplay';
 import { activeTipIdAtom } from '../../tips/atoms';
 import { supportsWorkspaceSlashCommands } from '../Typeahead/slashCommandAutocomplete';
+import { providerSupportsAttachments } from './providerAttachmentSupport';
+import { useProviderAttachmentSupport } from './useProviderAttachmentSupport';
 import type { TextSelection } from './TextSelectionIndicator';
 import { type SerializableDocumentContext } from '../../hooks/useDocumentContext';
 import { serializeEditorContextItemsForIpc } from './editorContextSerialization';
@@ -2214,7 +2216,12 @@ const LocalSessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscrip
 
   // Feature flags
   const enableSlashCommands = supportsWorkspaceSlashCommands(provider);
-  const enableAttachments = true;
+  // Honour the provider's declared `supportsAttachments`. Providers that do not
+  // declare it (every built-in one, and any extension that stayed silent) keep
+  // attachments enabled, so this only ever acts on an explicit "no".
+  const { supportMap: attachmentSupportMap, displayNames: providerDisplayNames } =
+    useProviderAttachmentSupport();
+  const enableAttachments = providerSupportsAttachments(provider, attachmentSupportMap);
   const enableHistoryNavigation = true;
 
   // Extra content rendered in the empty-session panel: an inline contextual
@@ -2731,6 +2738,8 @@ const LocalSessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscrip
         workspacePath={workspacePath}
         sessionId={sessionId}
         enableAttachments={enableAttachments}
+        attachmentsSupported={enableAttachments}
+        providerDisplayName={provider ? providerDisplayNames.get(provider) ?? null : null}
         onAttachmentAdd={handleAttachmentAdd}
         onAttachmentRemove={handleAttachmentRemove}
         enableSlashCommands={enableSlashCommands}
