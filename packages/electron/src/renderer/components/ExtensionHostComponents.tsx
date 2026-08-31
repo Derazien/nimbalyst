@@ -10,11 +10,12 @@ import type { JSX } from 'react';
 import { useState, useEffect } from 'react';
 import { getExtensionLoader } from '@nimbalyst/runtime';
 import type { ComponentType } from 'react';
+import { EXTENSION_HOST_UI, type ExtensionHostComponentProps } from './extensionHostUi';
 
 interface HostComponentInfo {
   extensionId: string;
   componentName: string;
-  component: ComponentType;
+  component: ComponentType<Partial<ExtensionHostComponentProps>>;
 }
 
 export function ExtensionHostComponents(): JSX.Element {
@@ -44,8 +45,12 @@ export function ExtensionHostComponents(): JSX.Element {
     <>
       {hostComponents.map((info) => {
         const Component = info.component;
+        // The app's own components an extension may render, chiefly ChatSidebar, so an extension
+        // that wants a chat surface borrows the real one instead of growing a second. See
+        // extensionHostUi.ts. Extensions treat the prop as optional, so one built against an
+        // older app still mounts and simply has nothing to borrow.
         return (
-          <Component key={`${info.extensionId}-${info.componentName}`} />
+          <Component key={`${info.extensionId}-${info.componentName}`} hostUi={EXTENSION_HOST_UI} />
         );
       })}
     </>
