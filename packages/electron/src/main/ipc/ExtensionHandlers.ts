@@ -1169,6 +1169,20 @@ export function registerExtensionHandlers(): void {
   // (Settings AGENT PROVIDERS panel). Returns provider metadata from the
   // AgentProviderRegistry; denied entries are hidden. The model picker gets
   // models via ai:getModels; this is the provider-level listing.
+  /**
+   * The SDK types `supportsAttachments` as a boolean, but the shipped
+   * `gemini-antigravity` manifest declares it as a list of accepted kinds
+   * (`["image"]`). Both spellings exist in the wild, so normalize here rather
+   * than teaching every consumer the union: a non-empty list is a yes, an empty
+   * list is a no, and anything unrecognized stays `undefined` ("did not say")
+   * so the renderer never turns silence into a refusal.
+   */
+  const normalizeSupportsAttachments = (value: unknown): boolean | undefined => {
+    if (typeof value === 'boolean') return value;
+    if (Array.isArray(value)) return value.length > 0;
+    return undefined;
+  };
+
   safeHandle('agent-providers:list', async () => {
     try {
       const data = getAgentProviderRegistry()
@@ -1180,6 +1194,14 @@ export function registerExtensionHandlers(): void {
           name: entry.contribution.displayName || entry.contributionId,
           icon: entry.contribution.icon,
           status: entry.status,
+          // Declared in the manifest. The composer reads this to decide whether
+          // a pasted or dropped file may be attached at all -- without it the
+          // renderer has no way to honour `supportsAttachments: false`.
+          // `undefined` means the manifest said nothing and is passed through as
+          // such, so the renderer can tell "did not say" from "said no".
+          supportsAttachments: normalizeSupportsAttachments(
+            entry.contribution.supportsAttachments,
+          ),
           models: (entry.contribution.models ?? []).map((m) => ({ id: m.id, name: m.name })),
         }));
       return { success: true, data };

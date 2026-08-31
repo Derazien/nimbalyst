@@ -41,6 +41,8 @@ import { parseMentionTokens } from './commandPills/parseMentionTokens';
 import { HighlightOverlay, type OverlayToken } from './commandPills/HighlightOverlay';
 import { CommandPillPopover } from './commandPills/CommandPillPopover';
 import { canPersistWorkspaceHydratedState } from '../../utils/workspaceHydration';
+import { attachmentUnsupportedMessage } from './providerAttachmentSupport';
+import { errorNotificationService } from '../../services/ErrorNotificationService';
 
 export interface AIInputRef {
   focus: () => void;
@@ -65,6 +67,15 @@ interface AIInputProps {
   attachments?: ChatAttachment[];
   onAttachmentAdd?: (attachment: ChatAttachment) => void;
   onAttachmentRemove?: (attachmentId: string) => void;
+  /**
+   * Whether the active provider accepts attachments at all. `false` means an
+   * image paste or a file drop is refused with a toast instead of being saved
+   * and handed to a backend that has nowhere to put it. Defaults to `true` so
+   * every existing caller keeps today's behaviour.
+   */
+  attachmentsSupported?: boolean;
+  /** Provider name used in the refusal toast, e.g. "Lea (Hermes)". */
+  providerDisplayName?: string | null;
 
   // Slash command support (from AgenticInput)
   enableSlashCommands?: boolean;
@@ -170,6 +181,8 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
     attachments = [],
     onAttachmentAdd,
     onAttachmentRemove,
+    attachmentsSupported = true,
+    providerDisplayName,
     enableSlashCommands = false,
     mode = 'planning' as AIMode,
     onModeChange,
@@ -1021,6 +1034,19 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
       }
     };
 
+    /**
+     * Refuse an attachment the active provider cannot receive. Returns true
+     * when the caller must stop. Never silently swallows: the user gets the
+     * same toast the app uses for any rejected attachment, naming the provider,
+     * so a pasted screenshot that goes nowhere is visible rather than mysterious.
+     */
+    const rejectUnsupportedAttachment = useCallback((kind: 'image' | 'file'): boolean => {
+      if (attachmentsSupported) return false;
+      const { title, message } = attachmentUnsupportedMessage(providerDisplayName, kind);
+      errorNotificationService.showWarning(title, message);
+      return true;
+    }, [attachmentsSupported, providerDisplayName]);
+
     // Handle file attachment
     const handleFileAttachment = useCallback(async (file: File) => {
       if (!onAttachmentAdd || !sessionId) return;
@@ -1189,15 +1215,18 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
       // Handle OS file drops as attachments. Push one boundary snapshot for
       // the drop -- handleFileAttachment owns the in-flight drop logic via
       // pasteUndoCountRef so undo correctly removes pending attachments.
-      if (!onAttachmentAdd) return;
       const files = Array.from(e.dataTransfer.files);
+      // Same gate as paste: an OS file drop onto a provider that takes no
+      // attachments is refused out loud, not saved and not swallowed.
+      if (files.length > 0 && rejectUnsupportedAttachment('file')) return;
+      if (!onAttachmentAdd) return;
       if (files.length > 0) {
         pushSnapshot(captureSnapshot(), { boundary: true });
       }
       for (const file of files) {
         await handleFileAttachment(file);
       }
-    }, [onAttachmentAdd, handleFileAttachment, value, onChange, workspacePath, sessionRegistry, pushSnapshot, captureSnapshot]);
+    }, [onAttachmentAdd, handleFileAttachment, value, onChange, workspacePath, sessionRegistry, pushSnapshot, captureSnapshot, rejectUnsupportedAttachment]);
 
     // Threshold for converting large text pastes to attachments (25 lines or 2000 characters)
     const LARGE_PASTE_LINE_THRESHOLD = 25;
@@ -1207,7 +1236,16 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
     const handlePaste = useCallback(async (e: React.ClipboardEvent) => {
       const items = Array.from(e.clipboardData.items);
 
-      // Handle image attachments
+      // Handle image attachments. The provider gate comes first: a provider
+      // that declares no attachment support must not have an image saved and
+      // referenced in its prompt, and must not have the paste vanish either.
+      if (items.some((item) => item.type.startsWith('image/'))) {
+        if (rejectUnsupportedAttachment('image')) {
+          e.preventDefault();
+          return;
+        }
+      }
+
       if (onAttachmentAdd) {
         for (const item of items) {
           if (item.type.startsWith('image/')) {
@@ -1261,7 +1299,7 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
       // Note: ordinary in-line text pastes fall through to the textarea's
       // native paste, which fires onChange and is recorded by the typing
       // path (with coalescing).
-    }, [onAttachmentAdd, handleFileAttachment, provider, value, onChange, sessionId, pushSnapshot, captureSnapshot]);
+    }, [onAttachmentAdd, handleFileAttachment, provider, value, onChange, sessionId, pushSnapshot, captureSnapshot, rejectUnsupportedAttachment]);
 
     // Handle attachment removal
     const handleRemoveAttachment = useCallback((attachmentId: string) => {

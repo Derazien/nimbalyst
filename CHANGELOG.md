@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Pasting or dropping an image into a session whose agent provider does not take attachments now says so, instead of sending a file reference the agent never receives.
 
 ### Removed
 <!-- Removed features go here -->
