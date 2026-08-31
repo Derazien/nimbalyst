@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 <!-- New features go here -->
 - Run sessions in your own Cloudflare sandbox with machine navigation, the shared composer, attachments and Actions, and profile/account selections remembered per project.
+- Extension panels can embed the app's own chat, with its providers, transcript and composer, instead of building a second chat of their own.
 
 ### Changed
 <!-- Changes to existing functionality go here -->
