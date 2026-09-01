@@ -76,6 +76,9 @@ vi.mock("../tools", () => ({
 
 vi.mock("../providerResolution", () => ({
   resolveExtensionAgentRef: vi.fn(() => null),
+  // A claude-code-cli or SDK session is neither the built-in gemini agent nor
+  // an extension contribution, so the host does not supply its tool loop.
+  usesHostSuppliedToolLoop: vi.fn(() => false),
 }));
 
 vi.mock("../../../extensions/AgentProviderRegistry", () => ({
