@@ -20,7 +20,21 @@ schemes:
     run:
       config: Debug
       commandLineArguments: {}
+    test:
+      targets:
+        - NimbalystNavigationUITests
 targets:
+  NimbalystNavigationUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - UITests
+    dependencies:
+      - target: NimbalystApp
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.nimbalyst.navigation-tests
   NimbalystApp:
     type: application
     platform: iOS

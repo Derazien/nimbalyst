@@ -1,5 +1,4 @@
 import SwiftUI
-import GRDB
 
 #if canImport(UIKit)
 import UIKit
@@ -306,24 +305,19 @@ public struct LoginView: View {
     #endif
 }
 
-/// Main navigation using NavigationStack for iPhone and NavigationSplitView for iPad.
-///
-/// iPad layout: two-column split view.
-///   - Sidebar: session list for the auto-selected (or user-picked) project
-///   - Detail: session transcript
-///   - Project switcher via toolbar folder button (sheet)
-///
-/// iPhone layout: standard stack navigation (Projects -> Sessions -> Detail).
+/// One navigation history on iPhone and iPad, independent of size class and rotation.
+/// The session sidebar expands beside the detail when space permits.
 public struct MainNavigationView: View {
     @EnvironmentObject var appState: AppState
-    @Environment(\.horizontalSizeClass) private var sizeClass
     @Environment(\.openURL) private var openURL
-    @State private var navigationPath = NavigationPath()
+    @StateObject private var navigation: WorkspaceNavigationState
     @State private var showNotificationPrompt = false
     @State private var showVoiceSettings = false
     @ObservedObject private var notificationManager = NotificationManager.shared
 
-    public init() {}
+    public init(project: Project? = nil) {
+        _navigation = StateObject(wrappedValue: WorkspaceNavigationState(project: project))
+    }
 
     public var body: some View {
         VStack(spacing: 0) {
@@ -333,27 +327,7 @@ public struct MainNavigationView: View {
                 }
                 .transition(.move(edge: .top).combined(with: .opacity))
             }
-            Group {
-                if sizeClass == .regular {
-                    IPadNavigationView()
-                        .environmentObject(appState)
-                } else {
-                    NavigationStack(path: $navigationPath) {
-                        ProjectListView()
-                            .environmentObject(appState)
-                            // Registered at the stack root so a notification tap
-                            // resolves at any depth. The Session destination lives
-                            // in SessionListView (depth 1) and can only be pushed
-                            // once that view has rendered.
-                            .navigationDestination(for: PendingSessionRoute.self) { route in
-                                if let db = appState.databaseManager {
-                                    PendingSessionView(sessionId: route.sessionId, database: db)
-                                        .environmentObject(appState)
-                                }
-                            }
-                    }
-                }
-            }
+            WorkspaceNavigationView(navigation: navigation)
         }
         .animation(.easeInOut(duration: 0.25), value: appState.syncAuthDegraded)
         #if os(iOS)
@@ -364,19 +338,15 @@ public struct MainNavigationView: View {
             }
         }
         #endif
-        // iPad consumes this in IPadNavigationView, which owns its own selection
-        // state — clearing it here would race that view out of the tap.
         .onChange(of: notificationManager.pendingSessionId) { _, newValue in
-            guard sizeClass != .regular, let sessionId = newValue else { return }
+            guard let sessionId = newValue else { return }
             navigateToSession(sessionId)
             notificationManager.pendingSessionId = nil
         }
         #if os(iOS)
-        // Voice agent created a session on this device — open it. iPhone navigates
-        // its stack here; iPad sets selectedSession in IPadNavigationView, which
-        // clears the request. Guard on compact so we don't consume the iPad case.
+        // Voice-created sessions use the same route as notification taps.
         .onChange(of: appState.voiceNavigationRequest) { _, newValue in
-            guard sizeClass != .regular, let sessionId = newValue else { return }
+            guard let sessionId = newValue else { return }
             navigateToSession(sessionId)
             appState.voiceNavigationRequest = nil
         }
@@ -389,7 +359,7 @@ public struct MainNavigationView: View {
             ])
 
             // Handle notification tap that launched the app
-            if sizeClass != .regular, let sessionId = notificationManager.pendingSessionId {
+            if let sessionId = notificationManager.pendingSessionId {
                 navigateToSession(sessionId)
                 notificationManager.pendingSessionId = nil
             }
@@ -481,250 +451,9 @@ public struct MainNavigationView: View {
     }
     #endif
 
-    /// Open the session a push notification (or the voice agent) named.
-    ///
-    /// Navigates to a sessionId-keyed route rather than to a `Session` value,
-    /// because the session frequently has not synced to this device yet — a
-    /// notification about a just-created session names a row we have never seen.
-    /// `PendingSessionView` waits for it. The whole path is assigned in one
-    /// synchronous update; the previous chained `asyncAfter` hops could be
-    /// outrun by a cold launch and were dropped silently by SwiftUI.
+    /// Preserve notification/voice intent even when the session has not synced yet.
     private func navigateToSession(_ sessionId: String) {
-        guard sizeClass != .regular else { return }
-
-        let plan = SessionNavigation.plan(for: sessionId, in: appState.databaseManager)
-        var path = NavigationPath()
-        if let project = plan.project {
-            path.append(project)
-        }
-        path.append(plan.route)
-        navigationPath = path
-    }
-}
-
-// MARK: - iPad Navigation
-
-/// iPad two-column layout: sessions sidebar + session detail.
-/// Project selection is via a toolbar picker sheet rather than a dedicated column,
-/// since the project list is a one-time selection, not a persistent sidebar.
-struct IPadNavigationView: View {
-    @EnvironmentObject var appState: AppState
-    @State private var selectedProject: Project?
-    @State private var selectedSession: Session?
-    @State private var selectedDocument: SyncedDocument?
-    @State private var showProjectPicker = false
-    @State private var projects: [Project] = []
-    @State private var projectsCancellable: AnyDatabaseCancellable?
-    /// Session a push notification asked for, held until it syncs in.
-    @State private var pendingNotificationSessionId: String?
-    @ObservedObject private var notificationManager = NotificationManager.shared
-
-    var body: some View {
-        NavigationSplitView {
-            if let project = selectedProject {
-                SessionListView(
-                    project: project,
-                    selectedSession: $selectedSession,
-                    selectedDocument: $selectedDocument,
-                    onSwitchProject: { showProjectPicker = true }
-                )
-                .environmentObject(appState)
-            } else {
-                VStack(spacing: 16) {
-                    Image(systemName: "folder")
-                        .font(.system(size: 48))
-                        .foregroundStyle(.secondary)
-                    Text("No Projects")
-                        .font(.title3)
-                    Text("Projects will appear once synced from the desktop app.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                }
-            }
-        } detail: {
-            // Stays mounted after it resolves, so the transcript it just loaded
-            // is not torn down and rebuilt; cleared when the user picks something
-            // else in the sidebar.
-            if let pendingId = pendingNotificationSessionId, let db = appState.databaseManager {
-                PendingSessionView(sessionId: pendingId, database: db) { session in
-                    adoptNotificationSession(session)
-                }
-                .environmentObject(appState)
-                .id(pendingId)
-            } else if let doc = selectedDocument {
-                #if canImport(UIKit)
-                DocumentEditorView(document: doc)
-                    .environmentObject(appState)
-                    .id(doc.id)
-                #else
-                Text("Select a session")
-                    .foregroundStyle(.secondary)
-                #endif
-            } else if let session = selectedSession {
-                // No `.id(session.id)` — SessionDetailView handles in-place
-                // session swap (see swapSession) so SwiftUI reuses the same
-                // view, the same TranscriptWebView, and the React-side
-                // multi-session DOM cache inside it when the user picks a
-                // different session in the sidebar.
-                SessionDetailView(session: session)
-                    .environmentObject(appState)
-            } else {
-                Text("Select a session")
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .onAppear { startObservingProjects() }
-        .onReceive(appState.$databaseManager) { database in
-            projectsCancellable?.cancel()
-            projectsCancellable = nil
-            projects = []
-            selectedProject = nil
-            selectedSession = nil
-            selectedDocument = nil
-            if database != nil {
-                startObservingProjects()
-            }
-        }
-        .onDisappear { projectsCancellable?.cancel() }
-        .sheet(isPresented: $showProjectPicker) {
-            projectPickerSheet
-        }
-        .onChange(of: notificationManager.pendingSessionId) { _, newValue in
-            guard let sessionId = newValue else { return }
-            pendingNotificationSessionId = sessionId
-            notificationManager.pendingSessionId = nil
-        }
-        .onAppear {
-            // A tap that cold-launched the app arrives before this view exists.
-            if let sessionId = notificationManager.pendingSessionId {
-                pendingNotificationSessionId = sessionId
-                notificationManager.pendingSessionId = nil
-            }
-        }
-        // Any other sidebar choice supersedes the notification.
-        .onChange(of: selectedSession) { _, newValue in
-            if let pending = pendingNotificationSessionId, newValue?.id != pending {
-                pendingNotificationSessionId = nil
-            }
-        }
-        .onChange(of: selectedDocument) { _, newValue in
-            if newValue != nil { pendingNotificationSessionId = nil }
-        }
-        #if os(iOS)
-        .onChange(of: appState.voiceNavigationRequest) { _, newValue in
-            guard let sessionId = newValue else { return }
-            openVoiceCreatedSession(sessionId)
-            appState.voiceNavigationRequest = nil
-        }
-        #endif
-    }
-
-    /// Bring the sidebar in line with a notification-opened session once it has
-    /// synced. `pendingNotificationSessionId` deliberately stays set so the
-    /// detail column keeps the transcript it already built.
-    private func adoptNotificationSession(_ session: Session) {
-        if selectedProject?.id != session.projectId,
-           let db = appState.databaseManager,
-           let project = try? db.writer.read({ db in try Project.fetchOne(db, id: session.projectId) }) {
-            selectedProject = project
-            configureVoiceForProject(project)
-        }
-        selectedDocument = nil
-        selectedSession = session
-    }
-
-    /// Open a session the voice agent just created (iPad split view): select its
-    /// project if different, then show it in the detail column.
-    private func openVoiceCreatedSession(_ sessionId: String) {
-        guard let db = appState.databaseManager,
-              let session = try? db.session(byId: sessionId) else { return }
-        if selectedProject?.id != session.projectId,
-           let project = try? db.writer.read({ db in try Project.fetchOne(db, id: session.projectId) }) {
-            selectedProject = project
-            configureVoiceForProject(project)
-        }
-        selectedDocument = nil
-        selectedSession = session
-    }
-
-    private var projectPickerSheet: some View {
-        NavigationStack {
-            List(projects) { project in
-                Button {
-                    selectedProject = project
-                    selectedSession = nil
-                    selectedDocument = nil
-                    showProjectPicker = false
-                    configureVoiceForProject(project)
-                } label: {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(project.name)
-                                .font(.body)
-                                .foregroundStyle(.primary)
-                            if project.sessionCount > 0 {
-                                Text("\(project.sessionCount) session\(project.sessionCount == 1 ? "" : "s")")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        Spacer()
-                        if project.id == selectedProject?.id {
-                            Image(systemName: "checkmark")
-                                .foregroundStyle(NimbalystColors.primary)
-                        }
-                    }
-                    .padding(.vertical, 4)
-                }
-            }
-            .navigationTitle("Switch Project")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { showProjectPicker = false }
-                }
-                ToolbarItem(placement: .primaryAction) {
-                    NavigationLink {
-                        SettingsView()
-                            .environmentObject(appState)
-                    } label: {
-                        Image(systemName: "gearshape")
-                    }
-                }
-            }
-        }
-    }
-
-    private func startObservingProjects() {
-        guard let db = appState.databaseManager else { return }
-        projectsCancellable?.cancel()
-
-        let observation = ValueObservation.tracking { db in
-            try Project
-                .order(Project.Columns.lastUpdatedAt.desc, Project.Columns.name)
-                .fetchAll(db)
-        }
-
-        projectsCancellable = observation.start(
-            in: db.writer,
-            onError: { _ in
-            },
-            onChange: { newProjects in
-                projects = newProjects
-                // Auto-select the most recent project if none selected
-                if selectedProject == nil, let first = newProjects.first {
-                    selectedProject = first
-                    appState.configureVoiceAgent(forProject: first.id)
-                }
-            }
-        )
-    }
-
-    private func configureVoiceForProject(_ project: Project) {
-        appState.configureVoiceAgent(forProject: project.id)
+        navigation.openSession(sessionId, database: appState.databaseManager)
     }
 }
 

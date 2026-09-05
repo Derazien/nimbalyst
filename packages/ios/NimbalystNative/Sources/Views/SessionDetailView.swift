@@ -77,19 +77,11 @@ public struct SessionDetailView: View {
     /// Whether the current session room has returned its initial sync response.
     @State private var hasCompletedInitialSessionSync = false
 
-    /// Compose bar state.
-    @State private var composeText = ""
+    @StateObject private var composeState: SessionComposeState
     /// Debounce work item for pushing draft input changes to sync.
     @State private var draftDebounceItem: DispatchWorkItem?
-    /// Whether we are currently applying a synced draft (suppress push-back).
-    @State private var isApplyingRemoteDraft = false
-    /// Epoch ms of last local submit -- used to reject stale remote drafts.
-    @State private var lastSubmitAt: Int = 0
-    /// Epoch ms of last local keystroke -- used to reject stale sync echoes.
-    /// Mirrors desktop's sessionDraftLocalModifiedAtAtom pattern.
-    @State private var lastLocalEditAt: Int = 0
     /// Whether the compose TextField currently has keyboard focus. While true,
-    /// we never overwrite `composeText` from sync -- mutating the binding under
+    /// we never overwrite `composeState.text` from sync -- mutating the binding under
     /// an active TextField reorders characters via IME/autocorrect/dictation
     /// candidate buffers (the "jumbled while typing fast" bug).
     @FocusState private var composeFocused: Bool
@@ -146,8 +138,9 @@ public struct SessionDetailView: View {
         liveSession ?? session
     }
 
-    public init(session: Session) {
+    public init(session: Session, composeState: SessionComposeState? = nil) {
         self.session = session
+        _composeState = StateObject(wrappedValue: composeState ?? SessionComposeState())
     }
 
     public var body: some View {
@@ -209,21 +202,22 @@ public struct SessionDetailView: View {
 
             // Compose bar
             //
-            // The text binding stamps `lastLocalEditAt` synchronously inside
-            // its setter rather than waiting for `onChange(of: composeText)`
+            // The text binding stamps `composeState.lastLocalEditAt` synchronously inside
+            // its setter rather than waiting for `onChange(of: composeState.text)`
             // to fire. SwiftUI fires onChange handlers in declaration order
             // within a single render pass, so a GRDB self-echo arriving in
             // the same pass as a keystroke could otherwise see a stale
-            // `lastLocalEditAt`, fail the rejection guard below, and
+            // `composeState.lastLocalEditAt`, fail the rejection guard below, and
             // overwrite the just-typed character.
             ComposeBar(
                 text: Binding(
-                    get: { composeText },
+                    get: { composeState.text },
                     set: { newValue in
-                        composeText = newValue
-                        lastLocalEditAt = Int(Date().timeIntervalSince1970 * 1000)
+                        composeState.text = newValue
+                        composeState.lastLocalEditAt = Int(Date().timeIntervalSince1970 * 1000)
                     }
                 ),
+                pendingAttachments: $composeState.attachments,
                 isExecuting: displaySession.isExecuting,
                 commands: projectCommands,
                 onSend: sendPrompt,
@@ -267,17 +261,15 @@ public struct SessionDetailView: View {
             subscribeToDiagnostics()
             startObservingQueuedPrompts()
             // Seed compose text from synced draft if local compose is empty
-            if composeText.isEmpty, let draft = session.draftInput, !draft.isEmpty {
-                isApplyingRemoteDraft = true
-                composeText = draft
-                DispatchQueue.main.async { isApplyingRemoteDraft = false }
+            if composeState.text.isEmpty {
+                composeState.applyRemoteDraft(session.draftInput, updatedAt: session.draftUpdatedAt)
             }
             // Mark session as read when viewing it
             appState.syncManager?.markSessionRead(sessionId: session.id)
             AnalyticsManager.shared.capture("mobile_session_viewed")
         }
         .onChange(of: liveSession?.draftInput) { _, _ in
-            // While the user is actively typing, never overwrite composeText from
+            // While the user is actively typing, never overwrite composeState.text from
             // sync. Externally mutating the TextField binding while it is focused
             // reorders characters via IME/autocorrect/dictation candidate buffers
             // (the "jumbled while typing fast" bug). Pending remote drafts will be
@@ -305,19 +297,21 @@ public struct SessionDetailView: View {
             swapSession(fromOldId: oldId)
             previousSessionId = session.id
         }
-        .onChange(of: composeText) { _, newText in
+        .onChange(of: composeState.text) { _, newText in
             // Push draft changes back to sync (debounced).
-            // `lastLocalEditAt` is stamped synchronously by the TextField's
+            // `composeState.lastLocalEditAt` is stamped synchronously by the TextField's
             // binding setter above, not here, to avoid a render-order race
             // where a self-echo could otherwise overwrite a just-typed
             // character.
-            guard !isApplyingRemoteDraft else { return }
+            guard !composeState.isApplyingRemoteDraft else { return }
             draftDebounceItem?.cancel()
-            let item = DispatchWorkItem {
-                appState.syncManager?.updateDraftInput(
-                    sessionId: session.id,
+            let sessionId = session.id
+            let item = DispatchWorkItem { [weak sync = appState.syncManager] in
+                sync?.updateDraftInput(
+                    sessionId: sessionId,
                     draftInput: newText
                 )
+                draftDebounceItem = nil
             }
             draftDebounceItem = item
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: item)
@@ -333,7 +327,11 @@ public struct SessionDetailView: View {
             queuedPromptsCancellable?.cancel()
             timeoutWorkItem?.cancel()
             promptRefreshWorkItem?.cancel()
-            draftDebounceItem?.cancel()
+            // Commit a queued local draft before a column remount cancels its debounce.
+            let pendingDraft = draftDebounceItem
+            pendingDraft?.perform()
+            pendingDraft?.cancel()
+            draftDebounceItem = nil
             // Remove only THIS session's diagnostic handler. The incoming
             // view may have already registered its own; a blanket
             // `onSessionSyncDiagnostic = nil` would drop its registration and
@@ -442,34 +440,12 @@ public struct SessionDetailView: View {
             && (!messages.isEmpty || serverConfirmedNoMessages || !hasExpectedTranscriptMessages)
     }
 
-    /// Apply the most recent synced draft to composeText if it represents
+    /// Apply the most recent synced draft to composeState.text if it represents
     /// genuinely newer text than what we have locally. Callers MUST ensure the
     /// TextField is not currently focused before calling this -- mutating the
     /// binding under an active TextField scrambles the user's input.
     private func applyRemoteDraftIfNewer() {
-        let draft = liveSession?.draftInput ?? ""
-        guard draft != composeText else { return }
-        // Defense-in-depth: if the local compose already contains the incoming
-        // draft as a prefix, the user is ahead of the remote (almost always a
-        // self-echo arriving after they kept typing). Don't ever overwrite
-        // their input with a shorter prefix.
-        if !draft.isEmpty && composeText.hasPrefix(draft) && composeText.count > draft.count {
-            return
-        }
-        // Reject stale drafts: if the remote draftUpdatedAt is older than our
-        // last submit, this is an echo of the pre-submit draft -- ignore it.
-        if let remoteTs = liveSession?.draftUpdatedAt, !draft.isEmpty, remoteTs <= lastSubmitAt {
-            return
-        }
-        // Reject sync echoes older than our local typing. Only accept remote
-        // drafts that are genuinely newer (e.g., typed on desktop after we
-        // stopped typing here). Mirrors desktop's sessionDraftLocalModifiedAtAtom.
-        if let remoteTs = liveSession?.draftUpdatedAt, lastLocalEditAt > 0, remoteTs <= lastLocalEditAt {
-            return
-        }
-        isApplyingRemoteDraft = true
-        composeText = draft
-        DispatchQueue.main.async { isApplyingRemoteDraft = false }
+        composeState.applyRemoteDraft(liveSession?.draftInput, updatedAt: liveSession?.draftUpdatedAt)
     }
 
     /// Re-check whether the transcript overlay can be dismissed.
@@ -725,11 +701,11 @@ public struct SessionDetailView: View {
         messages = []
         queuedPrompts = []
         promptList = []
-        composeText = ""
+        composeState.text = ""
         composeFocused = false
-        isApplyingRemoteDraft = false
-        lastLocalEditAt = 0
-        lastSubmitAt = 0
+        composeState.isApplyingRemoteDraft = false
+        composeState.lastLocalEditAt = 0
+        composeState.lastSubmitAt = 0
         sendError = nil
         deliveryWarning = nil
         fileSheetDocument = nil
@@ -746,9 +722,9 @@ public struct SessionDetailView: View {
 
         // Seed compose from the new session's draft.
         if let draft = session.draftInput, !draft.isEmpty {
-            isApplyingRemoteDraft = true
-            composeText = draft
-            DispatchQueue.main.async { isApplyingRemoteDraft = false }
+            composeState.isApplyingRemoteDraft = true
+            composeState.text = draft
+            DispatchQueue.main.async { composeState.isApplyingRemoteDraft = false }
         }
 
         AnalyticsManager.shared.capture("mobile_session_viewed")
@@ -953,7 +929,7 @@ public struct SessionDetailView: View {
         // Record submit timestamp so we can reject any remote draft older than this.
         draftDebounceItem?.cancel()
         draftDebounceItem = nil
-        lastSubmitAt = Int(Date().timeIntervalSince1970 * 1000)
+        composeState.lastSubmitAt = Int(Date().timeIntervalSince1970 * 1000)
         syncManager.updateDraftInput(sessionId: session.id, draftInput: "")
 
         Task {
@@ -977,7 +953,7 @@ public struct SessionDetailView: View {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 10, execute: timeout)
             } catch {
                 // Restore the draft so the user doesn't lose their text
-                composeText = text
+                composeState.text = text
                 sendError = "Failed to send: \(error.localizedDescription)"
             }
         }

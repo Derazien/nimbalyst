@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 63;
+	objectVersion = 77;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -20,11 +20,19 @@
 		BBEF892D1FCAC8AD5D17B6CD /* FleetActivityViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = B81B830ABFA956D7BC03CE33 /* FleetActivityViews.swift */; };
 		D1328820991CCB5C4717114C /* NimbalystWidgetsBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CE2999E23EB447A00B4FB82 /* NimbalystWidgetsBundle.swift */; };
 		D61148B64AD2C6754C306505 /* transcript-dist in Resources */ = {isa = PBXBuildFile; fileRef = CCD597478FE1DE96262222D2 /* transcript-dist */; };
+		E3624A304C5951B3C44469EB /* NavigationContinuityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED8FEF8C1440E30F07BEF08B /* NavigationContinuityTests.swift */; };
 		EB13BE7D51392A464842B098 /* editor-dist in Resources */ = {isa = PBXBuildFile; fileRef = 75CD8A296AB450A034395E94 /* editor-dist */; };
 		FE00B6A23CEE6253684F19C8 /* NimbalystAppMain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61EF9877A6E8685EEDBAC2DB /* NimbalystAppMain.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		086CBBC7B8AE62A9823EF317 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = DDFD0E23241DF103C04CB810 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = B3CF4230C889EC2EB2A2E42C;
+			remoteInfo = NimbalystApp;
+		};
 		1C681D79FC29CAD2CD9C46B4 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = DDFD0E23241DF103C04CB810 /* Project object */;
@@ -52,6 +60,7 @@
 		0682F97FD1E3CABA141B8DAE /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		20AF8F81DCF89FDFC6ABBD41 /* NimbalystNative */ = {isa = PBXFileReference; lastKnownFileType = folder; name = NimbalystNative; path = ../NimbalystNative; sourceTree = SOURCE_ROOT; };
 		220EF83D27CB78E36ADB0F17 /* NimbalystWidgets.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = NimbalystWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		28AAB412B7B79412AFC2D34D /* NimbalystNavigationUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = NimbalystNavigationUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		3654DBF9031AF3A4E820E5E3 /* NimbalystApp.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = NimbalystApp.entitlements; sourceTree = "<group>"; };
 		378E1BCDAB725D5AA7AE106F /* FleetActivityWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FleetActivityWidget.swift; sourceTree = "<group>"; };
 		410140D418FDDE3F17C78BB9 /* NimbalystApp.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = NimbalystApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -67,7 +76,8 @@
 		CCD597478FE1DE96262222D2 /* transcript-dist */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "transcript-dist"; path = "Resources/transcript-dist"; sourceTree = SOURCE_ROOT; };
 		DF84EC95710C01767FC0B3E0 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		EB11A131E099B9309C58DE20 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		EC6BD8ABB212746BF377C59C /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		EC6BD8ABB212746BF377C59C /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		ED8FEF8C1440E30F07BEF08B /* NavigationContinuityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NavigationContinuityTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -86,6 +96,7 @@
 			isa = PBXGroup;
 			children = (
 				410140D418FDDE3F17C78BB9 /* NimbalystApp.app */,
+				28AAB412B7B79412AFC2D34D /* NimbalystNavigationUITests.xctest */,
 				220EF83D27CB78E36ADB0F17 /* NimbalystWidgets.appex */,
 			);
 			name = Products;
@@ -111,8 +122,17 @@
 				B2009E9FE9E308F63844BE32 /* Packages */,
 				EEF1860C5CD8C9B355227BDB /* Resources */,
 				1754B47838B32C084BA3357A /* Sources */,
+				529C3A9CA222AB9F3A06303C /* UITests */,
 				07C2624549541CD7021395F3 /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		529C3A9CA222AB9F3A06303C /* UITests */ = {
+			isa = PBXGroup;
+			children = (
+				ED8FEF8C1440E30F07BEF08B /* NavigationContinuityTests.swift */,
+			);
+			path = UITests;
 			sourceTree = "<group>";
 		};
 		A0982EBF387BD54C1FAD6B4E /* Utils */ = {
@@ -232,6 +252,24 @@
 			productReference = 410140D418FDDE3F17C78BB9 /* NimbalystApp.app */;
 			productType = "com.apple.product-type.application";
 		};
+		E7E9D9256618682D2A59780C /* NimbalystNavigationUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 879AED11243349EF26D83324 /* Build configuration list for PBXNativeTarget "NimbalystNavigationUITests" */;
+			buildPhases = (
+				E8130B2307A61930D0C27CD0 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				5A10CA37FD9E3EA302CB8F6D /* PBXTargetDependency */,
+			);
+			name = NimbalystNavigationUITests;
+			packageProductDependencies = (
+			);
+			productName = NimbalystNavigationUITests;
+			productReference = 28AAB412B7B79412AFC2D34D /* NimbalystNavigationUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -249,6 +287,10 @@
 						DevelopmentTeam = X8S24QHAT9;
 						ProvisioningStyle = Automatic;
 					};
+					E7E9D9256618682D2A59780C = {
+						DevelopmentTeam = X8S24QHAT9;
+						TestTargetID = B3CF4230C889EC2EB2A2E42C;
+					};
 				};
 			};
 			buildConfigurationList = F3160EFC8557D8AC12B6D046 /* Build configuration list for PBXProject "NimbalystApp" */;
@@ -264,10 +306,12 @@
 			packageReferences = (
 				ABD8257BB05FBCA15B4E04B1 /* XCLocalSwiftPackageReference "../NimbalystNative" */,
 			);
+			preferredProjectObjectVersion = 77;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
 				B3CF4230C889EC2EB2A2E42C /* NimbalystApp */,
+				E7E9D9256618682D2A59780C /* NimbalystNavigationUITests */,
 				3C9622C16E9496061B50114B /* NimbalystWidgets */,
 			);
 		};
@@ -352,6 +396,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		E8130B2307A61930D0C27CD0 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E3624A304C5951B3C44469EB /* NavigationContinuityTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -359,6 +411,11 @@
 			isa = PBXTargetDependency;
 			target = 3C9622C16E9496061B50114B /* NimbalystWidgets */;
 			targetProxy = 1C681D79FC29CAD2CD9C46B4 /* PBXContainerItemProxy */;
+		};
+		5A10CA37FD9E3EA302CB8F6D /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = B3CF4230C889EC2EB2A2E42C /* NimbalystApp */;
+			targetProxy = 086CBBC7B8AE62A9823EF317 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -554,9 +611,52 @@
 			};
 			name = Debug;
 		};
+		D0E5D75A80453FCAEEB5EAC9 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "com.nimbalyst.navigation-tests";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = NimbalystApp;
+			};
+			name = Release;
+		};
+		E5121A8D62BF105AFAFD37C0 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "com.nimbalyst.navigation-tests";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = NimbalystApp;
+			};
+			name = Debug;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		879AED11243349EF26D83324 /* Build configuration list for PBXNativeTarget "NimbalystNavigationUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E5121A8D62BF105AFAFD37C0 /* Debug */,
+				D0E5D75A80453FCAEEB5EAC9 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 		8C3C553AC5F5947B4C39D867 /* Build configuration list for PBXNativeTarget "NimbalystWidgets" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

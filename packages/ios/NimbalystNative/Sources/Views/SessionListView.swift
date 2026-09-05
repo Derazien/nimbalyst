@@ -144,48 +144,22 @@ enum ProjectTab: String, CaseIterable {
 public struct SessionListView: View {
     @EnvironmentObject var appState: AppState
     public let project: Project
-
-    /// When non-nil, the List uses selection binding for NavigationSplitView sidebar mode.
-    /// When nil, NavigationLink push navigation is used (iPhone NavigationStack mode).
-    private var selectedSession: Binding<Session?>?
-
-    /// Binding for iPad sidebar: selecting a file updates the NavigationSplitView detail column.
-    private var selectedDocument: Binding<SyncedDocument?>?
-
-    /// Called when the user taps the project switcher button (iPad sidebar only).
-    private var onSwitchProject: (() -> Void)?
-
-    /// Whether this view is operating as a NavigationSplitView sidebar.
-    private var isIPadSidebar: Bool { selectedSession != nil }
+    @Binding private var selection: WorkspaceSelection?
 
     @State private var sessions: [Session] = []
     @State private var cancellable: AnyDatabaseCancellable?
+    @State private var observationState: IndexLoadState = .loading
     @State private var expandedWorkstreams: Set<String> = []
     /// Meta-agent groups that are COLLAPSED. Stored as the inverse of expansion so the
     /// default state is expanded, mirroring desktop (see `MetaAgentExpansion`).
     @State private var collapsedMetaAgents: Set<String> = []
     @State private var selectedTab: ProjectTab = .sessions
 
-    /// iPhone init: push navigation via NavigationLink.
-    public init(project: Project) {
+    public init(project: Project, selection: Binding<WorkspaceSelection?>) {
         self.project = project
-        self.selectedSession = nil
-        self.selectedDocument = nil
-        self.onSwitchProject = nil
+        _selection = selection
     }
 
-    /// iPad init: selection bindings drive NavigationSplitView detail column.
-    public init(
-        project: Project,
-        selectedSession: Binding<Session?>,
-        selectedDocument: Binding<SyncedDocument?>,
-        onSwitchProject: @escaping () -> Void
-    ) {
-        self.project = project
-        self.selectedSession = selectedSession
-        self.selectedDocument = selectedDocument
-        self.onSwitchProject = onSwitchProject
-    }
     @State private var searchText = ""
     @State private var isCreatingSession = false
     @State private var phaseFilter: PhaseFilter = .all
@@ -374,42 +348,18 @@ public struct SessionListView: View {
             case .sessions:
                 sessionListContent
             case .files:
-                if let docBinding = selectedDocument {
-                    DocumentListView(project: project, selectedDocument: docBinding)
-                        .environmentObject(appState)
-                } else {
-                    DocumentListView(project: project)
-                        .environmentObject(appState)
-                }
-            }
-        }
-        .onChange(of: selectedTab) { _, newTab in
-            // Clear the other pane's selection so the detail column follows the active tab.
-            if newTab == .sessions {
-                selectedDocument?.wrappedValue = nil
-            } else {
-                selectedSession?.wrappedValue = nil
+                DocumentListView(project: project, selection: $selection)
+                    .environmentObject(appState)
             }
         }
         .navigationTitle(project.name)
         #if os(iOS)
-        .navigationBarTitleDisplayMode(isIPadSidebar ? .large : .inline)
+        .navigationBarTitleDisplayMode(.inline)
         #endif
-        .navigationDestination(for: Session.self) { session in
-            // Only used in iPhone NavigationStack mode.
-            // In iPad sidebar mode, NavigationLinks are not emitted so this never triggers.
-            SessionDetailView(session: session)
+        .onChange(of: selectedTab) { _, _ in
+            selection = nil
         }
         .toolbar {
-            #if os(iOS)
-            if let switchProject = onSwitchProject {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button { switchProject() } label: {
-                        Image(systemName: "folder")
-                    }
-                }
-            }
-            #endif
             ToolbarItem(placement: .primaryAction) {
                 HStack(spacing: 12) {
                     #if os(iOS)
@@ -442,12 +392,15 @@ public struct SessionListView: View {
             .presentationDetents([.medium, .large])
         }
         .onAppear {
-            startObserving()
             loadExpandedState()
             loadMetaAgentExpansionState()
             metaAgentEnabled = FeaturePreferences.metaAgentEnabled
             appState.configureVoiceAgent(forProject: project.id)
             resolveDefaultModel()
+        }
+        .task(id: appState.databaseManager.map(ObjectIdentifier.init)) {
+            sessions = []
+            startObserving()
         }
         .onChange(of: appState.availableModels) { _, _ in
             resolveDefaultModel()
@@ -519,7 +472,6 @@ public struct SessionListView: View {
                 set: { newValue in setMetaAgentExpanded(newValue, for: group.id) }
             ),
             voiceFocusedSessionId: voiceFocusedSessionId,
-            useSelectionTags: isIPadSidebar,
             headerContextMenu: { metaAgentGroupContextMenu(for: group) }
         )
     }
@@ -546,37 +498,24 @@ public struct SessionListView: View {
 
     private var sessionListContent: some View {
         Group {
-            if let binding = selectedSession {
-                List(selection: binding) {
-                    sessionListRows
-                }
-                .listStyle(.sidebar)
-            } else {
-                List {
-                    sessionListRows
-                }
-                .listStyle(.plain)
+            List(selection: $selection) {
+                sessionListRows
             }
+            .listStyle(.plain)
         }
         .searchable(text: $searchText, prompt: "Search sessions")
         .refreshable {
+            startObserving()
             appState.requestSync()
             try? await Task.sleep(nanoseconds: 500_000_000)
         }
         .overlay {
             if sessions.isEmpty {
-                VStack(spacing: 12) {
-                    Image(systemName: "bubble.left.and.bubble.right")
-                        .font(.system(size: 48))
-                        .foregroundStyle(.secondary)
-                    Text("No Sessions")
-                        .font(.title3)
-                    Text("Start a session in Nimbalyst on your computer, or tap + to create one.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                }
-                .padding()
+                IndexListPlaceholder(
+                    noun: "Sessions", symbol: "bubble.left.and.bubble.right",
+                    emptyDescription: "Start a session in Nimbalyst on your computer, or tap + to create one.",
+                    observationState: observationState
+                )
             }
         }
     }
@@ -668,32 +607,20 @@ public struct SessionListView: View {
                         saveExpandedState()
                     }
                 ),
-                voiceFocusedSessionId: voiceFocusedSessionId,
-                useSelectionTags: isIPadSidebar
+                voiceFocusedSessionId: voiceFocusedSessionId
             )
             .contextMenu {
                 groupContextMenu(for: group)
             }
         case .session(let session):
-            if isIPadSidebar {
+            NavigationLink(value: WorkspaceSelection.session(session.id)) {
                 SessionRow(
                     session: session,
                     voiceFocusedSessionId: voiceFocusedSessionId
                 )
-                .tag(session)
-                .contextMenu {
-                    standaloneContextMenu(for: session)
-                }
-            } else {
-                NavigationLink(value: session) {
-                    SessionRow(
-                        session: session,
-                        voiceFocusedSessionId: voiceFocusedSessionId
-                    )
-                }
-                .contextMenu {
-                    standaloneContextMenu(for: session)
-                }
+            }
+            .contextMenu {
+                standaloneContextMenu(for: session)
             }
         }
     }
@@ -807,6 +734,8 @@ public struct SessionListView: View {
     // MARK: - GRDB Observation
 
     private func startObserving() {
+        cancellable?.cancel()
+        observationState = .loading
         guard let db = appState.databaseManager else { return }
 
         let projectId = project.id
@@ -822,11 +751,13 @@ public struct SessionListView: View {
         cancellable = observation.start(
             in: db.writer,
             onError: { error in
+                observationState = .failed
                 print("Session observation error: \(error)")
             },
             onChange: { newSessions in
                 withAnimation {
                     sessions = newSessions
+                    observationState = .loaded
                 }
             }
         )
@@ -872,11 +803,8 @@ public struct SessionListView: View {
         guard let db = appState.databaseManager else { return }
         do {
             try db.deleteSession(session.id)
+            if selection == .session(session.id) { selection = nil }
             try db.refreshSessionCount(forProject: project.id)
-            // Clear selection if the deleted session was selected (iPad sidebar)
-            if selectedSession?.wrappedValue?.id == session.id {
-                selectedSession?.wrappedValue = nil
-            }
         } catch {
             print("Failed to delete session: \(error)")
         }
@@ -1034,11 +962,8 @@ public struct SessionListView: View {
         guard let sync = appState.syncManager else { return }
         do {
             try sync.setSessionArchived(sessionId: session.id, isArchived: archive)
+            if archive && !showArchived && selection == .session(session.id) { selection = nil }
             AnalyticsManager.shared.capture(archive ? "mobile_session_archived" : "mobile_session_unarchived")
-            // Clear selection if archiving the selected session while archive view is hidden
-            if archive && !showArchived && selectedSession?.wrappedValue?.id == session.id {
-                selectedSession?.wrappedValue = nil
-            }
         } catch {
             print("Failed to \(archive ? "archive" : "unarchive") session: \(error)")
         }
@@ -1053,9 +978,7 @@ public struct SessionListView: View {
         do {
             for sessionId in sessionIds {
                 try sync.setSessionArchived(sessionId: sessionId, isArchived: archive)
-                if archive && !showArchived && selectedSession?.wrappedValue?.id == sessionId {
-                    selectedSession?.wrappedValue = nil
-                }
+                if archive && !showArchived && selection == .session(sessionId) { selection = nil }
             }
             AnalyticsManager.shared.capture(archive ? "mobile_session_archived" : "mobile_session_unarchived")
         } catch {
@@ -1071,9 +994,7 @@ public struct SessionListView: View {
         do {
             for sessionId in sessionIds {
                 try db.deleteSession(sessionId)
-                if selectedSession?.wrappedValue?.id == sessionId {
-                    selectedSession?.wrappedValue = nil
-                }
+                if selection == .session(sessionId) { selection = nil }
             }
             try db.refreshSessionCount(forProject: project.id)
         } catch {
@@ -1103,49 +1024,28 @@ struct WorkstreamSection: View {
     let group: WorkstreamGroup
     @Binding var isExpanded: Bool
     var voiceFocusedSessionId: String?
-    /// When true, rows use .tag() for List(selection:) instead of NavigationLink.
-    var useSelectionTags: Bool = false
 
     var body: some View {
         Group {
             if group.children.isEmpty {
                 // Single-session worktree: navigable row for the session
-                if useSelectionTags {
+                NavigationLink(value: WorkspaceSelection.session(group.parent.id)) {
                     WorkstreamHeader(
                         title: group.parent.titleDecrypted ?? (group.isWorktree ? "Worktree" : "Workstream"),
                         childCount: 0,
                         status: computeAggregatedStatus([group.parent]),
                         isWorktree: group.isWorktree
                     )
-                    .tag(group.parent)
-                } else {
-                    NavigationLink(value: group.parent) {
-                        WorkstreamHeader(
-                            title: group.parent.titleDecrypted ?? (group.isWorktree ? "Worktree" : "Workstream"),
-                            childCount: 0,
-                            status: computeAggregatedStatus([group.parent]),
-                            isWorktree: group.isWorktree
-                        )
-                    }
                 }
             } else {
                 DisclosureGroup(isExpanded: $isExpanded) {
                     ForEach(group.children) { child in
-                        if useSelectionTags {
+                        NavigationLink(value: WorkspaceSelection.session(child.id)) {
                             SessionRow(
                                 session: child,
                                 isChild: true,
                                 voiceFocusedSessionId: voiceFocusedSessionId
                             )
-                            .tag(child)
-                        } else {
-                            NavigationLink(value: child) {
-                                SessionRow(
-                                    session: child,
-                                    isChild: true,
-                                    voiceFocusedSessionId: voiceFocusedSessionId
-                                )
-                            }
                         }
                     }
                 } label: {

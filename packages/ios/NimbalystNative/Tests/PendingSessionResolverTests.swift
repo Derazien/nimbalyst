@@ -47,6 +47,52 @@ final class PendingSessionResolverTests: XCTestCase {
         XCTAssertEqual(plan.route.sessionId, "s0")
     }
 
+    func testSharedSelectionKeepsPendingIntentAndRejectsStaleResolution() throws {
+        let db = try makeDatabase()
+        let navigation = WorkspaceNavigationState()
+        navigation.openSession("late", database: db)
+        XCTAssertEqual(navigation.selection, .session("late"))
+        XCTAssertNil(navigation.project)
+
+        let session = makeSession(id: "late")
+        try db.upsertSession(session)
+        navigation.adoptResolvedSession(session, database: db)
+        XCTAssertEqual(navigation.project?.id, "p1")
+        XCTAssertEqual(navigation.selection, .session("late"))
+
+        navigation.chooseProject(Project(id: "other", name: "Other"))
+        navigation.select(.document("file"))
+        navigation.adoptResolvedSession(session, database: db)
+        XCTAssertEqual(navigation.project?.id, "other")
+        XCTAssertEqual(navigation.selection, .document("file"))
+
+        navigation.openSession("late", database: db)
+        XCTAssertEqual(navigation.project?.id, "p1")
+        XCTAssertEqual(navigation.selection, .session("late"))
+    }
+
+    func testComposeStateSurvivesColumnRemountAndRejectsOldRemoteDrafts() {
+        let navigation = WorkspaceNavigationState()
+        let compose = navigation.composeState(for: "session")
+        compose.text = "Keep this draft"
+        compose.lastLocalEditAt = 200
+        navigation.select(.session("session"))
+        navigation.compactColumn = .sidebar
+        navigation.compactColumn = .detail
+        let remounted = navigation.composeState(for: "session")
+        XCTAssertTrue(remounted === compose)
+        remounted.applyRemoteDraft(nil, updatedAt: nil)
+        remounted.applyRemoteDraft("", updatedAt: nil)
+        remounted.applyRemoteDraft("older", updatedAt: 100)
+        remounted.applyRemoteDraft("Keep", updatedAt: 300)
+        XCTAssertEqual(remounted.text, "Keep this draft")
+        remounted.applyRemoteDraft("New desktop draft", updatedAt: 400)
+        XCTAssertEqual(remounted.text, "New desktop draft")
+        navigation.clearAccount()
+        XCTAssertFalse(navigation.composeState(for: "session") === compose)
+        XCTAssertTrue(navigation.composeState(for: "session").text.isEmpty)
+    }
+
     func testResolvesSessionAlreadyInDatabaseWithoutWaiting() throws {
         let db = try makeDatabase()
         try db.upsertSession(makeSession(id: "s1"))

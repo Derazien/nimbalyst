@@ -58,6 +58,24 @@ xcodebuild -project NimbalystApp.xcodeproj -scheme NimbalystApp \
   -destination 'platform=iOS Simulator,name=iPhone 15' clean build
 ```
 
+## Navigation Continuity
+
+`NimbalystNavigationUITests` exercises the production `MainNavigationView` with an in-memory demo account. It opens a project and session, types an unsent draft, rotates through portrait and both landscape orientations, and verifies the selected session, draft, Back navigation, and that wide screens keep the session list visible beside the transcript. Run it on an iPhone Pro Max (whose horizontal size class changes in landscape) and an iPad:
+
+```bash
+cd packages/ios/NimbalystApp
+xcodegen generate
+xcodebuild -project NimbalystApp.xcodeproj -scheme NimbalystApp \
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro Max' \
+  -destination 'platform=iOS Simulator,name=iPad Pro 11-inch (M5)' \
+  -only-testing:NimbalystNavigationUITests \
+  -parallel-testing-enabled NO -collect-test-diagnostics never test
+```
+
+The debug launch arguments `--screenshot-mode --screenshot-screen=navigation` use the real navigation shell instead of an isolated screenshot screen. This bypasses pairing and does not connect to sync. The test suppresses the notification prompt through a launch-time UserDefaults override.
+
+`testEmptyListsWaitForIndexSync` uses `--loading-fixture` with the projects and sessions screens to hold an empty local database in loading for ten seconds, then complete the index. It verifies that loading appears before the definitive empty state. `SyncIntegrationTests.testIndexLoadCompletesOnlyAfterImportAndRejectsFailedImports` separately feeds encrypted wire responses through the real index handler and verifies that completion follows database writes, failed imports remain failures, and an empty retry completes. These fixtures do not connect to the live sync server.
+
 ## Testing the Session Fleet Live Activity
 
 This is the one path in the app that unit tests cannot finish. Know which half you are proving.

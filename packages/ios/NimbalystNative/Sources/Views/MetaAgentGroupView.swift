@@ -145,14 +145,14 @@ struct MetaAgentExpansion {
 ///
 /// - Tapping the header ROW opens (navigates to) the meta-agent session's transcript,
 ///   exactly like a normal session row — regardless of whether it has children. This
-///   reuses the same `NavigationLink(value:)` (iPhone) / `.tag()` `List(selection:)`
-///   (iPad sidebar) mechanism every other row in `SessionListView` uses. Desktop does
+///   reuses the same `NavigationLink(value:)` mechanism every other row in
+///   `SessionListView` uses on iPhone and iPad. Desktop does
 ///   the same: its header `onClick` calls `onSessionSelect(metaSession.id)`.
 /// - A SEPARATE leading chevron `Button` toggles expand/collapse independently, without
 ///   navigating — mirroring desktop's chevron `<button>` (`stopPropagation` + `onToggle`).
 ///   It uses `.buttonStyle(.plain)` + its own `contentShape` so the List hit-tests it as
 ///   a distinct tap target (the same proven pattern as `FileTreeRow`'s plain-button
-///   toggle), and on iPhone it sits OUTSIDE the `NavigationLink` so its taps can never
+///   toggle), and it sits OUTSIDE the `NavigationLink` so its taps can never
 ///   fall through to push navigation.
 /// - Child sessions render manually as indented sibling rows (NOT via `DisclosureGroup`),
 ///   each navigating to its own transcript — matching desktop, which lays children out as
@@ -165,8 +165,6 @@ struct MetaAgentGroupView<MenuContent: View>: View {
     let group: MetaAgentGroup
     @Binding var isExpanded: Bool
     var voiceFocusedSessionId: String?
-    /// When true, rows use `.tag()` for `List(selection:)` instead of NavigationLink.
-    var useSelectionTags: Bool = false
     /// Group-level context menu, attached to the header row only.
     @ViewBuilder var headerContextMenu: () -> MenuContent
 
@@ -201,24 +199,14 @@ struct MetaAgentGroupView<MenuContent: View>: View {
     /// via the same navigation mechanism a normal session row uses.
     @ViewBuilder
     private var metaHeaderRow: some View {
-        if useSelectionTags {
-            // iPad sidebar: the whole row is selectable via `.tag`; the chevron is a
-            // borderless control, so the List hit-tests it separately from row selection.
-            HStack(spacing: 8) {
-                chevronToggle
+        // The chevron Button sits OUTSIDE the NavigationLink (a sibling in the
+        // row's HStack), so its tap area never overlaps the link's — eliminating the
+        // tap-target conflict. The link covers only the label, which expands via its
+        // trailing Spacer to fill the rest of the row.
+        HStack(spacing: 8) {
+            chevronToggle
+            NavigationLink(value: WorkspaceSelection.session(group.metaSession.id)) {
                 MetaAgentHeader(title: title, childCount: group.children.count, status: aggregateStatus)
-            }
-            .tag(group.metaSession)
-        } else {
-            // iPhone: the chevron Button sits OUTSIDE the NavigationLink (a sibling in the
-            // row's HStack), so its tap area never overlaps the link's — eliminating the
-            // tap-target conflict. The link covers only the label, which expands via its
-            // trailing Spacer to fill the rest of the row.
-            HStack(spacing: 8) {
-                chevronToggle
-                NavigationLink(value: group.metaSession) {
-                    MetaAgentHeader(title: title, childCount: group.children.count, status: aggregateStatus)
-                }
             }
         }
     }
@@ -248,15 +236,9 @@ struct MetaAgentGroupView<MenuContent: View>: View {
     /// navigating to its own transcript — exactly like a normal session row.
     @ViewBuilder
     private func childRow(_ child: Session) -> some View {
-        if useSelectionTags {
+        NavigationLink(value: WorkspaceSelection.session(child.id)) {
             SessionRow(session: child, isChild: true, voiceFocusedSessionId: voiceFocusedSessionId)
                 .padding(.leading, 20)
-                .tag(child)
-        } else {
-            NavigationLink(value: child) {
-                SessionRow(session: child, isChild: true, voiceFocusedSessionId: voiceFocusedSessionId)
-                    .padding(.leading, 20)
-            }
         }
     }
 }

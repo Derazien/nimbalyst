@@ -19,14 +19,12 @@ struct ScreenshotHostView: View {
     var body: some View {
         Group {
             switch screenTarget {
+            case "navigation":
+                MainNavigationView()
             case "projects":
-                NavigationStack {
-                    ProjectListView()
-                }
+                MainNavigationView()
             case "sessions":
-                NavigationStack {
-                    SessionListView(project: firstProject)
-                }
+                MainNavigationView(project: firstProject)
             case "detail":
                 NavigationStack {
                     SessionDetailView(session: detailSession)
@@ -38,9 +36,7 @@ struct ScreenshotHostView: View {
             case "pairing":
                 PairingView()
             default:
-                NavigationStack {
-                    ProjectListView()
-                }
+                MainNavigationView()
             }
         }
         .preferredColorScheme(.dark)

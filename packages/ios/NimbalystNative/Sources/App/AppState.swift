@@ -32,6 +32,7 @@ public final class AppState: ObservableObject {
     /// The unreadable Keychain value remains preserved until the user explicitly resets it.
     @Published public private(set) var accountStorageNeedsRepair: Bool = false
     @Published public var isConnected: Bool = false
+    @Published public var indexLoadState: IndexLoadState = .loading
     @Published public var availableModels: [SyncedAvailableModel] = ModelPreferences.loadAvailableModels()
     @Published public var desktopDefaultModel: String? = ModelPreferences.loadDefaultModel()
 
@@ -127,6 +128,7 @@ public final class AppState: ObservableObject {
     /// Initialize with pre-built managers (for testing and previews).
     public init(databaseManager: DatabaseManager) {
         self.databaseManager = databaseManager
+        self.indexLoadState = .loaded
         self.isPaired = true
         observeAuth()
     }
@@ -582,6 +584,9 @@ public final class AppState: ObservableObject {
 
         let sync = SyncManager(crypto: crypto, database: database, serverUrl: serverUrl, userId: keyUserId)
         syncManager = sync
+        sync.$indexLoadState
+            .sink { [weak self] state in self?.indexLoadState = state }
+            .store(in: &managerCancellables)
 
         // Initialize DocumentSyncManager for project file sync
         let docSync = DocumentSyncManager(crypto: crypto, database: database, serverUrl: serverUrl, userId: keyUserId)
@@ -683,6 +688,7 @@ public final class AppState: ObservableObject {
         syncManager = nil
         cryptoManager = nil
         databaseManager = nil
+        indexLoadState = .loading
         isConnected = false
         needsRepair = false
         clearSyncAuthDegradedState()
@@ -726,7 +732,6 @@ public final class AppState: ObservableObject {
     public static func forScreenshots() -> AppState {
         let db = try! ScreenshotDataProvider.createPopulatedDatabase()
         let state = AppState(databaseManager: db)
-        state.authManager.isAuthenticated = true
         state.isConnected = true
         state.screenshotMode = true
         return state

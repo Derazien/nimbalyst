@@ -1,4 +1,5 @@
 import XCTest
+import Combine
 @testable import NimbalystNative
 
 /// Integration tests that verify the crypto -> database pipeline works end-to-end.
@@ -16,6 +17,47 @@ final class SyncIntegrationTests: XCTestCase {
     override func setUpWithError() throws {
         crypto = CryptoManager(seed: Self.passphrase, userId: Self.userId)
         database = try DatabaseManager()
+    }
+
+    @MainActor
+    func testIndexLoadCompletesOnlyAfterImportAndRejectsFailedImports() async throws {
+        let sync = SyncManager(crypto: crypto, database: database, serverUrl: "https://invalid.example", userId: Self.userId, registerDeviceCallbacks: false)
+        XCTAssertEqual(sync.indexLoadState, .loading)
+        let projectPath = "/test/loading-project"
+        let encryptedProject = try crypto.encryptProjectId(projectPath)
+        let payload: [String: Any] = [
+            "type": "indexSyncResponse",
+            "projects": [["encryptedProjectId": encryptedProject, "projectIdIv": CryptoManager.projectIdIvBase64]],
+            "sessions": [["sessionId": "loaded-session", "encryptedProjectId": encryptedProject,
+                          "projectIdIv": CryptoManager.projectIdIvBase64, "createdAt": 1, "updatedAt": 2]]
+        ]
+        let imported = expectation(description: "Completion publishes after rows are usable")
+        let subscription = sync.$indexLoadState.filter { $0 == .loaded }.prefix(1).sink { _ in
+            XCTAssertEqual(try? self.database.allProjects().count, 1)
+            XCTAssertEqual(try? self.database.sessions(forProject: projectPath).count, 1)
+            imported.fulfill()
+        }
+        sync.handleIndexMessage(try JSONSerialization.data(withJSONObject: payload))
+        XCTAssertEqual(sync.indexLoadState, .loading)
+        await fulfillment(of: [imported], timeout: 5)
+        subscription.cancel()
+
+        let invalidImport: [String: Any] = ["type": "indexSyncResponse", "sessions": [],
+            "projects": [["encryptedProjectId": "invalid", "projectIdIv": "invalid"]]]
+        let failed = expectation(description: "Decryption failure is not an empty index")
+        let failureSubscription = sync.$indexLoadState.filter { $0 == .failed }.prefix(1).sink { _ in failed.fulfill() }
+        sync.handleIndexMessage(try JSONSerialization.data(withJSONObject: invalidImport))
+        await fulfillment(of: [failed], timeout: 5)
+        failureSubscription.cancel()
+
+        let empty = expectation(description: "A successful empty retry completes loading")
+        let emptySubscription = sync.$indexLoadState.filter { $0 == .loaded }.prefix(1).sink { _ in empty.fulfill() }
+        sync.handleIndexMessage(Data(#"{"type":"indexSyncResponse","sessions":[],"projects":[]}"#.utf8))
+        await fulfillment(of: [empty], timeout: 5)
+        emptySubscription.cancel()
+
+        sync.handleIndexMessage(Data(#"{"type":"indexSyncResponse","sessions":null}"#.utf8))
+        XCTAssertEqual(sync.indexLoadState, .failed)
     }
 
     /// Simulate receiving a server session entry, decrypting it, and storing it.

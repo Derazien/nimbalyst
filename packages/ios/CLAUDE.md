@@ -55,9 +55,10 @@ packages/ios/
 - **Storage**: GRDB (SQLite) with reactive `ValueObservation` for live UI updates
 - **Transcript**: WKWebView loads bundled React app, communicates via `webkit.messageHandlers.bridge`
 
-### iPad Support
-- `NavigationSplitView` for regular size class (sidebar + detail)
-- `NavigationStack` for compact size class (iPhone)
+### iPhone and iPad Navigation
+- One `NavigationSplitView` and `WorkspaceNavigationState` on every device and orientation: the session/file sidebar sits beside the detail on wide screens and collapses into a stack on narrow screens.
+- Never replace the navigation tree based on size class; rotation and window resizing must preserve the active session and unsent compose state. Sidebar rows share stable `WorkspaceSelection` values, including sessions opened by notification or voice.
+- SwiftUI may remount the detail while collapsing columns. Keep `SessionComposeState` (text, pending attachments, and draft timestamps) in `WorkspaceNavigationState`, above the split view, and clear that cache when the account changes.
 
 ### Session Fleet Live Activity
 

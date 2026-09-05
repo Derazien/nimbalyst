@@ -127,23 +127,25 @@ public struct PendingSessionView: View {
     @EnvironmentObject var appState: AppState
     @StateObject private var resolver: PendingSessionResolver
 
-    /// Called once the session resolves. iPad uses this to bring its sidebar
-    /// selection in line with the detail column.
+    /// Called once the session resolves to align the sidebar project with the detail.
     private let onResolve: (Session) -> Void
+    private let composeState: SessionComposeState?
 
     public init(
         sessionId: String,
         database: DatabaseManager,
+        composeState: SessionComposeState? = nil,
         onResolve: @escaping (Session) -> Void = { _ in }
     ) {
         _resolver = StateObject(wrappedValue: PendingSessionResolver(sessionId: sessionId, database: database))
         self.onResolve = onResolve
+        self.composeState = composeState
     }
 
     public var body: some View {
         Group {
             if let session = resolver.session {
-                SessionDetailView(session: session)
+                SessionDetailView(session: session, composeState: composeState)
                     .environmentObject(appState)
             } else {
                 waitingView

@@ -25,6 +25,7 @@ public final class SyncManager: ObservableObject {
     private let decoder = JSONDecoder()
 
     @Published public var isConnected = false
+    @Published public private(set) var indexLoadState: IndexLoadState = .loading
     @Published public var connectedDevices: [DeviceInfo] = []
 
     /// The session ID currently connected to the session room, if any.
@@ -100,7 +101,12 @@ public final class SyncManager: ObservableObject {
     /// Buffer for paginated sync responses before committing to DB.
     private var sessionSyncBuffer: [ServerMessageEntry] = []
 
-    public init(crypto: CryptoManager, database: DatabaseManager, serverUrl: String, userId: String) {
+    public convenience init(crypto: CryptoManager, database: DatabaseManager, serverUrl: String, userId: String) {
+        self.init(crypto: crypto, database: database, serverUrl: serverUrl, userId: userId, registerDeviceCallbacks: true)
+    }
+
+    /// Allows index import tests to run without an application notification center.
+    init(crypto: CryptoManager, database: DatabaseManager, serverUrl: String, userId: String, registerDeviceCallbacks: Bool) {
         self.crypto = crypto
         self.database = database
         self.serverUrl = serverUrl
@@ -108,8 +114,10 @@ public final class SyncManager: ObservableObject {
 
         setupIndexClient()
         setupSessionClient()
-        setupPushTokenForwarding()
-        setupLiveActivityForwarding()
+        if registerDeviceCallbacks {
+            setupPushTokenForwarding()
+            setupLiveActivityForwarding()
+        }
     }
 
     // MARK: - Activity Tracking
@@ -286,6 +294,7 @@ public final class SyncManager: ObservableObject {
     /// By default, sends the last sync watermark for incremental sync.
     /// Pass `fullSync: true` to request everything (e.g., pull-to-refresh).
     private func requestIndexSync(fullSync: Bool = false, attempt: Int = 0) {
+        indexLoadState = .loading
         let since: Int? = fullSync ? nil : (try? database.syncState(forRoom: "index"))?.lastSyncedAt
 
         let request = IndexSyncRequest(projectId: nil, since: since)
@@ -294,18 +303,21 @@ public final class SyncManager: ObservableObject {
 
         indexClient.sendRaw(json) { [weak self] error in
             guard let self = self, error != nil else { return }
-            guard attempt < 3 else { return }
+            guard attempt < 3 else {
+                self.indexLoadState = .failed
+                return
+            }
 
             self.logger.info("Index sync request failed, retrying (attempt \(attempt + 1))")
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-                self?.requestIndexSync(attempt: attempt + 1)
+                self?.requestIndexSync(fullSync: fullSync, attempt: attempt + 1)
             }
         }
     }
 
     // MARK: - Message Handling
 
-    private func handleIndexMessage(_ data: Data) {
+    func handleIndexMessage(_ data: Data) {
         // First, determine the message type
         guard let envelope = try? decoder.decode(ServerMessage.self, from: data) else {
             logger.warning("Could not decode message type")
@@ -338,6 +350,7 @@ public final class SyncManager: ObservableObject {
         case "voiceToolResponseBroadcast":
             handleVoiceToolResponse(data)
         case "error":
+            if indexLoadState == .loading { indexLoadState = .failed }
             handleServerError(data)
         default:
             logger.info("Unhandled message type: \(envelope.type)")
@@ -349,8 +362,10 @@ public final class SyncManager: ObservableObject {
     private func handleIndexSyncResponse(_ data: Data) {
         guard let response = try? decoder.decode(IndexSyncResponse.self, from: data) else {
             logger.error("Failed to decode index_sync_response")
+            indexLoadState = .failed
             return
         }
+        indexLoadState = .loading
 
         let isIncremental = response.since != nil
         if !isIncremental, let total = response.totalSessionCount, total != response.sessions.count {
@@ -363,8 +378,11 @@ public final class SyncManager: ObservableObject {
         let database = self.database
         Task.detached {
             // Process projects
+            var failedProjectCount = 0
             for serverProject in response.projects {
-                Self.processServerProjectBackground(serverProject, crypto: crypto, database: database)
+                if !Self.processServerProjectBackground(serverProject, crypto: crypto, database: database) {
+                    failedProjectCount += 1
+                }
             }
 
             // Process sessions - track success/failure/skip counts
@@ -412,6 +430,12 @@ public final class SyncManager: ObservableObject {
                 let syncState = SyncState(roomId: "index", lastCursor: nil, lastSequence: 0, lastSyncedAt: watermark)
                 try? database.updateSyncState(syncState)
             }
+            let isTruncated = !isIncremental && response.totalSessionCount.map { $0 != response.sessions.count } == true
+            let failed = failedProjectCount > 0 || failedDecryptCount > 0 || isTruncated
+            // Receipt of the envelope is too early: rows must be decrypted and committed first.
+            await MainActor.run { [weak self] in
+                self?.indexLoadState = failed ? .failed : .loaded
+            }
         }
     }
 
@@ -422,7 +446,8 @@ public final class SyncManager: ObservableObject {
     }
 
     /// Process a server project entry on a background thread.
-    private nonisolated static func processServerProjectBackground(_ entry: ServerProjectEntry, crypto: CryptoManager, database: DatabaseManager) {
+    @discardableResult
+    private nonisolated static func processServerProjectBackground(_ entry: ServerProjectEntry, crypto: CryptoManager, database: DatabaseManager) -> Bool {
         let logger = Logger(subsystem: "com.nimbalyst.app", category: "SyncManager")
 
         guard let projectId = crypto.decryptOrNil(
@@ -430,7 +455,7 @@ public final class SyncManager: ObservableObject {
             ivBase64: entry.projectIdIv
         ) else {
             logger.warning("Failed to decrypt project ID")
-            return
+            return false
         }
 
         // Decrypt project config if present
@@ -464,7 +489,9 @@ public final class SyncManager: ObservableObject {
             try database.refreshSessionCount(forProject: projectId)
         } catch {
             logger.error("Failed to upsert project: \(error.localizedDescription)")
+            return false
         }
+        return true
     }
 
     /// Process a server session entry on a background thread.

@@ -57,7 +57,8 @@ struct NimbalystAppMain: App {
     init() {
         #if DEBUG
         if CommandLine.arguments.contains("--screenshot-mode") {
-            _appState = StateObject(wrappedValue: AppState.forScreenshots())
+            _appState = StateObject(wrappedValue: CommandLine.arguments.contains("--loading-fixture")
+                ? AppState.forLoadingScreenshots() : AppState.forScreenshots())
         } else {
             _appState = StateObject(wrappedValue: AppState())
         }

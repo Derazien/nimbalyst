@@ -8,6 +8,7 @@ import UIKit
 /// and attachment support (photo library, camera, clipboard paste).
 public struct ComposeBar: View {
     @Binding var text: String
+    @Binding var pendingAttachments: [PendingAttachment]
     let isExecuting: Bool
     let commands: [SyncedSlashCommand]
     let onSend: (String, [PendingAttachment]) -> Void
@@ -18,7 +19,6 @@ public struct ComposeBar: View {
     /// on whether the user is actively typing. Mutating `wrappedValue = false`
     /// from here still dismisses the keyboard.
     var focused: FocusState<Bool>.Binding
-    @State private var pendingAttachments: [PendingAttachment] = []
     @State private var showAttachmentSheet = false
     @State private var showPhotoPicker = false
     @State private var showCamera = false
@@ -90,6 +90,7 @@ public struct ComposeBar: View {
                 #endif
 
                 TextField("Message...", text: $text, axis: .vertical)
+                    .accessibilityIdentifier("session-compose-input")
                     .lineLimit(1...6)
                     .textFieldStyle(.plain)
                     .padding(.horizontal, 12)

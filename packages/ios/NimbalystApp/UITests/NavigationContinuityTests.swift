@@ -1,0 +1,71 @@
+import XCTest
+
+final class NavigationContinuityTests: XCTestCase {
+    @MainActor
+    func testEmptyListsWaitForIndexSync() {
+        continueAfterFailure = false
+        XCUIDevice.shared.orientation = .portrait
+        for (screen, noun) in [("projects", "Projects"), ("sessions", "Sessions")] {
+            let app = XCUIApplication()
+            app.launchArguments = ["--screenshot-mode", "--screenshot-screen=\(screen)", "--loading-fixture", "-hasPromptedForNotifications", "YES"]
+            app.launch()
+            defer { app.terminate() }
+            let loading = app.staticTexts["Loading \(noun.lowercased())…"]
+            XCTAssertTrue(loading.waitForExistence(timeout: 3), "An empty database during sync must show loading")
+            XCTAssertFalse(app.staticTexts["No \(noun)"].exists)
+            XCTAssertTrue(app.staticTexts["No \(noun)"].waitForExistence(timeout: 15), "A completed empty response must finish loading")
+            XCTAssertFalse(loading.exists)
+        }
+    }
+
+    @MainActor
+    func testSessionDraftAndBackHistorySurviveRotation() {
+        continueAfterFailure = false
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication()
+        app.launchArguments = ["--screenshot-mode", "--screenshot-screen=navigation", "-hasPromptedForNotifications", "YES"]
+        app.launch()
+        defer {
+            app.terminate()
+            XCUIDevice.shared.orientation = .portrait
+        }
+
+        // Exercise the production navigation tree with an in-memory demo account.
+        // On iPad this must start at the same project chooser as on iPhone.
+        let project = app.staticTexts["nimbalyst"].firstMatch
+        XCTAssertTrue(project.waitForExistence(timeout: 15))
+        project.tap()
+        let title = "Implement dark mode theme switching"
+        let session = app.staticTexts[title].firstMatch
+        XCTAssertTrue(session.waitForExistence(timeout: 10))
+        session.tap()
+        // SwiftUI's vertical field changes its accessibility type while editing.
+        let compose = app.descendants(matching: .any)["session-compose-input"].firstMatch
+        XCTAssertTrue(compose.waitForExistence(timeout: 10))
+        compose.tap()
+        let draft = "Keep this unsent draft through rotation"
+        compose.typeText(draft)
+
+        for orientation: UIDeviceOrientation in [.landscapeLeft, .portrait, .landscapeRight, .portrait] {
+            XCUIDevice.shared.orientation = orientation
+            XCTAssertTrue(app.navigationBars[title].waitForExistence(timeout: 5), "Rotation must preserve the selected session")
+            XCTAssertEqual(compose.value as? String, draft, "Rotation must preserve unsent input")
+            if app.frame.width >= 700 {
+                let sidebarSession = app.staticTexts["Fix authentication token refresh"].firstMatch
+                XCTAssertTrue(sidebarSession.waitForExistence(timeout: 5), "Wide screens must keep the session list beside the transcript")
+                XCTAssertTrue(sidebarSession.isHittable)
+                XCTAssertLessThan(sidebarSession.frame.maxX, compose.frame.minX)
+            }
+        }
+
+        if app.frame.width < 700 {
+            app.navigationBars[title].buttons.element(boundBy: 0).tap()
+        }
+        XCTAssertTrue(session.waitForExistence(timeout: 5), "Back must return to the same project's sessions")
+        app.buttons["Choose Project"].tap()
+        let otherProject = app.staticTexts["api-server"].firstMatch
+        XCTAssertTrue(otherProject.waitForExistence(timeout: 5), "Back must return to the project chooser on every device")
+        otherProject.tap()
+        XCTAssertTrue(app.navigationBars["api-server"].waitForExistence(timeout: 5))
+    }
+}
