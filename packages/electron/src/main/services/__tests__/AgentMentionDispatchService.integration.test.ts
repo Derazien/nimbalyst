@@ -130,7 +130,7 @@ class FakeInbox {
   }
   async claimAgentDelivery(deliveryId: string, sessionId: string) {
     this.claims.push([deliveryId, sessionId]);
-    return true;
+    return !this.completions.some(([id, session]) => id === deliveryId && session === sessionId);
   }
   async completeAgentDelivery(deliveryId: string, sessionId: string) {
     this.completions.push([deliveryId, sessionId]);
@@ -260,6 +260,28 @@ function setup(options?: {
 }
 
 describe('AgentMentionDispatchService integration', () => {
+  it('batches document decision transitions into one intended-session continuation and does not replay claimed work', async () => {
+    const harness = setup();
+    const changes = ['quorum', 'closed'].map((trigger, index) => ({
+      ...delivery(`decision-${trigger}`, trigger, index),
+      source: { orgId: 'org-a', resourceKind: 'document' as const, resourceId: 'doc-a', blockId: 'dcn-a', projectId: 'project-a', sourceEventId: trigger, eventClass: 'documentDecisionWake' },
+      agentWakePolicy: 'documentDecision',
+      agentWakeMetadata: { trigger, documentId: 'doc-a', blockId: 'dcn-a' },
+    }));
+    harness.inbox.snapshot = { ...harness.inbox.snapshot, status: 'ready', deliveries: changes };
+    await harness.service.start();
+    await waitForDispatch();
+    expect(harness.queued).toHaveLength(1);
+    expect(harness.queued[0].prompt).toContain('collab://org:org-a:doc:doc-a');
+    expect(harness.queued[0].prompt).toContain('dcn-a');
+    expect(harness.drives).toEqual([['session-attached', '/workspace']]);
+    await harness.claimPrompt(harness.queued[0].id);
+    await harness.settleTurn(harness.queued[0].id);
+    harness.inbox.publish(harness.inbox.snapshot);
+    await waitForDispatch();
+    expect(harness.queued).toHaveLength(1);
+    harness.service.destroy();
+  });
   it('queues offline deliveries on reconnect, batches rapid mentions, and keeps one conversation turn in flight', async () => {
     const harness = setup();
     harness.inbox.snapshot.deliveries = [

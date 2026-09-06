@@ -1,6 +1,6 @@
 import type { Binding, Provider, ProviderAwareness } from '@lexical/yjs';
 import type { Klass, LexicalEditor, LexicalNode, TextFormatType } from 'lexical';
-import type { ComponentType } from 'react';
+import type { ComponentType, ReactNode } from 'react';
 import type { Awareness } from 'y-protocols/awareness';
 import type { Doc } from 'yjs';
 import type { TeamJwt, TeamMemberId } from './internal/runtime/src/auth/jwtScopes';
@@ -200,6 +200,7 @@ export interface CollabEditorMountOptions {
   user: CollabEditorUser;
   readOnly?: boolean;
   comments?: CollabEditorCommentsOptions;
+  renderDecisionArtifact?: (entryId: string, artifact: string) => ReactNode;
   onStateChange?(state: CollabEditorState): void;
   onPresenceChange?(presence: CollabEditorPresence): void;
   onWriteRejected?(rejection: CollabEditorWriteRejection): void;
@@ -216,6 +217,7 @@ export interface CollabEditorMountOptions {
 }
 
 export interface CollabEditorHandle {
+  hasPendingWrites?(): boolean;
   getDocument(): Doc;
   getMarkdown(): string;
   getState(): CollabEditorState;

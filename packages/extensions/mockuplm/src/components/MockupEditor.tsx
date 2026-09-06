@@ -26,7 +26,8 @@ import {
   type EditorHostProps,
 } from "@nimbalyst/extension-sdk";
 import { base64ToBlob, captureMockupComposite } from "../utils/screenshotUtils";
-import { mockupHasScript, renderMockupHtml } from "../utils/mockupDomUtils";
+import { mockupHasScript } from "../utils/mockupDomUtils";
+import { bindMockupFrame } from "../utils/bindMockupFrame";
 // The single selector generator in the tree. The editor used to carry an
 // inline copy that disagreed with the one pin healing resolves against.
 import { generateSelector } from "../utils/generateSelector";
@@ -37,8 +38,7 @@ import { useMockupDrawing } from "./useMockupDrawing";
 import { useMockupScreenshot } from "./useMockupScreenshot";
 import { useMockupInteractionMode } from "./useMockupInteractionMode";
 import { MockupCommentOverlay } from "./comments/MockupCommentOverlay";
-import { COMMENT_MODE_STYLES } from "./comments/commentModeStyles";
-import { injectTheme, type MockupTheme } from "../utils/themeEngine";
+import type { MockupTheme } from "../utils/themeEngine";
 import { MockupBinding } from "../collab/mockupBinding";
 import {
   getYMockupText,
@@ -441,27 +441,18 @@ export const MockupEditor = forwardRef<any, EditorHostProps>(
         return;
       }
 
-      const { scriptsRan } = renderMockupHtml(frameElement, contentRef.current, {
-        onAfterRender: (iframeDoc) => {
-          injectTheme(iframeDoc, mockupTheme);
-
-          const style = iframeDoc.createElement("style");
-          style.textContent = `
-          .nimbalyst-selected {
-            outline: 2px solid #007AFF !important;
-            outline-offset: 2px !important;
-            box-shadow: 0 0 0 4px rgba(0, 122, 255, 0.2) !important;
-          }
-          ${COMMENT_MODE_STYLES}
-        `;
-          iframeDoc.head.appendChild(style);
-        },
-      });
-
-      // Only worth saying when this mockup actually has a script to lose. Most
-      // do not, and a notice on every mockup in the browser would be noise.
-      setAreScriptsBlocked(!scriptsRan && mockupHasScript(contentRef.current));
-      setRenderedVersion((rendered) => rendered + 1);
+      return bindMockupFrame(
+        frameElement,
+        contentRef.current,
+        mockupTheme,
+        (scriptsRan) => {
+          // Most mockups have no scripts; only warn when there is one to lose.
+          setAreScriptsBlocked(
+            !scriptsRan && mockupHasScript(contentRef.current!)
+          );
+          setRenderedVersion((rendered) => rendered + 1);
+        }
+      );
     }, [contentVersion, diffState, frameElement, mockupTheme]);
 
     /*

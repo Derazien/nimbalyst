@@ -7,8 +7,23 @@
  * through the argument rather than competing with it.
  */
 
+/* Lexical focuses and selects the outer node, so its bounds must match the card. */
+.decision-container:has(> .decision-root[data-decision-layout="simple"]),
+.decision-root {
+  width: 100%;
+  max-width: 48rem;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
 .decision-root {
   margin: 14px 0;
+  overflow-wrap: anywhere;
+}
+
+/* Visual comparisons retain the document's available canvas width. */
+.decision-root[data-decision-layout="artifact"] {
+  max-width: none;
 }
 
 .decision-block {
@@ -24,6 +39,7 @@
 
 .decision-eyebrow {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 5px;
   font-size: 10.5px;
@@ -34,6 +50,7 @@
 }
 
 .decision-id {
+  min-width: 0;
   font-family: var(--nim-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
   text-transform: none;
   letter-spacing: 0;
@@ -94,6 +111,7 @@
 
 .decision-foot {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
   margin-top: 10px;
@@ -844,3 +862,29 @@
   font-size: 11px;
   color: var(--nim-error);
 }
+
+.decision-authoring {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  min-width: 240px;
+  color: var(--nim-text);
+}
+.decision-authoring label { display: grid; gap: 6px; font-size: 13px; }
+.decision-authoring input, .decision-authoring textarea, .decision-authoring select {
+  padding: 8px;
+  border: 1px solid var(--nim-border);
+  border-radius: 6px;
+  background: var(--nim-bg);
+  color: var(--nim-text);
+  font: inherit;
+}
+.decision-authoring-actions { display: flex; justify-content: flex-end; gap: 12px; }
+.decision-delivery { padding: 10px 16px; border-top: 1px solid var(--nim-border); font-size: 12px; }
+.decision-delivery summary { cursor: pointer; color: var(--nim-link); }
+.decision-recipients { display: grid; gap: 6px; margin: 10px 0; max-height: 160px; overflow: auto; }
+.decision-recipients label { display: flex; gap: 8px; align-items: center; }
+.decision-outline { padding: 8px 16px; border-bottom: 1px solid var(--nim-border); color: var(--nim-text-muted); font-size: 12px; }
+.decision-outline summary { cursor: pointer; }
+.decision-outline > div { display: grid; gap: 6px; margin-top: 8px; }
+.decision-outline button { text-align: left; }

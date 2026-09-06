@@ -324,6 +324,8 @@ export function parseDecisionFence(body: string): DecisionBlockSource | null {
 }
 
 export interface SealDecisionInput {
+  /** Server-pinned private responses must never become shared fence details. */
+  privateMode?: boolean;
   outcome: DecisionResolvedValue;
   resolvedBy: string;
   resolvedAt: Date;
@@ -369,6 +371,12 @@ export function sealDecisionFence(
       : {}),
   });
 
+  if (input.privateMode) {
+    sealed.votes = [];
+    delete sealed.resolvedFrom;
+    delete sealed.score;
+    delete sealed.distribution;
+  }
   const next: DecisionBlockSource = { ...live, sealed };
   return { ok: true, content: serializeDecisionFence(next), source: next };
 }
@@ -398,6 +406,12 @@ export function reconcileDecisionFence(
       ? { resolvedFrom: input.resolvedFrom }
       : {}),
   });
+  if (input.privateMode) {
+    sealed.votes = [];
+    delete sealed.resolvedFrom;
+    delete sealed.score;
+    delete sealed.distribution;
+  }
   const next: DecisionBlockSource = { ...live, sealed };
   return { ok: true, content: serializeDecisionFence(next), source: next };
 }

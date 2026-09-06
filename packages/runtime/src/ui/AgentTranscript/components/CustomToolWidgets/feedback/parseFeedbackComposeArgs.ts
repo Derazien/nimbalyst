@@ -356,6 +356,7 @@ export function parseFeedbackComposeArgs(
   return {
     ...createEmptyFeedbackComposeDraft(asString(record.requestId) ?? fallbackDraftId, orgId),
     subjects,
+    ...(asString(record.hostDocumentId) ? { hostDocumentId: asString(record.hostDocumentId)! } : {}),
     asks,
     recipients,
     assignments,

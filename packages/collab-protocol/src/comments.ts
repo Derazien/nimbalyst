@@ -63,6 +63,8 @@ export type Actor = {
 
 export type CommentRef = {
   orgId: string;
+  projectId?: string;
+  blockId?: string;
   /**
    * `feedbackRequest` names a source that is not a conversation: the request
    * resource itself. A delivery about one is routed through the same Inbox
@@ -75,6 +77,7 @@ export type CommentRef = {
     | "dmMessage"
     | "trackerComment"
     | "documentInlineComment"
+    | "documentDecision"
     | "feedbackRequest";
   sourceId: string;
   commentId: string;

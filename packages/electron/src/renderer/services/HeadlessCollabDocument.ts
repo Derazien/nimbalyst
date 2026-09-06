@@ -22,7 +22,7 @@
  * about to rewrite the document is how you lose someone's work.
  */
 import { getCollabContentAdapter } from '@nimbalyst/collab-adapters';
-import { parseCollabUri } from '@nimbalyst/collab-protocol';
+import { parseCollabUri, type DocumentDecisionCommand, type DocumentDecisionResult } from '@nimbalyst/collab-protocol';
 import type { Doc } from 'yjs';
 
 import {
@@ -90,6 +90,7 @@ export interface HeadlessCollabDocumentAcquisition {
     getStatus(): string;
     hasUndecodedContent(): boolean;
     flushWithAck(timeoutMs?: number): Promise<boolean>;
+    requestDecision?(command: DocumentDecisionCommand): Promise<DocumentDecisionResult>;
     sendAwareness?(state: unknown): Promise<void>;
     sendAwarenessDeparture?(user: unknown): boolean;
   };

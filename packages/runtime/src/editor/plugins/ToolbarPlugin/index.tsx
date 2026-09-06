@@ -111,6 +111,7 @@ import {sanitizeUrl} from '../../utils/url';
 import {INSERT_COLLAPSIBLE_COMMAND} from '../CollapsiblePlugin';
 import {InsertImageDialog} from '../ImagesPlugin';
 import InsertLayoutDialog from '../LayoutPlugin/InsertLayoutDialog';
+import InsertDecisionDialog from '../DecisionPlugin/DecisionAuthoring';
 import {INSERT_PAGE_BREAK} from '../PageBreakPlugin';
 import {SHORTCUTS} from '../ShortcutsPlugin/shortcuts';
 import { getEditorTransformers } from '../../markdown';
@@ -1203,6 +1204,9 @@ export default function ToolbarPlugin({
                   buttonLabel="Insert"
                   buttonAriaLabel="Insert specialized editor node"
                   buttonIconClassName="icon plus">
+                <DropDownItem className="item" onClick={() => showModal('Ask a question', (onClose) => <InsertDecisionDialog activeEditor={activeEditor} onClose={onClose} />)}>
+                  <span className="text">Decision question</span>
+                </DropDownItem>
                 <DropDownItem
                   onClick={() => {
                     activeEditor.dispatchCommand(

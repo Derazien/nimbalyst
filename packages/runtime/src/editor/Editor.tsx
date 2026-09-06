@@ -43,7 +43,6 @@ import TableHoverActionsPlugin from './plugins/TableHoverActionsPlugin';
 import ToolbarPlugin from './plugins/ToolbarPlugin';
 import TreeViewPlugin from './plugins/TreeViewPlugin';
 import CommentsPlugin from './plugins/CommentPlugin';
-import { DecisionsProvider } from './decisions';
 import { getCommentToolbarActions } from './plugins/CommentPlugin/toolbarAction';
 import { canAuthorComments } from './commenting/capabilities';
 import type { CommentsConfig } from './commenting/types';
@@ -52,8 +51,6 @@ import { SelectionAlwaysOnDisplay } from './plugins/SelectionAlwaysOnDisplayPlug
 import ListEnterFormatClearPlugin from './plugins/ListEnterFormatClearPlugin';
 import ContentEditable from './ui/ContentEditable';
 import { AnchorProvider } from './context/AnchorContext';
-import { FrontmatterProvider } from './context/FrontmatterContext';
-import { $getFrontmatter, $setFrontmatter } from './markdown/FrontmatterUtils';
 import { useRuntimeSettings } from './context/RuntimeSettingsContext';
 import CodeHighlightPlugin from './plugins/CodeHighlightPlugin';
 import { useExtensionEditorComponents } from './extensions/extensionEditorComponentsStore';
@@ -139,16 +136,6 @@ export default function Editor({ config = DEFAULT_EDITOR_CONFIG }: EditorProps):
     config.onUploadAsset,
     config.resolveImageSrc,
   ]);
-
-  const frontmatterUtils = useMemo(
-    () => ({
-      $getFrontmatter: () => $getFrontmatter(),
-      $setFrontmatter: (data: unknown) => {
-        $setFrontmatter(data as Parameters<typeof $setFrontmatter>[0]);
-      },
-    }),
-    [],
-  );
 
   // Expose markdown content getter
   useEffect(() => {
@@ -238,10 +225,7 @@ export default function Editor({ config = DEFAULT_EDITOR_CONFIG }: EditorProps):
   const floatingTextToolbarActions = useCommentToolbarActions(config.comments, editor);
 
   return (
-    <FrontmatterProvider value={frontmatterUtils}>
-      {/* Always mounted, config or not: a decision block in a plain local file
-          still renders and is still answerable, it simply records nothing. */}
-      <DecisionsProvider config={config.decisions}>
+    <>
       {isRichText && editable && showToolbar && (
         <ToolbarPlugin
           editor={editor}
@@ -369,7 +353,6 @@ export default function Editor({ config = DEFAULT_EDITOR_CONFIG }: EditorProps):
         )}
       </div>
       {(runtimeSettings.settings.showTreeView || config.showTreeView) && <TreeViewPlugin />}
-      </DecisionsProvider>
-    </FrontmatterProvider>
+    </>
   );
 }

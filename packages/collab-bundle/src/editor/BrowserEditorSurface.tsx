@@ -1,3 +1,5 @@
+import type { LexicalEditor } from 'lexical';
+import { DecisionOutline } from '@nimbalyst/runtime/editor/plugins/DecisionPlugin/DecisionOutline';
 import React from 'react';
 
 import { NimbalystEditor } from '@nimbalyst/runtime/editor/NimbalystEditor';
@@ -123,6 +125,14 @@ export function BrowserEditorSurface({
   config,
   subscribeToPresence,
 }: BrowserEditorSurfaceProps): React.JSX.Element {
+  const [editor, setEditor] = React.useState<LexicalEditor | null>(null);
+  const editorConfig = React.useMemo(() => ({
+    ...config,
+    onEditorReady: (value: Parameters<NonNullable<EditorConfig['onEditorReady']>>[0]) => {
+      setEditor(value as LexicalEditor);
+      config.onEditorReady?.(value);
+    },
+  }), [config]);
   return (
     <div
       className="collab-bundle-editor"
@@ -131,7 +141,8 @@ export function BrowserEditorSurface({
       {subscribeToPresence && (
         <PresenceAnnouncements subscribeToPresence={subscribeToPresence} />
       )}
-      <NimbalystEditor config={config} />
+      <DecisionOutline editor={editor} />
+      <NimbalystEditor config={editorConfig} />
     </div>
   );
 }

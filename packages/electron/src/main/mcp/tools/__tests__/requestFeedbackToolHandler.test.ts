@@ -312,3 +312,16 @@ describe('RequestFeedback drafting', () => {
     expect(getResourceSharingStatus).not.toHaveBeenCalled();
   });
 });
+
+
+it('requires the approved host to be a shared document subject and preserves that host in the draft', async () => {
+  const dependencies = {
+    findOrgMembers: vi.fn(async () => matched('karl', 'Karl Jones', 'karl@example.test')),
+    getResourceSharingStatus: vi.fn(async (kind: ResourceSharingResult['kind'], id: string) => sharing(kind, id, true)),
+  };
+  const input = { recipients: [{ key: 'reviewer', nameOrEmail: 'Karl' }], asks: [confirmAsk], hostDocumentId: 'doc-plan' };
+  const rejected = await draftRequestFeedback(input, WORKSPACE, dependencies);
+  expect(rejected).toMatchObject({ status: 'invalidDraft', errors: [{ code: 'invalidHostDocument' }] });
+  const ready = await draftRequestFeedback({ ...input, subjects: [{ kind: 'document', sourceId: 'doc-plan', label: 'Shared plan.md' }] }, WORKSPACE, dependencies);
+  expect(ready).toMatchObject({ status: 'draftReady', draft: { hostDocumentId: 'doc-plan' } });
+});

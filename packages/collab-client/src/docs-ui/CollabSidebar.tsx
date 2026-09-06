@@ -1,3 +1,4 @@
+import { SharedDocumentLink } from './SharedDocumentLink';
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { CollabDocumentTypeDescriptor } from '@nimbalyst/collab-client/core';
 import { useAtomValue } from 'jotai';
@@ -1040,7 +1041,8 @@ export const CollabSidebar: React.FC<CollabSidebarProps> = ({
       const typePresentation = resolveSharedDocumentTypePresentation(node.document, documentTypeDescriptors);
 
       return (
-        <button
+        <SharedDocumentLink
+          href={host.surface === 'web_console' ? host.artifactUrl?.({ kind: 'document', scope, documentId: node.document.documentId, teamProjectId: node.document.teamProjectId }) : null}
           key={node.id}
           className={`group w-full flex items-center text-left file-tree-file${isActive ? ' active' : ''}`}
           style={{ paddingLeft: indent }}
@@ -1103,6 +1105,7 @@ export const CollabSidebar: React.FC<CollabSidebarProps> = ({
                   : 'text-[var(--nim-text-faint)] opacity-0 group-hover:opacity-70 hover:!opacity-100'
               }`}
               onClick={(event) => {
+                event.preventDefault();
                 event.stopPropagation();
                 session.toggleFavorite(node.document.documentId);
               }}
@@ -1113,7 +1116,7 @@ export const CollabSidebar: React.FC<CollabSidebarProps> = ({
           {readReceiptsAvailable && showUnreadBubbles && (
             <DocUnreadDot documentId={node.document.documentId} className="mr-1" />
           )}
-        </button>
+        </SharedDocumentLink>
       );
     });
   }, [

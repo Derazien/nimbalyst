@@ -1,5 +1,6 @@
 import {
   $getRoot,
+  $isDecoratorNode,
   $isElementNode,
   $isTextNode,
   type LexicalEditor,
@@ -62,9 +63,9 @@ export function groupDiffChanges(editor: LexicalEditor): DiffChangeGroup[] {
 
       // Only collect this node if it has diff state AND no children have diff state
       // This prevents collecting parent containers when their children are the actual changes
-      // IMPORTANT: Exclude 'modified' nodes - they are just metadata markers on parent containers
+      // Modified containers are metadata; atomic decorator edits are reviewable changes.
       if (hasDiffState && !childHasDiffState) {
-        if (diffState && diffState !== 'modified') {
+        if (diffState && (diffState !== 'modified' || $isDecoratorNode(node))) {
           allDiffNodes.push({ node, state: diffState });
         } else if (isLegacyDiff) {
           // Legacy support

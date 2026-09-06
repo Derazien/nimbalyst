@@ -152,6 +152,10 @@ export type InboxDelivery = {
 
 export type ActivityRef = {
   orgId: string;
+  projectId?: string;
+  blockId?: string;
+  threadId?: string;
+  commentId?: string;
   resourceKind: "tracker" | "document" | "feedbackRequest";
   resourceId: string;
   sourceEventId: string;

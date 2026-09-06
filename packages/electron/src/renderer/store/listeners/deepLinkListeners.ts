@@ -1,3 +1,5 @@
+import type { SharedDocumentAnchor } from '../../../shared/documentDeepLinks';
+import { focusSharedDocumentAnchor } from './sharedDocumentAnchor';
 /**
  * Centralized IPC listeners for deep-link navigation events.
  *
@@ -37,12 +39,10 @@ import {
   orgWindowRouteAtomFamily,
 } from '../../components/TeamMode/orgWindowState';
 
-interface SharedDocPayload {
+interface SharedDocPayload extends SharedDocumentAnchor {
   documentId: string;
   orgId: string;
   workspacePath: string;
-  /** Set when the link came from a comment notification. Thread identity only. */
-  threadId?: string;
 }
 
 interface SharedFolderPayload {
@@ -77,6 +77,7 @@ function applySharedDocPayload(data: SharedDocPayload): void {
   if (!data?.documentId || !data?.orgId || !data?.workspacePath) return;
   ensureActiveWorkspace(data.workspacePath);
   store.set(setWindowModeAtom, 'collab');
+  focusSharedDocumentAnchor(buildCollabUri(data.orgId, data.documentId), data);
   // A comment notification wants the thread, not just the document. The request
   // is queued against the document's URI before the tab exists; the tab's
   // comments pane drains it when it mounts, selects the thread, and asks the

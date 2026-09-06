@@ -12,7 +12,10 @@
 // Client -> Server Messages
 // ============================================================================
 
+import type { DocDecisionCommandMessage, DocDecisionStateMessage, DocDecisionChangedMessage } from './documentDecision.js';
+
 export type DocClientMessage =
+  | DocDecisionCommandMessage
   | DocSyncRequestMessage
   | DocUpdateMessage
   | DocCompactMessage
@@ -61,6 +64,8 @@ export interface DocSetMetadataMessage {
 // ============================================================================
 
 export type DocServerMessage =
+  | DocDecisionStateMessage
+  | DocDecisionChangedMessage
   | DocSyncResponseMessage
   | DocUpdateBroadcastMessage
   | DocUpdateAckMessage

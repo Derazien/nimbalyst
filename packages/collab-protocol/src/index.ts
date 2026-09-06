@@ -23,3 +23,5 @@ export * from "./teamDocumentHistory.js";
 export * from "./teamTracker.js";
 export * from "./teamRoom.js";
 export * from "./projectSync.js";
+
+export * from "./documentDecision.js";

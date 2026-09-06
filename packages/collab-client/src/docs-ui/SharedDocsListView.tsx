@@ -1,3 +1,4 @@
+import { SharedDocumentLink } from './SharedDocumentLink';
 /**
  * SharedDocsListView — the redesigned Shared Docs Home (NIM-1790).
  *
@@ -708,7 +709,7 @@ export const SharedDocsListView: React.FC<SharedDocsListViewProps> = ({ folderId
                         <span className="shrink-0 w-6 h-6 rounded-md flex items-center justify-center" style={{ color, backgroundColor: `color-mix(in srgb, ${color} 14%, transparent)` }}>
                           <MaterialSymbol icon={pres.icon} size={16} />
                         </span>
-                        <span className="truncate text-[13.5px] text-[var(--nim-text)]">{docName(doc)}</span>
+                        <SharedDocumentLink className="truncate text-[13.5px] text-[var(--nim-text)] no-underline" href={host.surface === 'web_console' ? host.artifactUrl?.({ kind: 'document', scope, documentId: doc.documentId, teamProjectId: doc.teamProjectId }) : null} onClick={() => openDoc(doc)}>{docName(doc)}</SharedDocumentLink>
                         {/* Row hover quick actions */}
                         <span className="shared-docs-row-actions ml-auto flex items-center gap-0.5 opacity-0 group-hover:opacity-100 pl-2">
                           <RowAction icon="open_in_new" title="Open" onClick={(e) => { e.stopPropagation(); openDoc(doc); }} />

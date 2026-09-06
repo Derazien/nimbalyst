@@ -23,6 +23,7 @@ export const feedbackRequestComposeDraftAtom = atomFamily((_toolCallId: string) 
 export interface FeedbackComposeSent {
   requestId?: string;
   shareUrl?: string;
+  warning?: string;
   sentAt: number;
 }
 

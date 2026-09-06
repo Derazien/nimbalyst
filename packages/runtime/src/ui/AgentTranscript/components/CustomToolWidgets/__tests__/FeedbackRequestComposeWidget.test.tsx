@@ -137,6 +137,7 @@ describe('FeedbackRequestComposeWidget', () => {
   it('stays sent after the transcript unmounts and remounts the row', async () => {
     const toolCallId = 'tc-sent-remount';
     clearFeedbackRequestComposeDraft(toolCallId);
+    send.mockResolvedValue({ success: true, warning: 'Tracker link unavailable: decision trackers are private in this workspace.' });
     const first = renderWidget(toolCallId);
     const state = () => screen
       .getByTestId('feedback-request-compose-widget')
@@ -156,6 +157,7 @@ describe('FeedbackRequestComposeWidget', () => {
     renderWidget(toolCallId);
 
     expect(state()).toBe('sent');
+    expect(screen.getByText('Tracker link unavailable: decision trackers are private in this workspace.')).toBeTruthy();
     expect(screen.queryByTestId('feedback-compose-send')).toBeNull();
     expect(send).toHaveBeenCalledTimes(1);
   });

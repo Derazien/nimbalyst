@@ -51,6 +51,7 @@ import { formatLocalDateOnly } from './models/dateUtils';
 import { $isHeadingNode } from '@lexical/rich-text';
 import { $getRoot } from 'lexical';
 import './TrackerItem.css';
+import { appendStandaloneDecision } from '../../editor/plugins/DecisionPlugin/decisionDraft';
 
 interface TrackerEditorState {
   nodeKey: string;
@@ -264,7 +265,7 @@ async function convertToDecision(editor: LexicalEditor, onContentChange?: (conte
       const transformers = getEditorTransformers();
       const markdownContent = $convertToEnhancedMarkdownString(transformers, { includeFrontmatter: false });
       const updatedContent = updateTrackerInFrontmatter('', 'decision', decisionData);
-      const finalContent = updatedContent + '\n' + markdownContent;
+      const finalContent = updatedContent + '\n' + appendStandaloneDecision(markdownContent, title);
       onContentChange(finalContent);
     } catch (error) {
       console.error('[TrackerPlugin] Failed to convert to decision:', error);

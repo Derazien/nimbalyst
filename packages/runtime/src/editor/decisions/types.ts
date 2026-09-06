@@ -1,5 +1,11 @@
-import type { ReactNode } from 'react';
-import type { Doc } from 'yjs';
+import type { ReactNode } from "react";
+import type { Doc } from "yjs";
+import type {
+  DocumentDecisionCommand,
+  DocumentDecisionAuthority,
+  DocumentDecisionResult,
+  DocumentDecisionDeliveryState,
+} from "@nimbalyst/collab-protocol";
 
 /** A person who can be shown against a vote: avatar initial, name, attribution. */
 export interface DecisionMember {
@@ -25,9 +31,9 @@ export interface DecisionMember {
  */
 export interface DecisionsConfig {
   /**
-   * The document's Y.Doc, where votes live under top-level `decisions` and
-   * `decisionRecommendations` maps. Null until the collaboration provider is
-   * ready, and null forever for a plain local file.
+   * The document's Y.Doc holds public votes and recommendations. Hidden
+   * answers use the server-private requestDecision lane and never enter it.
+   * Null until collaboration is ready, and always null for a plain local file.
    */
   getYDoc: () => Doc | null;
   /**
@@ -45,6 +51,18 @@ export interface DecisionsConfig {
   isHydrated?: () => boolean;
   /** False for a read-only viewer; blocks voting and sealing without hiding the block. */
   canVote?: () => boolean;
+
+  /** Server-authoritative addressing and private answers, separate from the editable fence. */
+  requestDecision?: (
+    command: DocumentDecisionCommand
+  ) => Promise<DocumentDecisionResult>;
+  getDecisionState?: () => DocumentDecisionDeliveryState[];
+  onDecisionState?: (
+    listener: (
+      decisions: DocumentDecisionDeliveryState[],
+      authority: DocumentDecisionAuthority
+    ) => void
+  ) => () => void;
 
   /**
    * Renders an option's `artifact:` as a live embed, so "which of these three

@@ -32,6 +32,7 @@ import {
 import useModal from '../../hooks/useModal';
 import {INSERT_COLLAPSIBLE_COMMAND} from '../CollapsiblePlugin';
 import InsertLayoutDialog from '../LayoutPlugin/InsertLayoutDialog';
+import InsertDecisionDialog from '../DecisionPlugin/DecisionAuthoring';
 import {INSERT_PAGE_BREAK} from '../PageBreakPlugin';
 import {InsertTableDialog} from '../TablePlugin/TablePlugin';
 import {
@@ -121,6 +122,11 @@ function getDynamicOptions(editor: LexicalEditor, queryString: string): Typeahea
 
 function getBaseOptions(editor: LexicalEditor, showModal: ShowModal): TypeaheadMenuOption[] {
   return [
+    {
+      id: 'decision-block', label: 'Decision question', icon: <MaterialIcon name="how_to_vote" />,
+      keywords: ['decision', 'question', 'feedback', 'poll', 'vote'], section: 'Collaboration',
+      onSelect: () => showModal('Ask a question', (onClose) => <InsertDecisionDialog activeEditor={editor} onClose={onClose} />),
+    },
     // {
     //   id: 'paragraph',
     //   label: 'Paragraph',

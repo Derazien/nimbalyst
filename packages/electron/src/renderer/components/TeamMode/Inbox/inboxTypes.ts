@@ -150,6 +150,7 @@ export interface InboxRowView {
   sourceId?: string;
   commentId?: string;
   threadId?: string;
+  blockId?: string;
   sourceKind?: InboxSourceKind;
   /**
    * Tracker item type, when the delivery carried one and the reader may still

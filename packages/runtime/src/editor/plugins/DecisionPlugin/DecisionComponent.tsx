@@ -53,6 +53,9 @@ import {
 } from "./renderers/DecisionEditText";
 import { DecisionRating } from "./renderers/DecisionRating";
 import "./DecisionComponent.css";
+import { SealOutcomeEditor } from "./DecisionSealOutcomeEditor";
+import { DecisionAuthoring } from "./DecisionAuthoring";
+import { DecisionDeliveryPanel } from "./DecisionDeliveryPanel";
 
 interface DecisionComponentProps {
   className: string;
@@ -289,107 +292,6 @@ const SealedDecision: React.FC<{ source: DecisionBlockSource }> = ({
   );
 };
 
-const SealOutcomeEditor: React.FC<{
-  source: DecisionBlockSource;
-  outcome: DecisionResolvedValue | undefined;
-  onChange: (outcome: DecisionResolvedValue | undefined) => void;
-}> = ({ source, outcome, onChange }) => {
-  switch (source.type) {
-    case "singleSelect":
-      return (
-        <label className="decision-seal-choice">
-          Outcome
-          <select
-            value={typeof outcome === "string" ? outcome : ""}
-            onChange={(event) => onChange(event.target.value || undefined)}
-            data-testid="decision-seal-outcome"
-          >
-            <option value="">Choose an outcome</option>
-            {source.entries.map((entry) => (
-              <option key={entry.id} value={entry.id}>
-                {entry.label ?? entry.title ?? entry.id}
-              </option>
-            ))}
-          </select>
-        </label>
-      );
-    case "multiSelect": {
-      const selected = Array.isArray(outcome) ? outcome : [];
-      return (
-        <fieldset
-          className="decision-seal-choices"
-          data-testid="decision-seal-outcome"
-        >
-          <legend>Outcome</legend>
-          {source.entries.map((entry) => (
-            <label key={entry.id}>
-              <input
-                type="checkbox"
-                checked={selected.includes(entry.id)}
-                onChange={() =>
-                  onChange(
-                    selected.includes(entry.id)
-                      ? selected.filter((id) => id !== entry.id)
-                      : [...selected, entry.id]
-                  )
-                }
-              />
-              {entry.label ?? entry.title ?? entry.id}
-            </label>
-          ))}
-        </fieldset>
-      );
-    }
-    case "reorder": {
-      const orderedIds = Array.isArray(outcome)
-        ? outcome
-        : source.entries.map((entry) => entry.id);
-      const removedIds = source.entries
-        .map((entry) => entry.id)
-        .filter((id) => !orderedIds.includes(id));
-      return (
-        <div data-testid="decision-seal-outcome">
-          <DecisionReorderControl
-            source={source}
-            draft={{ type: "reorder", orderedIds, removedIds }}
-            onDraftChange={(answer) => {
-              if (answer.type === "reorder") onChange(answer.orderedIds);
-            }}
-            disabled={false}
-            tally={null}
-            members={[]}
-            myAnswer={undefined}
-          />
-        </div>
-      );
-    }
-    case "confirm":
-      return (
-        <label className="decision-seal-choice">
-          Outcome
-          <select
-            value={typeof outcome === "boolean" ? String(outcome) : ""}
-            onChange={(event) =>
-              onChange(
-                event.target.value === ""
-                  ? undefined
-                  : event.target.value === "true"
-              )
-            }
-            data-testid="decision-seal-outcome"
-          >
-            <option value="">Break the tie</option>
-            <option value="true">Yes</option>
-            <option value="false">No</option>
-          </select>
-        </label>
-      );
-    case "rating":
-    case "editText":
-      return null;
-  }
-};
-
 const DecisionBlock: React.FC<{
   source: DecisionBlockSource;
   nodeKey: string;
@@ -414,11 +316,9 @@ const DecisionBlock: React.FC<{
   const hasAnswered = myAnswer !== undefined;
   const showControl = !hasAnswered || editing;
 
-  const tallyVisible = canViewerSeeDecisionTally(
-    source,
-    effectiveVotes,
-    voting.viewer?.id
-  );
+  const tallyVisible = voting.privateMode
+    ? voting.canSeeAll
+    : canViewerSeeDecisionTally(source, effectiveVotes, voting.viewer?.id);
   const tally = useMemo(
     () =>
       tallyVisible
@@ -442,13 +342,16 @@ const DecisionBlock: React.FC<{
       resolvedFrom?: string,
       voteOverride?: readonly DecisionVote[]
     ) => {
+      if (!voting.canSeal) return;
       const resolvedBy = voting.viewer?.name ?? voting.viewer?.id ?? "unknown";
       if (voting.canRecordVotes) {
         voting.claimSeal({
           outcome,
           resolvedBy,
           resolvedAt: new Date().toISOString(),
-          ...(resolvedFrom !== undefined ? { resolvedFrom } : {}),
+          ...(!voting.privateMode && resolvedFrom !== undefined
+            ? { resolvedFrom }
+            : {}),
         });
         setSealing(false);
         setSealError(null);
@@ -471,7 +374,10 @@ const DecisionBlock: React.FC<{
           resolvedBy,
           resolvedAt: new Date(),
           votes: voteOverride ?? effectiveVotes,
-          ...(resolvedFrom !== undefined ? { resolvedFrom } : {}),
+          privateMode: voting.privateMode,
+          ...(!voting.privateMode && resolvedFrom !== undefined
+            ? { resolvedFrom }
+            : {}),
         });
 
         if (!result.ok) {
@@ -533,8 +439,8 @@ const DecisionBlock: React.FC<{
     setSealError(null);
   };
 
-  const submit = (): void => {
-    if (!draft || !answerIsComplete(source, draft)) return;
+  const submit = async (): Promise<void> => {
+    if (!voting.canVote || !draft || !answerIsComplete(source, draft)) return;
     if (!voting.canRecordVotes) {
       const vote: DecisionVote = {
         voterId: voting.viewer?.id ?? "local",
@@ -559,8 +465,7 @@ const DecisionBlock: React.FC<{
       }
       return;
     }
-    voting.castVote(draft);
-    setEditing(false);
+    if (await voting.castVote(draft)) setEditing(false);
   };
 
   const acceptProposal = (proposal: DecisionProposalTally): void => {
@@ -637,7 +542,7 @@ const DecisionBlock: React.FC<{
               tally={tally}
               members={voting.members}
               viewerId={voting.viewer?.id}
-              {...(voting.canVote ? { onAccept: acceptProposal } : {})}
+              {...(voting.canSeal ? { onAccept: acceptProposal } : {})}
             />
           );
         }
@@ -668,34 +573,40 @@ const DecisionBlock: React.FC<{
     }
   })();
 
-  const footerLeft = showControl ? (
-    tallyVisible ? (
-      <span className="decision-foot-progress">
-        {progress.asked > 0
-          ? `${progress.answered} of ${progress.asked} ${respondentNoun(
-              source
-            )}`
-          : `${progress.answered} ${respondentNoun(source)}`}
+  const footerLeft =
+    voting.privateMode && !tallyVisible ? (
+      <span className="decision-blind">
+        {hasAnswered ? "Your answer is saved. " : ""}Results stay hidden until
+        all your assigned questions are answered.
       </span>
+    ) : showControl ? (
+      tallyVisible ? (
+        <span className="decision-foot-progress">
+          {progress.asked > 0
+            ? `${progress.answered} of ${progress.asked} ${respondentNoun(
+                source
+              )}`
+            : `${progress.answered} ${respondentNoun(source)}`}
+        </span>
+      ) : (
+        <HiddenTallyNote
+          count={progress.answered}
+          noun={respondentNoun(source)}
+        />
+      )
     ) : (
-      <HiddenTallyNote
-        count={progress.answered}
-        noun={respondentNoun(source)}
-      />
-    )
-  ) : (
-    <>
-      <AnsweredMark>You answered</AnsweredMark>
-      <span className="decision-sep">&middot;</span>
-      <span className="decision-foot-progress">
-        {progress.asked > 0
-          ? `${progress.answered} of ${progress.asked} ${respondentNoun(
-              source
-            )}`
-          : `${progress.answered} ${respondentNoun(source)}`}
-      </span>
-    </>
-  );
+      <>
+        <AnsweredMark>You answered</AnsweredMark>
+        <span className="decision-sep">&middot;</span>
+        <span className="decision-foot-progress">
+          {progress.asked > 0
+            ? `${progress.answered} of ${progress.asked} ${respondentNoun(
+                source
+              )}`
+            : `${progress.answered} ${respondentNoun(source)}`}
+        </span>
+      </>
+    );
 
   return (
     <div
@@ -717,6 +628,18 @@ const DecisionBlock: React.FC<{
       ) : null}
 
       {control}
+      {showControl &&
+      voting.privateMode &&
+      tally?.type === "editText" &&
+      voting.canSeeAll ? (
+        <DecisionProposalList
+          seed={source.seed ?? ""}
+          tally={tally}
+          members={voting.members}
+          viewerId={voting.viewer?.id}
+          {...(voting.canSeal ? { onAccept: acceptProposal } : {})}
+        />
+      ) : null}
 
       {voting.recommendations.length > 0 ? (
         <div
@@ -784,9 +707,10 @@ const DecisionBlock: React.FC<{
               }
             }}
             disabled={
-              source.type === "rating"
+              !voting.canSeal ||
+              (source.type === "rating"
                 ? conclusion.trim() === ""
-                : !checkDecisionSeal(source, sealOutcome).ok
+                : !checkDecisionSeal(source, sealOutcome).ok)
             }
             data-testid="decision-seal-confirm"
           >
@@ -799,6 +723,23 @@ const DecisionBlock: React.FC<{
         <div className="decision-seal-error">{sealError}</div>
       ) : null}
 
+      {voting.pending ? (
+        <div role="status" className="decision-quiet">
+          {voting.refreshing
+            ? "Refreshing answer status…"
+            : "Saving your answer…"}
+        </div>
+      ) : null}
+      {voting.error ? (
+        <div role="alert" className="decision-seal-error">
+          {voting.error}
+        </div>
+      ) : null}
+      {voting.unavailableReason ? (
+        <div role="status" className="decision-quiet">
+          {voting.unavailableReason}
+        </div>
+      ) : null}
       <DecisionFooter left={footerLeft}>
         {showControl ? (
           <button
@@ -819,13 +760,14 @@ const DecisionBlock: React.FC<{
                 setDraft(myAnswer);
                 setEditing(true);
               }}
+              disabled={!voting.canVote}
               data-testid="decision-change"
             >
               Change
             </button>
             {/* editText seals by accepting a specific proposal, so a generic
                 seal button there would have no outcome to point at. */}
-            {source.type !== "editText" && voting.canVote ? (
+            {source.type !== "editText" && voting.canSeal ? (
               <button
                 type="button"
                 className="decision-btn decision-btn--primary"
@@ -837,6 +779,19 @@ const DecisionBlock: React.FC<{
             ) : null}
           </>
         )}
+        {showControl &&
+        voting.privateMode &&
+        voting.canSeal &&
+        source.type !== "editText" ? (
+          <button
+            type="button"
+            className="decision-btn decision-btn--primary"
+            onClick={beginSealing}
+            data-testid="decision-seal"
+          >
+            {sealVerb(source)}
+          </button>
+        ) : null}
       </DecisionFooter>
 
       {!voting.canRecordVotes ? (
@@ -879,8 +834,9 @@ const ParsedDecisionComponent: React.FC<
         outcome: claim.outcome,
         resolvedBy: claim.resolvedBy,
         resolvedAt,
-        votes: voting.votes,
-        ...(claim.resolvedFrom !== undefined
+        votes: voting.privateMode ? [] : voting.votes,
+        privateMode: voting.privateMode,
+        ...(!voting.privateMode && claim.resolvedFrom !== undefined
           ? { resolvedFrom: claim.resolvedFrom }
           : {}),
       });
@@ -902,16 +858,60 @@ const ParsedDecisionComponent: React.FC<
     editor,
     nodeKey,
     voting.sealClaim,
+    voting.privateMode,
     voting.votes,
   ]);
 
   return (
-    <div className={className ? `decision-root ${className}` : "decision-root"}>
-      {source.sealed ? (
-        <SealedDecision source={source} />
+    <div
+      className={className ? `decision-root ${className}` : "decision-root"}
+      data-decision-layout={source.entries.some((entry) => entry.artifact) ? "artifact" : "simple"}
+    >
+      {source.raw.draft === true && !source.sealed ? (
+        voting.canEdit ? (
+          <DecisionAuthoring
+            source={source}
+            onSave={(next) => {
+              let changed = false;
+              editor.update(
+                () => {
+                  const node = $getNodeByKey(nodeKey);
+                  if ($isDecisionNode(node) && node.getContent() === content) {
+                    node.setContent(next);
+                    changed = true;
+                  }
+                },
+                { discrete: true }
+              );
+              if (!changed)
+                throw new Error(
+                  "The question changed while you were editing. Reopen it to continue."
+                );
+            }}
+          />
+        ) : (
+          <div className="decision-quiet">Draft question: {source.ask}</div>
+        )
+      ) : source.sealed ? (
+        <SealedDecision
+          source={
+            voting.privateMode || !voting.canSeeAll
+              ? {
+                  ...source,
+                  sealed: {
+                    resolved: source.sealed.resolved,
+                    resolvedBy: source.sealed.resolvedBy,
+                    resolvedAt: source.sealed.resolvedAt,
+                    votes: [],
+                  },
+                }
+              : source
+          }
+        />
       ) : (
         <DecisionBlock source={source} nodeKey={nodeKey} voting={voting} />
       )}
+      <DecisionDeliveryPanel source={source} nodeKey={nodeKey} />
     </div>
   );
 };

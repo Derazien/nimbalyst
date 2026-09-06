@@ -1,3 +1,4 @@
+import { isAvailableAgentDelivery, conversationIdForDelivery, messageIdForDelivery, policyKeyForDelivery } from './inboxAgentDeliveryIdentity';
 import {
   feedbackRequestUrn,
   type ConversationEvent,
@@ -17,6 +18,7 @@ import { buildConversationDeepLink } from '../../shared/conversationDeepLinks';
 import { getFeedbackRequestService } from './FeedbackRequestService';
 import { registerFeedbackRequestWakePolicy } from './FeedbackRequestWakePolicy';
 import type { FeedbackRequestServiceState } from '../../shared/feedbackRequest';
+import { documentDecisionWakePolicy, documentDecisionWakePrompt } from './documentDecisionWake';
 
 const DEFAULT_BATCH_DELAY_MS = 40;
 const CLAIM_LEASE_RETRY_MS = 61_000;
@@ -54,6 +56,7 @@ export class AgentWakePolicyRegistry {
   private readonly policies = new Map<string, AgentWakePolicy>();
 
   constructor() {
+    this.register('documentDecision', documentDecisionWakePolicy);
     this.register('agentMention', () => ({
       wake: true,
       reason: 'explicit agent mention',
@@ -120,37 +123,6 @@ interface PendingGroup {
   conversationId: string;
   orgId: string;
   candidates: AgentWakeCandidate[];
-}
-
-function isAvailableAgentDelivery(
-  delivery: TeamInboxMaterializedDelivery,
-): delivery is TeamInboxMaterializedDelivery & {
-  source: NonNullable<TeamInboxMaterializedDelivery['source']>;
-  agentSessionIds: string[];
-} {
-  return !delivery.unavailable
-    && !!delivery.source
-    && (delivery.agentSessionIds?.length ?? 0) > 0;
-}
-
-function conversationIdForDelivery(delivery: TeamInboxMaterializedDelivery): string | null {
-  const source = delivery.source;
-  if (!source) return null;
-  if ('sourceId' in source) return source.sourceId;
-  return source.resourceKind === 'feedbackRequest'
-    ? `feedback-request:${source.resourceId}`
-    : null;
-}
-
-function messageIdForDelivery(delivery: TeamInboxMaterializedDelivery): string | null {
-  const source = delivery.source;
-  if (!source) return null;
-  return 'commentId' in source ? source.commentId : source.sourceEventId;
-}
-
-function policyKeyForDelivery(delivery: TeamInboxMaterializedDelivery): string | null {
-  return delivery.agentWakePolicy
-    ?? ((delivery.agentSessionIds?.length ?? 0) > 0 ? 'agentMention' : null);
 }
 
 function groupKey(sessionId: string, orgId: string, conversationId: string): string {
@@ -396,6 +368,7 @@ export class AgentMentionDispatchService {
     policyReason: string,
     workspacePath: string,
   ): Promise<string> {
+    if (group.policyKey === 'documentDecision') return documentDecisionWakePrompt(group.orgId, candidates);
     const feedbackRequest = candidates.find(
       (candidate) => candidate.resourceKind === 'feedbackRequest'
         && candidate.resourceId,

@@ -10,13 +10,21 @@ vi.mock("@nimbalyst/extension-sdk", async () => {
   >("@nimbalyst/extension-sdk");
   return {
     ...actual,
-    useEditorLifecycle: () => ({
-      markDirty: vi.fn(),
-      isLoading: false,
-      error: null,
-      theme: "dark",
-      diffState: null,
-    }),
+    useEditorLifecycle: (
+      host: { testContent?: string },
+      options: { applyContent(content: string): void }
+    ) => {
+      React.useEffect(() => {
+        if (host.testContent) options.applyContent(host.testContent);
+      }, [host]);
+      return {
+        markDirty: vi.fn(),
+        isLoading: false,
+        error: null,
+        theme: "dark",
+        diffState: null,
+      };
+    },
     useCollaborativeEditor: vi.fn(),
   };
 });
@@ -138,10 +146,43 @@ describe("MockupEditor read-only embed", () => {
     return frame.contentDocument as Document;
   }
 
+  it("paints a detached embed when its browsing context loads and does not repaint its own load", () => {
+    stubCanvas();
+    const container = document.createElement("div");
+    const view = render(
+      <MockupEditor
+        host={readOnlyHost({ testContent: "<h1>Detached preview</h1>" })}
+      />,
+      { container }
+    );
+    const frame = container.querySelector("iframe")!;
+    // Lexical can mount a decorator before attaching its DOM to the editor.
+    expect(frame.contentDocument).toBeNull();
+    document.body.appendChild(container);
+    fireEvent.load(frame);
+    expect(frame.contentDocument!.body.textContent).toContain(
+      "Detached preview"
+    );
+    const write = vi.spyOn(frame.contentDocument!, "write");
+    fireEvent.load(frame);
+    expect(write).not.toHaveBeenCalled();
+    // Reparenting the same iframe destroys its browsing context without a ref change.
+    container.remove();
+    document.body.appendChild(container);
+    fireEvent.load(frame);
+    expect(frame.contentDocument!.body.textContent).toContain(
+      "Detached preview"
+    );
+    view.unmount();
+    container.remove();
+  });
+
   it("publishes a scroll viewport the host can carry between mockups", () => {
     stubCanvas();
     const registerViewport = vi.fn();
-    const view = render(<MockupEditor host={readOnlyHost({ registerViewport })} />);
+    const view = render(
+      <MockupEditor host={readOnlyHost({ registerViewport })} />
+    );
 
     expect(registerViewport).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -168,7 +209,9 @@ describe("MockupEditor read-only embed", () => {
     const { container } = render(
       <MockupEditor host={readOnlyHost({ registerEditorAPI })} />
     );
-    const api = registerEditorAPI.mock.calls[0]![0]! as { getCurrentHtml(): string };
+    const api = registerEditorAPI.mock.calls[0]![0]! as {
+      getCurrentHtml(): string;
+    };
     const before = api.getCurrentHtml();
 
     // Stand in for a viewer using the prototype: hover states, disclosure

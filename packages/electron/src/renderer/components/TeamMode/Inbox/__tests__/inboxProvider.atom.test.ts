@@ -159,6 +159,23 @@ describe('createAtomInboxProvider', () => {
     ).toEqual({ orgId: 'org-a', requestId: 'feedbackRequest-1' });
   });
 
+  it('opens an addressed decision at its stable block without treating an activity event as a comment', async () => {
+    const store = createStore();
+    store.set(teamInboxSnapshotAtom, {
+      status: 'ready', organizations: [], deliveries: [{
+        hasUnreadActivity: false, id: 'decision-event', teamMemberId: asTeamMemberId('member-a'), orgId: 'org-a', orgName: 'Acme', createdAt: 100,
+        source: { orgId: 'org-a', resourceKind: 'document', resourceId: 'doc-a', projectId: 'project-a', blockId: 'question-a', sourceEventId: 'decision-event', eventClass: 'documentDecisionRequested' }, reason: 'assignment',
+      }],
+    });
+    const invoke = vi.fn(async () => true);
+    Object.defineProperty(window, 'electronAPI', { configurable: true, value: { invoke } });
+    const provider = createAtomInboxProvider(store);
+    const row = toRowView(provider.getSnapshot().deliveries[0], { now: 200 });
+    expect(row.sourceKind).toBe('documentDecision');
+    await provider.navigate(row);
+    expect(invoke).toHaveBeenCalledWith('deep-link:open-inbox-source', 'nimbalyst://doc/doc-a?orgId=org-a&blockId=question-a');
+  });
+
   it('subscribes through the Jotai store', () => {
     const store = createStore();
     const provider = createAtomInboxProvider(store);

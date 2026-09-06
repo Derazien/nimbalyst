@@ -12,6 +12,7 @@ import {$isListItemNode, $isListNode} from '@lexical/list';
 import {
   $createTextNode,
   $getRoot,
+  $isDecoratorNode,
   $isElementNode,
   createCommand,
   ElementNode,
@@ -501,6 +502,7 @@ export function $approveChangeGroup(editor: LexicalEditor, nodes: LexicalNode[])
       } else if (diffState === 'removed') {
         node.remove();
       } else if (diffState === 'modified') {
+        $settleModifiedDecorator(node, 'approve');
         $clearDiffState(node);
       } else {
         // Handle legacy nodes
@@ -541,6 +543,7 @@ export function $rejectChangeGroup(editor: LexicalEditor, nodes: LexicalNode[]):
       } else if (diffState === 'removed') {
         $clearDiffState(node);
       } else if (diffState === 'modified') {
+        $settleModifiedDecorator(node, 'reject');
         $clearDiffState(node);
       } else {
         // Handle legacy nodes
@@ -557,4 +560,19 @@ export function $rejectChangeGroup(editor: LexicalEditor, nodes: LexicalNode[]):
 
     $clearSettledAncestors(ancestors);
   }, { discrete: true });
+}
+
+/** Atomic decorator edits carry their previous value in the specialized handler. */
+function $settleModifiedDecorator(node: LexicalNode, action: 'approve' | 'reject'): void {
+  if (!$isDecoratorNode(node)) return;
+  const context: DiffHandlerContext = {
+    liveNode: node,
+    sourceNode: {} as SerializedLexicalNode,
+    targetNode: {} as SerializedLexicalNode,
+    changeType: 'update',
+    validator: undefined as any,
+  };
+  const handler = diffHandlerRegistry.findHandler(context);
+  if (action === 'approve') handler?.handleApprove?.(node, context.validator);
+  else handler?.handleReject?.(node, context.validator);
 }

@@ -740,12 +740,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('mcp:streamContent', handler);
     return () => ipcRenderer.removeListener('mcp:streamContent', handler);
   },
-  onMcpReadCollabDoc: (callback: (data: { targetFilePath: string, resultChannel: string, workspacePath?: string }) => void) => {
+  onMcpReadCollabDoc: (callback: (data: { targetFilePath: string, resultChannel: string, workspacePath?: string, includeDecisionState?: boolean }) => void) => {
     const handler = (_event: any, data: any) => callback(data);
     ipcRenderer.on('mcp:readCollabDoc', handler);
     return () => ipcRenderer.removeListener('mcp:readCollabDoc', handler);
   },
-  sendMcpReadCollabDocResult: (resultChannel: string, result: { success: boolean; content?: string; error?: string; code?: string }) => {
+  sendMcpReadCollabDocResult: (resultChannel: string, result: { success: boolean; content?: string; decisionState?: unknown; error?: string; code?: string }) => {
     ipcRenderer.send(resultChannel, result);
   },
   onMcpReadCollabDocComments: (callback: (data: any) => void) => {

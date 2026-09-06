@@ -1,11 +1,17 @@
-import { act } from '@testing-library/react';
+import React from 'react';
+import { act, fireEvent, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as Y from 'yjs';
 
 import { asTeamJwt, asTeamMemberId } from '@nimbalyst/runtime/auth/jwtScopes';
 import { collabCommentControllerRegistry } from '@nimbalyst/runtime/editor/commenting/CollabCommentControllerRegistry';
+import { withHeadlessLexicalBridge } from '@nimbalyst/runtime/sync/withHeadlessLexicalBridge';
+import { HeadlessBodyNodes } from '@nimbalyst/runtime/editor/nodes/headlessBodyNodes';
+import { $getRoot } from 'lexical';
+import { uint8ArrayToBase64, base64ToUint8Array } from '@nimbalyst/runtime/sync/documentSyncBase64';
+import { $createEmbeddedFileNode } from '@nimbalyst/runtime/editor/plugins/EmbedPlugin/EmbeddedFileNode';
 import { MarkdownCollabContentAdapter } from '@nimbalyst/runtime/sync/MarkdownCollabContentAdapter';
-import { mountCollabEditor } from '../mount';
+import { decisionMembersFromComments, mountCollabEditor } from '../mount';
 import { CollabPresenceSurface } from '../presence';
 import {
   asTeamDocumentId,
@@ -31,6 +37,54 @@ afterEach(() => {
 });
 
 describe('in-memory collaborative editor harness', () => {
+  it('renders persisted subject embeds through each mount’s authorized preview without crossing scopes', async () => {
+    const mounts = ['one', 'two'].map((scope) => {
+      const yDocument = new Y.Doc();
+      withHeadlessLexicalBridge(yDocument, { nodes: HeadlessBodyNodes }, ({ editor }) => {
+        editor.update(() => $getRoot().append($createEmbeddedFileNode({
+          src: `nimbalyst://doc/preview-${scope}?orgId=org-${scope}`,
+          label: `Preview ${scope}`, attrs: { embedType: '.mockup.html' },
+        })), { discrete: true });
+      });
+      const element = document.createElement('div'); document.body.append(element);
+      const render = vi.fn((_key: string, artifact: string) => <div data-testid="live-subject-preview">{scope}: {artifact}</div>);
+      const handle = mountCollabEditor({ element, source: { kind: 'in-memory', document: yDocument }, user: { memberId: asTeamMemberId(scope), name: scope }, renderDecisionArtifact: render });
+      mountedHandles.push(handle);
+      return { element, handle, render, scope };
+    });
+    await settle();
+    for (const { element, scope } of mounts) {
+      await waitFor(() => expect(element.querySelector('[data-testid="live-subject-preview"]')?.textContent).toBe(`${scope}: collab://org:org-${scope}:doc:preview-${scope}`));
+      expect(element.querySelector('[data-testid="embed-frame-placeholder"]')).toBeNull();
+    }
+    await act(async () => mounts[0]!.handle.destroy());
+    await act(async () => mounts[1]!.handle.setReadOnly(true));
+    await settle();
+    expect(mounts[1]!.element.querySelector('[data-testid="live-subject-preview"]')?.textContent).toContain('two: collab://org:org-two:doc:preview-two');
+    expect(mounts[0]!.render.mock.calls.every(([, artifact]) => artifact.includes('org-one'))).toBe(true);
+    expect(mounts[1]!.render.mock.calls.every(([, artifact]) => artifact.includes('org-two'))).toBe(true);
+  });
+
+  it.each([
+    { src: '/private/preview.mockup.html', capable: true },
+    { src: 'nimbalyst://doc/preview?orgId=org-one', capable: false },
+  ])('keeps embedded subjects unavailable without a shared target and host capability: $src', async ({ src, capable }) => {
+    const yDocument = new Y.Doc();
+    withHeadlessLexicalBridge(yDocument, { nodes: HeadlessBodyNodes }, ({ editor }) => editor.update(() => {
+      $getRoot().append($createEmbeddedFileNode({ src, label: 'Preview', attrs: { embedType: '.mockup.html' } }));
+    }, { discrete: true }));
+    const element = document.createElement('div'); document.body.append(element);
+    const render = vi.fn(() => <div>Must not render</div>);
+    const handle = mountCollabEditor({ element, source: { kind: 'in-memory', document: yDocument }, user: { memberId: asTeamMemberId('member'), name: 'Member' }, ...(capable ? { renderDecisionArtifact: render } : {}) });
+    mountedHandles.push(handle);
+    await settle();
+    await waitFor(() => expect(element.querySelector('.collab-bundle-document-embed-unavailable')).not.toBeNull());
+    expect(render).not.toHaveBeenCalled();
+  });
+
+  it('uses the roster team member id rather than personal org identity for decision addressing', () => {
+    expect(decisionMembersFromComments([{ userId: 'member-in-team', personalOrgId: 'personal-org', name: 'Alex' }])).toEqual([{ id: 'member-in-team', name: 'Alex' }]);
+  });
   it('paints a pre-populated Y.Doc through the provider bridge and accepts input', async () => {
     const yDocument = new Y.Doc();
     MarkdownCollabContentAdapter.seedFromFile(yDocument, '# Bundle harness\n\nPREPOPULATED-MARKER');
@@ -71,6 +125,34 @@ describe('in-memory collaborative editor harness', () => {
       status: 'not-required',
       reason: 'in-memory',
     });
+  });
+
+  it('records browser decision votes in the shared document using the team member identity', async () => {
+    const yDocument = new Y.Doc();
+    MarkdownCollabContentAdapter.seedFromFile(yDocument, '```decision\nid: browser-q\nask: Ship this?\ntype: singleSelect\noptions:\n  - id: yes\n    label: Ship it\n  - id: no\n    label: Wait\n```');
+    const element = document.createElement('div'); document.body.append(element);
+    // Shared ballots stay disabled until a privacy-aware server authorizes the
+    // list. A transport-free in-memory mount cannot supply that authority.
+    const socket = new FakeRoomSocket();
+    socket.decisionDocument = yDocument;
+    const handle = mountCollabEditor({
+      element,
+      source: {
+        kind: 'team-room', serverUrl: 'ws://collab.test',
+        room: { orgId: asTeamOrgId('org-votes'), projectId: asTeamProjectId('project-votes'), documentId: asTeamDocumentId('doc-votes') },
+        auth: { scope: 'team', memberId: asTeamMemberId('team-reader'), getTeamJwt: async () => asTeamJwt('team-jwt') },
+        createWebSocket: () => socket as unknown as WebSocket,
+      },
+      user: { memberId: asTeamMemberId('team-reader'), name: 'Reader' },
+    });
+    mountedHandles.push(handle);
+    await settle();
+    await act(async () => { socket.open(); socket.deliverSyncResponse(true); });
+    await waitFor(() => expect(element.querySelector('button[data-testid="decision-option-row"]')).not.toBeNull());
+    const option = [...element.querySelectorAll('button')].find((button) => button.textContent?.includes('Ship it'))!;
+    fireEvent.click(option);
+    fireEvent.click(element.querySelector('[data-testid="decision-answer"]')!);
+    await waitFor(() => expect(yDocument.getMap('decisions').get('browser-q\x1fteam-reader')).toMatchObject({ answer: { type: 'singleSelect', selectedId: 'yes' } }));
   });
 
   it('paints tracker and shared-document references written by a desktop client', async () => {
@@ -199,7 +281,19 @@ class FakeRoomSocket {
     this.listeners.get(type)?.delete(listener);
   }
 
-  send(): void {}
+  decisionDocument?: Y.Doc;
+
+  send(data: string): void {
+    if (!this.decisionDocument) return;
+    const message = JSON.parse(data);
+    if (message.type === 'docDecisionCommand' && message.command.operation === 'list') {
+      queueMicrotask(() => this.emit('message', { data: JSON.stringify({ type: 'docDecisionState', requestId: message.requestId, decisions: [], privacyVersion: 1 }) }));
+    }
+    if (message.type === 'docUpdate') {
+      Y.applyUpdate(this.decisionDocument, base64ToUint8Array(message.encryptedUpdate));
+      queueMicrotask(() => this.emit('message', { data: JSON.stringify({ type: 'docUpdateAck', clientUpdateId: message.clientUpdateId }) }));
+    }
+  }
 
   close(): void {
     this.readyState = 3;
@@ -219,7 +313,7 @@ class FakeRoomSocket {
     this.emit('message', {
       data: JSON.stringify({
         type: 'docSyncResponse',
-        updates: [],
+        updates: this.decisionDocument ? [{ sequence: 1, encryptedUpdate: uint8ArrayToBase64(Y.encodeStateAsUpdate(this.decisionDocument)), iv: '' }] : [],
         hasMore: false,
         cursor: 0,
         serverHead: 0,

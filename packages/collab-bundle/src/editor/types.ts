@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import type { TextFormatType } from 'lexical';
 import {
   asTeamJwt,
@@ -178,6 +179,8 @@ export interface CollabEditorMountOptions {
   user: CollabEditorUser;
   readOnly?: boolean;
   comments?: CollabEditorCommentsOptions;
+  /** Optional live preview supplied by the document host; never resolves local files itself. */
+  renderDecisionArtifact?: (entryId: string, artifact: string) => ReactNode;
   onStateChange?: (state: CollabEditorState) => void;
   onPresenceChange?: (presence: CollabEditorPresence) => void;
   onWriteRejected?: (rejection: CollabEditorWriteRejection) => void;
@@ -196,6 +199,8 @@ export interface CollabEditorMountOptions {
 
 export interface CollabEditorHandle {
   getDocument(): Doc;
+  /** True until local document writes have server acknowledgement. */
+  hasPendingWrites?(): boolean;
   getMarkdown(): string;
   getState(): CollabEditorState;
   getPresence(): CollabEditorPresence;

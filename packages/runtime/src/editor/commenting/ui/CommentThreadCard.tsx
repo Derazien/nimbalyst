@@ -218,7 +218,7 @@ export function CommentThreadCard({
       ) : (
         <>
           {thread.comments.map((comment) => (
-            <div key={comment.id} className="nim-comment">
+            <div key={comment.id} className="nim-comment" data-comment-id={comment.id}>
               <div className="nim-comment-meta">
                 <CommentActorLabel
                   comment={comment}

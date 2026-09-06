@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
+- Send document questions to teammates, collect private answers, and resume the agent after a human settles the outcome.
 - Open and play `.mp4` files in a tab with the new Media Viewer extension, including scrubbing through long recordings.
 
 ### Changed
@@ -17,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Simple document questions and their selection outlines stay at a readable width on wide screens, with controls that wrap on narrow screens.
+- Project Graph keeps loaded data visible instead of repeatedly flashing a blank loading view during startup.
+- Embedded mockups repaint after their frame is attached or moved, preventing intermittent blank previews without resetting interactions on ordinary load events.
 - iPhone and iPad share one adaptive layout that preserves the active session and draft through rotation, with a session sidebar on wide screens.
 - Project and session lists show loading until sync finishes instead of prematurely reporting that they are empty.
 - Sessions that orchestrate other sessions keep up with them: messages that arrive while the session is busy are now delivered together, and a repeated update from the same child session replaces the earlier one instead of stacking up.

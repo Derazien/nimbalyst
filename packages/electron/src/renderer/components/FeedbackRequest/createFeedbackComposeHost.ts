@@ -1,33 +1,4 @@
-/**
- * The IPC-backed compose host: what "send" actually does.
- *
- * Same split as `createFeedbackRespondHost` and `createFeedbackResultsHost` --
- * the compose widget renders a draft and calls a host method; nothing in it
- * knows an IPC channel name, an org member id, or a tab key.
- *
- * Three ordering rules carry this module, and none of them is visible in the
- * widget:
- *
- * 1. **Publish only what the author confirmed, and only refs that are actually
- *    subjects of this request.** The draft gate already scopes the confirmation
- *    to the exact list the author was shown; this re-checks the payload against
- *    its own subjects so a stale or hand-built payload cannot publish something
- *    the author never saw.
- * 2. **Nothing is published until every confirmed ref is known to be
- *    publishable.** A request whose subjects are half-published and never sent
- *    is worse than one that refuses up front, so send runs in two passes:
- *    prepare every confirmed ref first (which is where the author walks through
- *    the real share-to-team dialog for a local file), then run them. An author
- *    who shares two mockups and closes the dialog on the third leaves nothing
- *    behind. Publishing itself, and what each kind means, lives in
- *    `publishFeedbackSubject`.
- * 3. **The results tab opens only after the server accepted the request.** A
- *    failed send leaves the draft where it is (the widget keeps it) and opens
- *    nothing, so retrying is the obvious next move.
- *
- * Fire-and-forget by construction: `create` returns as soon as the room
- * acknowledges, and no part of this waits on a recipient.
- */
+/** Human approval publishes the named subjects, then addresses decision blocks in a shared document. Legacy requests retain their read/respond path. */
 
 import type { ResourceRef } from '@nimbalyst/collab-protocol';
 import type {
@@ -35,15 +6,7 @@ import type {
   FeedbackComposeSendPayload,
   FeedbackRequestSendResult,
 } from '@nimbalyst/runtime/ui/AgentTranscript/components/CustomToolWidgets/InteractiveWidgetHost';
-import { store } from '@nimbalyst/runtime/store';
 
-import type {
-  FeedbackRequestCreateIpcRequest,
-  FeedbackRequestServiceTarget,
-} from '../../../shared/feedbackRequest';
-import { feedbackRequestConsoleUrl } from '../../../shared/feedbackRequestLinks';
-import { selectedWorkstreamAtom } from '../../store/atoms/sessions';
-import { openFeedbackRequestResults, type FeedbackRequestTabRef } from './feedbackRequestTab';
 import {
   isPublishableSubjectKind,
   prepareFeedbackSubjectPublish,
@@ -60,21 +23,17 @@ import { resolveDesktopCollabScope } from '../../store/atoms/collabDocuments';
 
 export type { FeedbackPublishOutcome, FeedbackPublishPlan };
 
-type Invoke = (channel: string, request: unknown) => Promise<unknown>;
-
 export interface FeedbackComposeHostConfig {
   workspacePath: string;
   /** The drafting session; it becomes the request's author and its wake target. */
   sessionId: string;
   sessionName?: string;
-  invoke?: Invoke;
   prepareSubject?: (
     ref: ResourceRef,
     destination?: ResolvedFeedbackDestination,
   ) => Promise<FeedbackPublishPlan>;
-  openResults?: (ref: FeedbackRequestTabRef) => void;
-  createRequestId?: (draftId: string) => string;
-  createMutationId?: () => string;
+  /** Canonical document send; injectable for the approval/publish ordering tests. */
+  sendDocument?: (payload: FeedbackComposeSendPayload, destination?: ResolvedFeedbackDestination) => Promise<FeedbackRequestSendResult>;
   /** Turns the draft's destination into a folder id. Creates nothing. */
   resolveDestination?: (
     destination: FeedbackComposeDestination | undefined,
@@ -92,48 +51,13 @@ export interface FeedbackComposeHost {
   cancel(draftId: string): Promise<void>;
 }
 
-function randomId(prefix: string): string {
-  return globalThis.crypto?.randomUUID?.()
-    ?? `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
-/**
- * One draft sends one request, however many times Send is pressed.
- *
- * `FeedbackRequestRoom.createRequest` is already idempotent: it loads the room's
- * existing request and, for the same author, acks with that request rather than
- * overwriting it. That guarantee was unreachable, because a fresh random id per
- * call addressed a fresh empty room every time -- so two sends were two rooms,
- * not one replayed create.
- *
- * Deriving the id from the draft id (the provider's tool call id, unique per
- * `RequestFeedback` call) is what connects the two. It is the only backstop that
- * survives an app reload, which the widget's sent-state atom does not.
- */
-function requestIdForDraft(draftId: string): string {
-  return draftId ? `feedback-request-${draftId}` : randomId('feedback-request');
-}
-
 function refKey(ref: ResourceRef): string {
   return `${ref.kind}:${ref.sourceId}`;
-}
-
-/**
- * The results tab lives in the workstream tab strip, so it needs a mounted
- * workstream. Imperative open on purpose -- projecting the request back into
- * `openResources` is the bridge that resurrects closed tracker tabs.
- */
-function defaultOpenResults(workspacePath: string, ref: FeedbackRequestTabRef): void {
-  const selection = workspacePath ? store.get(selectedWorkstreamAtom(workspacePath)) : null;
-  if (!selection?.id) return;
-  openFeedbackRequestResults({ ...ref, workstreamId: selection.id });
 }
 
 export function createFeedbackComposeHost(
   config: FeedbackComposeHostConfig,
 ): FeedbackComposeHost {
-  const invoke: Invoke = config.invoke
-    ?? ((channel, request) => window.electronAPI.invoke(channel, request));
   const prepareSubject = config.prepareSubject
     ?? ((ref: ResourceRef, destination?: ResolvedFeedbackDestination) =>
       prepareFeedbackSubjectPublish(ref, {
@@ -142,10 +66,10 @@ export function createFeedbackComposeHost(
           ? { destination: { folderId: destination.folderId, folderPath: destination.folderPath } }
           : {}),
       }));
-  const openResults = config.openResults
-    ?? ((ref: FeedbackRequestTabRef) => defaultOpenResults(config.workspacePath, ref));
-  const newRequestId = config.createRequestId ?? requestIdForDraft;
-  const newMutationId = config.createMutationId ?? (() => randomId('feedback-compose'));
+  const sendDocument = config.sendDocument ?? (async (payload: FeedbackComposeSendPayload, destination?: ResolvedFeedbackDestination) => {
+    const { sendDocumentFeedback } = await import('./DocumentFeedbackComposeHost');
+    return sendDocumentFeedback(config, payload, destination);
+  });
 
   const withScope = async <T,>(
     run: (scope: Awaited<ReturnType<typeof resolveDesktopCollabScope>>['scope'] & {}) => Promise<T>,
@@ -307,52 +231,11 @@ export function createFeedbackComposeHost(
           ? { ...ask, artifacts: ask.artifacts.map(republish) }
           : ask);
 
-      const requestId = newRequestId(payload.draftId);
-      const target: FeedbackRequestServiceTarget = {
-        workspacePath: config.workspacePath,
-        orgId: payload.orgId,
-        requestId,
-      };
-      const request: FeedbackRequestCreateIpcRequest = {
-        target,
-        clientMutationId: newMutationId(),
-        request: {
-          id: requestId,
-          orgId: payload.orgId,
-          author: {
-            kind: 'agent',
-            sessionId: config.sessionId,
-            ...(config.sessionName ? { sessionName: config.sessionName } : {}),
-          },
-          subjects,
-          asks,
-          recipients: payload.recipients,
-          assignments: payload.assignments,
-          visibility: payload.visibility,
-          wakePolicy: payload.wakePolicy,
-          quorum: payload.quorum,
-          ...(payload.deadline !== undefined ? { deadline: payload.deadline } : {}),
-        },
-      };
-
       try {
-        await invoke('feedback-request:create', request);
+        return await sendDocument({ ...payload, subjects, asks }, destination);
       } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'The request could not be sent.',
-        };
+        return { success: false, error: error instanceof Error ? error.message : 'The question could not be sent.' };
       }
-
-      openResults({ orgId: payload.orgId, requestId });
-      // The confirmation's copy action. A recipient without the desktop app is
-      // reached by this link or by nothing, so it is minted on the send path
-      // rather than left to a surface to assemble.
-      return {
-        success: true,
-        requestId,
-        shareUrl: feedbackRequestConsoleUrl(payload.orgId, requestId),
-      };
     },
 
     /**

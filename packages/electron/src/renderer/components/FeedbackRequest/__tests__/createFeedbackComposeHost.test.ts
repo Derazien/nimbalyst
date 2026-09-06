@@ -14,7 +14,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { ResourceRef } from '@nimbalyst/collab-protocol';
 
-import type { FeedbackRequestCreateIpcRequest } from '../../../../shared/feedbackRequest';
+import type { FeedbackComposeSendPayload, FeedbackRequestSendResult } from '@nimbalyst/runtime/ui/AgentTranscript/components/CustomToolWidgets/InteractiveWidgetHost';
 import {
   confirmPublish,
   createEmptyFeedbackComposeDraft,
@@ -64,7 +64,7 @@ function readyPayload(draft: FeedbackComposeDraft) {
   return feedbackComposeSendPayload(draft, plan.publishSubjectRefs);
 }
 
-type InvokeMock = ReturnType<typeof vi.fn<(channel: string, request: unknown) => Promise<unknown>>>;
+type SendMock = ReturnType<typeof vi.fn<(payload: FeedbackComposeSendPayload) => Promise<FeedbackRequestSendResult>>>;
 type PrepareMock = ReturnType<typeof vi.fn<(ref: ResourceRef) => Promise<FeedbackPublishPlan>>>;
 
 /** A subject the author has already answered for; publishing it succeeds. */
@@ -72,10 +72,10 @@ function readyPlan(outcome: FeedbackPublishOutcome = { success: true }): Feedbac
   return { status: 'ready', run: async () => outcome };
 }
 
-function harness(overrides: { invoke?: InvokeMock; prepareSubject?: PrepareMock } = {}) {
-  const invoke: InvokeMock = overrides.invoke
-    ?? vi.fn<(channel: string, request: unknown) => Promise<unknown>>()
-      .mockResolvedValue({ status: 'connected' });
+function harness(overrides: { sendDocument?: SendMock; prepareSubject?: PrepareMock } = {}) {
+  const sendDocument: SendMock = overrides.sendDocument
+    ?? vi.fn<(payload: FeedbackComposeSendPayload) => Promise<FeedbackRequestSendResult>>()
+      .mockResolvedValue({ success: true, requestId: 'dcn-generated', shareUrl: 'https://console.nimbalyst.com/org/org-1/project/p-1/document/doc-1?blockId=dcn-generated' });
   // Records what actually reached the team, so a test can tell "prepared" from
   // "published" -- the whole point of the two passes.
   const published: string[] = [];
@@ -87,50 +87,23 @@ function harness(overrides: { invoke?: InvokeMock; prepareSubject?: PrepareMock 
         return { success: true };
       },
     }));
-  const openResults = vi.fn();
   const host = createFeedbackComposeHost({
     workspacePath: '/tmp/workspace',
     sessionId: 'session-7',
-    invoke,
+    sendDocument,
     prepareSubject,
-    openResults,
-    createRequestId: () => 'fr-generated',
-    createMutationId: () => 'mutation-1',
+    resolveDestination: async () => ({ folderId: null, folderPath: '' }),
+    persistLastSharedFolder: () => {},
   });
-  return { host, invoke, prepareSubject, published, openResults };
+  return { host, sendDocument, prepareSubject, published };
 }
 
 describe('createFeedbackComposeHost', () => {
-  it('addresses one room per draft, so a repeated send replays instead of duplicating', async () => {
-    const draft = draftWithSubjects([]);
-    // The real id generator, not the harness stub: the derivation is the point.
-    const host = createFeedbackComposeHost({
-      workspacePath: '/tmp/workspace',
-      sessionId: 'session-7',
-      invoke: vi.fn<(channel: string, request: unknown) => Promise<unknown>>()
-        .mockResolvedValue({ status: 'connected' }),
-      prepareSubject: vi.fn(),
-      openResults: vi.fn(),
-      createMutationId: () => 'mutation-1',
-    });
-
-    const first = await host.send(readyPayload(draft));
-    const second = await host.send(readyPayload(draft));
-
-    /*
-     * `FeedbackRequestRoom.createRequest` already returns the existing request
-     * for the same author instead of overwriting it. A random id per send
-     * addressed a different empty room each time, so that guarantee never ran.
-     */
-    expect(first.requestId).toBe(second.requestId);
-    expect(first.requestId).toContain(draft.draftId);
-  });
-
   it('publishes only the confirmed subject, then creates the request and opens its results', async () => {
     const draft = confirmPublish(
       draftWithSubjects([trackerSubject('item-shared', true), trackerSubject('item-unshared', false)]),
     );
-    const { host, invoke, prepareSubject, published, openResults } = harness();
+    const { host, sendDocument, prepareSubject, published } = harness();
 
     const result = await host.send(readyPayload(draft));
 
@@ -139,8 +112,8 @@ describe('createFeedbackComposeHost', () => {
     // have to go looking for it.
     expect(result).toEqual({
       success: true,
-      requestId: 'fr-generated',
-      shareUrl: 'https://console.nimbalyst.com/org/org-1/feedback/fr-generated',
+      requestId: 'dcn-generated',
+      shareUrl: 'https://console.nimbalyst.com/org/org-1/project/p-1/document/doc-1?blockId=dcn-generated',
     });
     // The already-shared subject is not republished, and nothing outside the
     // author's confirmation is touched.
@@ -148,22 +121,13 @@ describe('createFeedbackComposeHost', () => {
     expect(prepareSubject.mock.calls[0][0].sourceId).toBe('item-unshared');
     expect(published).toEqual(['item-unshared']);
 
-    const [channel, sent] = invoke.mock.calls[0];
-    const request = sent as FeedbackRequestCreateIpcRequest;
-    expect(channel).toBe('feedback-request:create');
-    expect(request.target).toEqual({
-      workspacePath: '/tmp/workspace',
-      orgId: ORG_ID,
-      requestId: 'fr-generated',
-    });
+    const request = sendDocument.mock.calls[0][0];
     // Both subjects travel with the request; the author is the drafting
     // session, with the org-scoped member id left for main to stamp.
-    expect(request.request.subjects.map((subject) => subject.ref.sourceId)).toEqual([
+    expect(request.subjects.map((subject) => subject.ref.sourceId)).toEqual([
       'item-shared',
       'item-unshared',
     ]);
-    expect(request.request.author).toEqual({ kind: 'agent', sessionId: 'session-7' });
-    expect(openResults).toHaveBeenCalledWith({ orgId: ORG_ID, requestId: 'fr-generated' });
   });
 
   it('sends the published document ref when publishing a file rewrote it', async () => {
@@ -177,7 +141,7 @@ describe('createFeedbackComposeHost', () => {
     const published: ResourceRef = { orgId: ORG_ID, kind: 'document', sourceId: 'doc-42' };
     const prepareSubject = vi.fn<(ref: ResourceRef) => Promise<FeedbackPublishPlan>>()
       .mockResolvedValue(readyPlan({ success: true, ref: published }));
-    const { host, invoke } = harness({ prepareSubject });
+    const { host, sendDocument } = harness({ prepareSubject });
 
     const result = await host.send(readyPayload(draft));
 
@@ -186,8 +150,8 @@ describe('createFeedbackComposeHost', () => {
     // request must carry what the publish produced -- and the author's label
     // has to survive that swap, because the published ref is an opaque
     // document id the recipient cannot render.
-    const request = invoke.mock.calls[0][1] as FeedbackRequestCreateIpcRequest;
-    expect(request.request.subjects).toEqual([
+    const request = sendDocument.mock.calls[0][0];
+    expect(request.subjects).toEqual([
       { ref: published, label: 'direction-a.mockup.html' },
     ]);
   });
@@ -202,26 +166,24 @@ describe('createFeedbackComposeHost', () => {
         { orgId: ORG_ID, kind: 'tracker' as const, sourceId: 'never-shown' },
       ],
     };
-    const { host, invoke, prepareSubject, openResults } = harness();
+    const { host, sendDocument, prepareSubject } = harness();
 
     const result = await host.send(tampered);
 
     expect(result.success).toBe(false);
     expect(result.error).toContain('never-shown');
     expect(prepareSubject).not.toHaveBeenCalled();
-    expect(invoke).not.toHaveBeenCalled();
-    expect(openResults).not.toHaveBeenCalled();
+    expect(sendDocument).not.toHaveBeenCalled();
   });
 
   it('does not open the results tab when the request could not be created', async () => {
     const draft = draftWithSubjects([trackerSubject('item-shared', true)]);
-    const invoke = vi.fn().mockRejectedValue(new Error('room refused the request'));
-    const { host, openResults } = harness({ invoke });
+    const sendDocument = vi.fn().mockRejectedValue(new Error('room refused the request'));
+    const { host } = harness({ sendDocument });
 
     const result = await host.send(readyPayload(draft));
 
     expect(result).toEqual({ success: false, error: 'room refused the request' });
-    expect(openResults).not.toHaveBeenCalled();
   });
 
   it('publishes nothing when the author cancels the share of a later subject, and sends on the retry', async () => {
@@ -238,7 +200,7 @@ describe('createFeedbackComposeHost', () => {
       ref.sourceId.endsWith('b.mockup.html')
         ? { status: 'blocked', error: 'Sharing b.mockup.html was cancelled, so nothing was published.' }
         : readyPlan({ success: true, ref: { orgId: ORG_ID, kind: 'document', sourceId: 'doc-a' } }));
-    const { host, invoke, published, openResults } = harness({ prepareSubject: cancelled });
+    const { host, sendDocument, published } = harness({ prepareSubject: cancelled });
 
     const abandoned = await host.send(payload);
 
@@ -247,18 +209,17 @@ describe('createFeedbackComposeHost', () => {
     // The first mockup was answered for but never shared: an abandoned send
     // leaves no half-published subjects for the author to clean up.
     expect(published).toEqual([]);
-    expect(invoke).not.toHaveBeenCalled();
-    expect(openResults).not.toHaveBeenCalled();
+    expect(sendDocument).not.toHaveBeenCalled();
 
     // Nothing about the draft was consumed by the failed attempt: the same
     // payload -- asks, recipients, and the confirmed publish set -- still sends.
     const retry = harness();
     const result = await retry.host.send(payload);
 
-    expect(result).toMatchObject({ success: true, requestId: 'fr-generated' });
-    const request = retry.invoke.mock.calls[0][1] as FeedbackRequestCreateIpcRequest;
-    expect(request.request.asks.map((ask) => ask.id)).toEqual(['ask-ship']);
-    expect(request.request.recipients.map((person) => person.userId)).toEqual(['u-karl']);
+    expect(result).toMatchObject({ success: true, requestId: 'dcn-generated' });
+    const request = retry.sendDocument.mock.calls[0][0];
+    expect(request.asks.map((ask) => ask.id)).toEqual(['ask-ship']);
+    expect(request.recipients.map((person) => person.userId)).toEqual(['u-karl']);
     expect(retry.published).toEqual([
       'mockups/a.mockup.html',
       'mockups/b.mockup.html',
@@ -269,13 +230,12 @@ describe('createFeedbackComposeHost', () => {
     const draft = confirmPublish(draftWithSubjects([trackerSubject('item-unshared', false)]));
     const prepareSubject = vi.fn()
       .mockResolvedValue(readyPlan({ success: false, error: 'tracker is local-only' }));
-    const { host, invoke, openResults } = harness({ prepareSubject });
+    const { host, sendDocument } = harness({ prepareSubject });
 
     const result = await host.send(readyPayload(draft));
 
     expect(result).toEqual({ success: false, error: 'tracker is local-only' });
-    expect(invoke).not.toHaveBeenCalled();
-    expect(openResults).not.toHaveBeenCalled();
+    expect(sendDocument).not.toHaveBeenCalled();
   });
 });
 
@@ -316,13 +276,9 @@ describe('createFeedbackComposeHost — publish destination', () => {
     const host = createFeedbackComposeHost({
       workspacePath: '/tmp/workspace',
       sessionId: 'session-7',
-      invoke: vi.fn<(channel: string, request: unknown) => Promise<unknown>>()
-        .mockResolvedValue({ status: 'connected' }),
+      sendDocument: vi.fn().mockResolvedValue({ success: true }),
       prepareSubject,
-      openResults: vi.fn(),
-      createRequestId: () => 'fr-generated',
-      createMutationId: () => 'mutation-1',
-      resolveDestination,
+          resolveDestination,
       createPendingFolder,
       persistLastSharedFolder,
     });
@@ -387,4 +343,13 @@ describe('createFeedbackComposeHost — publish destination', () => {
     expect(h.createPendingFolder).not.toHaveBeenCalled();
     expect(h.runsWith).toEqual([{ folderId: 'f-existing', folderPath: 'Feedback requests' }]);
   });
+});
+
+it('sends approved drafts through document decisions without creating a legacy feedback room', async () => {
+  const sendDocument = vi.fn().mockResolvedValue({ success: true, requestId: 'dcn-draft-1', shareUrl: 'https://console.nimbalyst.com/org/org-1/project/p-1/document/doc-1?blockId=dcn-draft-1' });
+  const host = createFeedbackComposeHost({ workspacePath: '/tmp/workspace', sessionId: 'session-7', sendDocument });
+  const payload = readyPayload(draftWithSubjects([]));
+  const result = await host.send(payload);
+  expect(sendDocument).toHaveBeenCalledWith(payload, undefined);
+  expect(result.shareUrl).toContain('/document/doc-1?blockId=');
 });

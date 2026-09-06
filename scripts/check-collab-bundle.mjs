@@ -34,7 +34,9 @@ export const COLLAB_BUNDLE_EAGER_GZIP_BUDGET_BYTES = {
   canvas: 118_000,
   editor: 320_000,
   'docs-ui': 70_000,
-  'feedback-ui': 35_000,
+  // Sep 5 privacy-aware document transport graph measured 35,049 bytes.
+  // Keep a narrow allowance for the supported response/refresh contract.
+  'feedback-ui': 35_500,
   // The tracker surfaces plus the headless selectors and the in-page engine
   // they read through. Measured at 100,654 gzip bytes on first build; the
   // ceiling carries the same ~26% headroom as the shells above.

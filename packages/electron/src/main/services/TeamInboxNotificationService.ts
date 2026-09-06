@@ -47,6 +47,7 @@ const SOURCE_FALLBACKS: Record<CommentRef["sourceKind"], string> = {
   roomMessage: "Room",
   dmMessage: "Direct message",
   documentDiscussion: "Document discussion",
+  documentDecision: "Document question",
   trackerComment: "Tracker",
   documentInlineComment: "Document",
   feedbackRequest: "Feedback request",
@@ -119,6 +120,7 @@ function commentRefRoute(source: CommentRef, orgId: string): DeliveryRoute | nul
       if (source.commentId) url.searchParams.set("commentId", source.commentId);
       return { kind: "inboxSource", url: url.toString() };
     }
+    case "documentDecision":
     case "documentDiscussion":
     case "documentInlineComment": {
       if (!source.sourceId) return null;
@@ -126,6 +128,7 @@ function commentRefRoute(source: CommentRef, orgId: string): DeliveryRoute | nul
         `nimbalyst://doc/${encodeURIComponent(source.sourceId)}`
       );
       url.searchParams.set("orgId", orgId);
+      if (source.blockId) url.searchParams.set("blockId", source.blockId);
       if (source.threadId) url.searchParams.set("threadId", source.threadId);
       if (source.commentId) url.searchParams.set("commentId", source.commentId);
       return { kind: "inboxSource", url: url.toString() };
@@ -162,9 +165,10 @@ function routeForDelivery(
     `nimbalyst://${host}/${encodeURIComponent(source.resourceId)}`
   );
   url.searchParams.set("orgId", delivery.orgId);
-  if (source.sourceEventId) {
-    url.searchParams.set("commentId", source.sourceEventId);
-  }
+  if (source.blockId) url.searchParams.set("blockId", source.blockId);
+  if (source.threadId) url.searchParams.set("threadId", source.threadId);
+  const commentId = source.commentId ?? (source.blockId ? undefined : source.sourceEventId);
+  if (commentId) url.searchParams.set("commentId", commentId);
   return { kind: "inboxSource", url: url.toString() };
 }
 

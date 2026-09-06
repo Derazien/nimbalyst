@@ -73,6 +73,7 @@ const SOURCE_TYPES: Record<InboxSourceKind, InboxTypeIdentity> = {
   // Both document kinds are *documents*. A speech bubble here was the exact
   // failure this redesign exists to fix: it described the delivery's shape
   // (someone commented) instead of the thing you are about to open.
+  documentDecision: { icon: 'ballot', accent: 'var(--nim-purple)', label: 'Question' },
   documentDiscussion: { icon: 'description', accent: 'var(--nim-success)', label: 'Doc' },
   documentInlineComment: { icon: 'description', accent: 'var(--nim-success)', label: 'Doc' },
   // Shares the direct-message hue deliberately: both are addressed to you
@@ -104,6 +105,7 @@ const REDACTED_TYPE: InboxTypeIdentity = {
 export const SOURCE_KIND_LABELS: Record<InboxSourceKind, string> = {
   roomMessage: 'Rooms',
   documentDiscussion: 'Document discussions',
+  documentDecision: 'Document questions',
   dmMessage: 'Direct messages',
   trackerComment: 'Tracker comments',
   documentInlineComment: 'Inline comments',
@@ -185,6 +187,7 @@ export function openActionLabel(row: Pick<InboxRowView, 'sourceKind' | 'itemType
   switch (row.sourceKind) {
     case 'trackerComment':
       return row.itemType ? `Open ${row.itemType}` : 'Open tracker item';
+    case 'documentDecision':
     case 'documentDiscussion':
     case 'documentInlineComment':
       return 'Open document';
@@ -301,6 +304,7 @@ export function toRowView(delivery: HydratedInboxDelivery, options: { now: numbe
     sourceId: revoked ? undefined : delivery.source.sourceId,
     commentId: revoked ? undefined : delivery.source.commentId,
     threadId: revoked ? undefined : delivery.source.threadId,
+    blockId: revoked ? undefined : delivery.source.blockId,
     sourceKind,
     itemType,
     type: typeIdentity(sourceKind, { itemType, sourceTitle }),

@@ -24,6 +24,8 @@
  */
 
 import * as Y from 'yjs';
+import { DocumentDecisionClient } from './DocumentDecisionClient';
+import type { DocumentDecisionCommand, DocumentDecisionDeliveryState, DocumentDecisionAuthority, DocumentDecisionResult } from '@nimbalyst/collab-protocol';
 import type {
   DocumentSyncConfig,
   DocumentSyncMemberId,
@@ -50,29 +52,7 @@ import {
 // Base64 / Encryption Utilities
 // ============================================================================
 
-const CHUNK_SIZE = 8192;
-
-function uint8ArrayToBase64(bytes: Uint8Array): string {
-  if (bytes.length < 1024) {
-    return btoa(String.fromCharCode(...bytes));
-  }
-  let result = '';
-  for (let i = 0; i < bytes.length; i += CHUNK_SIZE) {
-    const chunk = bytes.subarray(i, Math.min(i + CHUNK_SIZE, bytes.length));
-    result += String.fromCharCode(...chunk);
-  }
-  return btoa(result);
-}
-
-function base64ToUint8Array(base64: string): Uint8Array {
-  const binary = atob(base64);
-  const buffer = new ArrayBuffer(binary.length);
-  const bytes = new Uint8Array(buffer);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes;
-}
+import { uint8ArrayToBase64, base64ToUint8Array } from './documentSyncBase64';
 
 // ============================================================================
 // DocumentSyncProvider
@@ -442,6 +422,7 @@ export class DocumentSyncProvider {
    * Disconnect from the DocumentRoom.
    */
   disconnect(): void {
+    this.decisionClient.disconnect();
     if (COLLAB_CONNECTION_DIAGNOSTICS_COMPILED) {
       emitCollabConnectionEvent(this, 'DocumentSyncProvider', 'disconnect', {
         hadSocket: Boolean(this.ws),
@@ -590,6 +571,9 @@ export class DocumentSyncProvider {
       waiter();
     });
   }
+
+  /** Synchronous close guard; only a server acknowledgement clears unsettled writes. */
+  hasPendingWrites(): boolean { return this.hasUnsettledPendingWrites() || this.decisionClient.hasPendingMutations(); }
 
   /**
    * Set room-level metadata on the server (e.g., custom TTL).
@@ -789,6 +773,15 @@ export class DocumentSyncProvider {
   // Sync Protocol
   // --------------------------------------------------------------------------
 
+  private readonly decisionClient = new DocumentDecisionClient(
+    (message) => this.send(message), () => this.isSynced(), () => this.flushWithAck(8000),
+  );
+  requestDecision(command: DocumentDecisionCommand): Promise<DocumentDecisionResult> {
+    return this.decisionClient.request(command);
+  }
+  getDecisionState = (): DocumentDecisionDeliveryState[] => this.decisionClient.getState();
+  onDecisionState = (listener: (state: DocumentDecisionDeliveryState[], authority: DocumentDecisionAuthority) => void): (() => void) => this.decisionClient.subscribe(listener);
+
   private requestSync(): void {
     this.lastSyncRequestSeq = this.lastSeq;
     this.send({ type: 'docSyncRequest', sinceSeq: this.lastSeq });
@@ -803,8 +796,15 @@ export class DocumentSyncProvider {
       const msg: DocServerMessage = JSON.parse(data);
 
       switch (msg.type) {
+        case 'docDecisionChanged':
+          this.decisionClient.invalidate();
+          break;
+        case 'docDecisionState':
+          this.decisionClient.receive(msg);
+          break;
         case 'docSyncResponse':
           await this.handleSyncResponse(msg);
+          if (!msg.hasMore) this.decisionClient.refreshSubscribers();
           break;
         case 'docUpdateBroadcast':
           await this.handleUpdateBroadcast(msg);
@@ -1571,6 +1571,7 @@ export class DocumentSyncProvider {
   }
 
   private handleDisconnect(): void {
+    this.decisionClient.disconnect();
     const shouldReconnect = !this.suppressReconnect;
     if (COLLAB_CONNECTION_DIAGNOSTICS_COMPILED) {
       emitCollabConnectionEvent(this, 'DocumentSyncProvider', 'socket-detach', {

@@ -173,6 +173,7 @@ export const FeedbackRequestComposeWidget: React.FC<CustomToolWidgetProps> = ({
             sentAt: Date.now(),
             ...(result.requestId ? { requestId: result.requestId } : {}),
             ...(result.shareUrl ? { shareUrl: result.shareUrl } : {}),
+            ...(result.warning ? { warning: result.warning } : {}),
           });
         } else {
           setSendError(result.error ?? 'The request could not be sent.');
@@ -265,9 +266,7 @@ export const FeedbackRequestComposeWidget: React.FC<CustomToolWidgetProps> = ({
           <div className="text-xs text-nim-muted leading-relaxed select-text">
             {draft.asks.map((ask) => ask.description || ask.label).join(' · ')}
           </div>
-          {/* The link is the delivery. Someone without the desktop app is
-              notified by nothing else, so the copy action sits on the
-              confirmation itself rather than behind a menu. */}
+          {sent.warning && <div role="status" className="text-xs text-nim-muted">{sent.warning}</div>}
           {shareUrl && (
             <div
               className="feedback-compose-share flex flex-wrap items-center gap-2"
@@ -286,7 +285,7 @@ export const FeedbackRequestComposeWidget: React.FC<CustomToolWidgetProps> = ({
             </div>
           )}
           <div className="text-[0.6875rem] text-nim-faint">
-            This session is idle. It resumes by itself when replies arrive.
+            This session resumes when the questions reach quorum or are settled.
           </div>
         </InteractiveWidgetBody>
       </InteractiveWidgetCard>
@@ -329,8 +328,8 @@ export const FeedbackRequestComposeWidget: React.FC<CustomToolWidgetProps> = ({
           : pendingPublish.length > 0
             ? 'Sending publishes the unshared subjects to your team.'
             : draft.subjects.length > 0
-              ? `Nothing gets published — ${joinNames(recipientNames)} can already see this.`
-              : 'Your session ends this turn and wakes when replies arrive.';
+              ? 'Sending saves the questions in the shared document and notifies the selected teammates.'
+              : 'Sending creates a shared decision document. Your session continues when enough answers arrive or a person settles it.';
 
   const showDelivery = tier === 'full' || draft.settingsExpanded;
 
@@ -354,6 +353,11 @@ export const FeedbackRequestComposeWidget: React.FC<CustomToolWidgetProps> = ({
       />
 
       <InteractiveWidgetBody>
+        <div className="feedback-compose-document-host text-xs text-nim-muted mb-3">
+          {draft.hostDocumentId
+            ? `Document: ${draft.subjects.find((subject) => subject.ref.sourceId === draft.hostDocumentId)?.label ?? draft.hostDocumentId}`
+            : 'Document: new shared decision document'}
+        </div>
         {/* Subject — Tier 2 only; a one-person quick ask does not need a
             subject row, and showing one implies ceremony the ask lacks. */}
         {tier === 'full' && draft.subjects.length > 0 && (

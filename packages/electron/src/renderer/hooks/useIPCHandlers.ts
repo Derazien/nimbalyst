@@ -1,3 +1,4 @@
+import { registerCollabDocumentReadHandler } from './registerCollabDocumentReadHandler';
 import { useEffect, useRef } from 'react';
 import { useAtomValue } from 'jotai';
 import type { LexicalCommand, TextReplacement } from '@nimbalyst/runtime';
@@ -50,7 +51,7 @@ import { openEditorFind } from '../components/TabEditor/editorFindCommand';
 import { dispatchTrackerFocusSearch } from '@nimbalyst/collab-client/trackers-ui';
 import { acquireHeadlessCollabCommentController } from '../services/HeadlessCollabCommentController';
 import { HeadlessCollabDocumentError } from '../services/HeadlessCollabDocument';
-import { applyAgentDiff, readCollabDocForAgent } from '../services/agentDocumentAccess';
+import { applyAgentDiff } from '../services/agentDocumentAccess';
 import {
   trackDocumentAction,
   trackFolderCreated,
@@ -586,38 +587,7 @@ export function useIPCHandlers(props: UseIPCHandlersProps) {
       }));
     }
 
-    if (window.electronAPI.onMcpReadCollabDoc) {
-      cleanupFns.push(window.electronAPI.onMcpReadCollabDoc(async ({ targetFilePath, resultChannel, workspacePath: routedWorkspacePath }) => {
-        try {
-          if (!targetFilePath || !isCollabUri(targetFilePath)) {
-            window.electronAPI.sendMcpReadCollabDocResult(resultChannel, {
-              success: false,
-              error: `readCollabDoc requires a collab:// URI. Got: ${targetFilePath ?? '(missing)'}`,
-            });
-            return;
-          }
-
-          // Reachable whether or not anyone has it open -- a shared document
-          // lives on the server, not in a tab (NIM-3754).
-          const { content } = await readCollabDocForAgent(
-            targetFilePath,
-            routedWorkspacePath ?? propsRef.current.workspacePath,
-          );
-          window.electronAPI.sendMcpReadCollabDocResult(resultChannel, {
-            success: true,
-            content,
-          });
-        } catch (error) {
-          window.electronAPI.sendMcpReadCollabDocResult(resultChannel, {
-            success: false,
-            ...(error instanceof HeadlessCollabDocumentError
-              ? { code: error.code }
-              : {}),
-            error: error instanceof Error ? error.message : 'Unknown error reading collab doc',
-          });
-        }
-      }));
-    }
+    cleanupFns.push(registerCollabDocumentReadHandler(() => propsRef.current.workspacePath));
 
     const handleCollabDocComment = async ({
       operation,

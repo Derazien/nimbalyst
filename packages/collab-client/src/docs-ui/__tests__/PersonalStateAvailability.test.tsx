@@ -49,7 +49,7 @@ const documents: SharedDocument[] = [
   },
 ];
 
-function createSurface(personalState: boolean, readReceipts: boolean) {
+function createSurface(personalState: boolean, readReceipts: boolean, hostOverrides: Partial<CollabHost> = {}) {
   const documentTypes = [] as const;
   const host = {
     surface: personalState ? 'desktop' : 'web_console',
@@ -62,6 +62,7 @@ function createSurface(personalState: boolean, readReceipts: boolean) {
       { memberId: 'member-other', email: 'other@example.test', name: 'Other' },
     ],
     openArtifact: vi.fn(),
+    ...hostOverrides,
   } as unknown as CollabHost;
   const unreadByDocument = new Map(documents.map((document) => [
     document.documentId,
@@ -96,7 +97,7 @@ function createSurface(personalState: boolean, readReceipts: boolean) {
     markDocumentViewed: vi.fn(),
   } as unknown as CollabDocsSession;
 
-  return render(
+  const view = render(
     <Provider store={createStore()}>
       <CollabDocsUIProvider session={session}>
         <CollabSidebar />
@@ -104,6 +105,7 @@ function createSurface(personalState: boolean, readReceipts: boolean) {
       </CollabDocsUIProvider>
     </Provider>,
   );
+  return { ...view, session, host };
 }
 
 afterEach(cleanup);
@@ -155,4 +157,23 @@ describe('personal UI capability availability', () => {
     expect(browser.queryByText('Re-upload From Local')).toBeNull();
     expect(browser.queryByText(/Link Local Source/)).toBeNull();
   });
+});
+
+// Propagation alone does not cancel an anchor's native navigation.
+it.each(['Favorite', 'Unfavorite'])('cancels native document navigation when clicking %s in the browser sidebar', (label) => {
+  const browser = createSurface(true, false, {
+    surface: 'web_console',
+    artifactUrl: (ref) => `/org/test/project/test/document/${ref.kind === 'document' ? ref.documentId : ''}`,
+  });
+  const star = browser.container.querySelector(`.collab-fav-star[aria-label="${label}"]`)!;
+  const link = star.closest('a')!;
+  expect(link.target).toBe('_blank');
+  const click = new MouseEvent('click', { bubbles: true, cancelable: true });
+  const dispatched = fireEvent(star, click);
+  expect(browser.session.toggleFavorite).toHaveBeenCalledExactlyOnceWith(label === 'Favorite' ? 'doc-newer' : 'doc-older');
+  expect(browser.host.openArtifact).not.toHaveBeenCalled();
+  expect(click.defaultPrevented).toBe(true);
+  expect(dispatched).toBe(false);
+  // Clicking the document itself must still allow the native new-tab action.
+  expect(fireEvent.click(link)).toBe(true);
 });

@@ -154,6 +154,8 @@ import {QuoteDiffHandler} from '../handlers/QuoteDiffHandler';
 import {TableDiffHandler} from '../handlers/TableDiffHandler';
 import {CodeBlockDiffHandler} from '../handlers/CodeBlockDiffHandler';
 import {MermaidDiffHandler} from '../handlers/MermaidDiffHandler';
+import {DecisionDiffHandler} from '../handlers/DecisionDiffHandler';
+import {preserveCommentMarks} from './preserveCommentMarks';
 import {NodeStructureValidator} from './NodeStructureValidator';
 import {applyParsedDiffToMarkdown} from './standardDiffFormat';
 import {
@@ -182,6 +184,7 @@ export function initializeHandlers() {
   diffHandlerRegistry.register(new TableDiffHandler());
   diffHandlerRegistry.register(new CodeBlockDiffHandler());
   diffHandlerRegistry.register(new MermaidDiffHandler());
+  diffHandlerRegistry.register(new DecisionDiffHandler());
   diffHandlerRegistry.register(new ParagraphDiffHandler());
   diffHandlerRegistry.register(new QuoteDiffHandler());
   diffHandlerRegistry.register(new HeadingDiffHandler());
@@ -1073,6 +1076,8 @@ export function applyMarkdownDiffToDocument(
       if ($editorHasEmbeds(sourceEditor)) {
         $applyEmbedUpgradeToHeadlessEditor(targetEditor);
       }
+
+      preserveCommentMarks(sourceEditor, targetEditor);
 
 
       // DEBUG: Show what target editor contains

@@ -89,7 +89,9 @@ export const EMPTY_INBOX_PROVIDER: InboxProvider = {
  * new kind is a compile error in this function instead of a type error at some
  * call site, or worse, a row that quietly claims to be a document.
  */
-function activitySourceKind(resourceKind: ActivityRef['resourceKind']): InboxSourceKind {
+function activitySourceKind(source: ActivityRef): InboxSourceKind {
+  const { resourceKind } = source;
+  if (resourceKind === 'document' && source.eventClass.startsWith('documentDecision')) return 'documentDecision';
   switch (resourceKind) {
     case 'tracker':
       return 'trackerComment';
@@ -117,7 +119,7 @@ function mapDelivery(
     ? 'sourceId' in source ? source.sourceId : source.resourceId
     : '';
   const commentId = source
-    ? 'commentId' in source ? source.commentId : source.sourceEventId
+    ? 'resourceKind' in source ? source.commentId ?? (source.blockId ? '' : source.sourceEventId) : source.commentId
     : '';
   const preview = delivery.preview;
   return {
@@ -129,11 +131,12 @@ function mapDelivery(
       orgId: delivery.orgId,
       sourceKind: source
         ? 'resourceKind' in source
-          ? activitySourceKind(source.resourceKind)
+          ? activitySourceKind(source)
           : source.sourceKind
         : 'roomMessage',
       sourceId,
       commentId,
+      ...(source?.blockId ? { blockId: source.blockId } : {}),
       ...(
         source
         && 'threadId' in source
@@ -209,11 +212,13 @@ function deepLinkForRow(row: InboxRowView): string | null {
   if (
     row.sourceKind === 'documentInlineComment'
     || row.sourceKind === 'documentDiscussion'
+    || row.sourceKind === 'documentDecision'
   ) {
     const url = new URL(
       `nimbalyst://doc/${encodeURIComponent(row.sourceId)}`,
     );
     url.searchParams.set('orgId', row.orgId);
+    if (row.blockId) url.searchParams.set('blockId', row.blockId);
     if (row.threadId) url.searchParams.set('threadId', row.threadId);
     if (row.commentId) url.searchParams.set('commentId', row.commentId);
     return url.toString();

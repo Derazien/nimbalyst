@@ -19,6 +19,7 @@ import {
   MARKDOWN_TEST_TRANSFORMERS,
 } from "../../DiffPlugin/__tests__/utils/testConfig";
 import { $createDecisionNode, $isDecisionNode } from "../DecisionNode";
+import { readOpenDecisions } from "../DecisionOutline";
 import { $regenerateDuplicateDecisionId } from "../../../extensions/builtin/DecisionExtension";
 
 const DECISION_DOC = `Both shapes were prototyped against a 900px window.
@@ -73,6 +74,14 @@ function decisionNodeContents(editor: LexicalEditor): string[] {
 }
 
 describe("decision markdown round trip", () => {
+  it("projects unsent open blocks and removes sealed blocks from the document outline", () => {
+    const editor = createTestEditor();
+    importMarkdown(editor, DECISION_DOC);
+    expect(readOpenDecisions(editor).map(({ id }) => id)).toEqual(['dcn-7f3a2c']);
+    importMarkdown(editor, DECISION_DOC.replace('asked:', 'resolved: gutter\nresolvedBy: Greg\nresolvedAt: "2026-09-05"\nasked:'));
+    expect(readOpenDecisions(editor)).toEqual([]);
+  });
+
   it("imports the fence as a DecisionNode, not a code block", () => {
     const editor = createTestEditor();
     importMarkdown(editor, DECISION_DOC);

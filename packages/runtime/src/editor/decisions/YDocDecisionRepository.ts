@@ -1,7 +1,9 @@
 /**
- * Votes on in-document decisions, stored in the host document's Y.Doc.
+ * Public votes on in-document decisions, stored in the host document's Y.Doc.
+ * Hidden answers use the server-private decision command/projection lane;
+ * callers must never pass those answers to this shared repository.
  *
- * ## Why the Y.Doc and nothing else
+ * ## Why public votes use the Y.Doc
  *
  * The obvious design puts votes on the decision's tracker item, and it is a
  * data-loss bug. A tracker item is a plain JSON row shipped whole: the sync

@@ -55,6 +55,7 @@ type AssignmentInput = {
 };
 
 type RequestFeedbackInput = {
+  hostDocumentId?: string;
   recipients: RecipientInput[];
   asks: FeedbackAsk[];
   askArtifacts: AskArtifactInput[];
@@ -70,6 +71,7 @@ export type RequestFeedbackOutcome =
       status: 'draftReady';
       message: string;
       draft: {
+        hostDocumentId?: string;
         orgId: string;
         recipients: FeedbackRequestRecipient[];
         asks: FeedbackAsk[];
@@ -212,11 +214,13 @@ const STRUCTURED_ASK_SCHEMA = {
   required: ['type', 'id', 'label', 'description'],
 };
 
-export const REQUEST_FEEDBACK_TOOL_DESCRIPTION = `Draft a structured, fire-and-forget feedback request for one or more OTHER PEOPLE in the current workspace's organization. Use RequestFeedback when the user wants a named teammate or other org member to answer, including "ask Karl", role-split reviews, team polls, or "get some feedback" when the context means remote teammates.
+export const REQUEST_FEEDBACK_TOOL_DESCRIPTION = `Draft in-document decision questions for one or more OTHER PEOPLE in the current workspace's organization. Use RequestFeedback when the user wants a named teammate or other org member to answer, including "ask Karl", role-split reviews, team polls, or "get some feedback" when the context means remote teammates.
 
 Do not use AskUserQuestion or PromptForUserInput for a named teammate: those tools ask only the person at this session, block the agent while that local person answers, stay on this machine, and do not deliver through Messaging. Conversely, when an ambiguous instruction such as "get some feedback on these" means ask the person at this session, use AskUserQuestion or PromptForUserInput instead.
 
-RequestFeedback resolves every recipient by name or email with findOrgMembers, checks every subject with getResourceSharingStatus, validates quorum and per-recipient assignments, and returns immediately with a draft for the author to review. It does not publish a subject, create a server request, send a message, wait for a recipient, or silently fall back to asking the local user. The author must approve the compose widget before anything leaves the machine. If a person is ambiguous or absent, surface that outcome and stop. After draftReady, end the turn; replies arrive later through Messaging and wake the session separately.`;
+Supply hostDocumentId when the questions concern an existing shared markdown document, and include that document in subjects. Otherwise approval creates a new shared decision document with the same blocks. The reviewer sees the host before sending. Legacy feedback requests remain readable; this tool creates document decisions.
+
+RequestFeedback resolves every recipient by name or email with findOrgMembers, checks every subject with getResourceSharingStatus, validates quorum and per-recipient assignments, and returns immediately with question blocks and their document host for the author to review. It does not publish a subject, create a server request, send a message, wait for a recipient, or silently fall back to asking the local user. The author must approve the compose widget before anything leaves the machine. If a person is ambiguous or absent, surface that outcome and stop. After draftReady, end the turn; replies arrive later through Messaging and wake the session separately.`;
 
 export function getRequestFeedbackToolSchemas() {
   return [
@@ -226,6 +230,7 @@ export function getRequestFeedbackToolSchemas() {
       inputSchema: {
         type: 'object',
         properties: {
+          hostDocumentId: { type: 'string', description: 'The shared markdown document that will receive the questions. Include it as a document subject. Omit only when a new standalone decision document is appropriate.' },
           recipients: {
             type: 'array',
             minItems: 1,
@@ -548,6 +553,7 @@ function parseInput(args: unknown): RequestFeedbackInput {
   }
 
   return {
+    hostDocumentId: input.hostDocumentId === undefined ? undefined : requiredString(input.hostDocumentId, 'hostDocumentId'),
     recipients,
     asks,
     askArtifacts,
@@ -771,11 +777,19 @@ export async function draftRequestFeedback(
     return subjectRef(subject, sharing.orgId ?? org.orgId, org.teamProjectId, sharing.documentId);
   };
 
+  if (input.hostDocumentId && !publishable.some((subject) => {
+    const ref = resolvedRef(subject);
+    return ref.kind === 'document' && ref.sourceId === input.hostDocumentId && sharingFor(subject).teamVisible;
+  })) {
+    return { status: 'invalidDraft', message: 'The host document must be an existing shared document included in subjects.', errors: [{ code: 'invalidHostDocument', message: 'The host document must be an existing shared document included in subjects.' }] };
+  }
+
   return {
     status: 'draftReady',
     message:
       'Draft ready for author review. Nothing has been published or sent, and this call is not waiting for a recipient.',
     draft: {
+      ...(input.hostDocumentId ? { hostDocumentId: input.hostDocumentId } : {}),
       orgId: org.orgId,
       recipients,
       // Option-bound artifacts carry their own copy of the ref, so resolving

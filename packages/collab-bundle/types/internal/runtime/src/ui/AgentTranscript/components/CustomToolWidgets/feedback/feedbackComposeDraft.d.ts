@@ -73,6 +73,8 @@ export declare const FEEDBACK_DEFAULT_DESTINATION_NAME = "Feedback requests";
 /** Who counts as "enough answers to wake the session". */
 export type FeedbackComposeQuorumMode = 'first' | 'all';
 export interface FeedbackComposeDraft {
+    /** Existing shared markdown subject approved as the host; absent creates a decision document. */
+    hostDocumentId?: string;
     /** Stable id for this draft; also the draft-atom key. */
     draftId: string;
     /** The org the request will be created in. */
@@ -172,6 +174,7 @@ export type FeedbackComposeSubmitPlan = {
 export declare function feedbackComposeSubmitPlan(draft: FeedbackComposeDraft): FeedbackComposeSubmitPlan;
 export declare const FEEDBACK_COMPOSE_BLOCKED_MESSAGES: Record<FeedbackComposeBlockedReason, string>;
 export interface FeedbackComposeSendPayload {
+    hostDocumentId?: string;
     draftId: string;
     orgId: string;
     /**

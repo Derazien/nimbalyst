@@ -24,17 +24,24 @@ import { deriveCollabEditorCommentsState } from './commenting';
 import { resolveCollabEditorUser } from './presence';
 import { createCollabDocumentSession } from './session';
 import { acquireCollabAssetImageResolver } from './collabAssetImages';
+import { BrowserDocumentEmbedContext, registerBrowserDocumentEmbeds } from './documentEmbeds';
 
 import type {
   CollabEditorHandle,
   CollabEditorMountOptions,
 } from './types';
 
+/** The team member id is the voting identity; personal org ids never are. */
+export function decisionMembersFromComments(members: ReturnType<NonNullable<CollabEditorMountOptions['comments']>['getMembers']>) {
+  return members.map(({ userId, name }) => ({ id: userId, name }));
+}
+
 // Must run before any editor mounts: `@lexical/yjs` resolves node types against
 // `editor._nodes` while applying the first update, and an unregistered type
 // aborts the binding so nothing paints. A call rather than a bare import on
 // purpose — see the header of `./referenceNodes`.
 registerBrowserReferenceNodes();
+registerBrowserDocumentEmbeds();
 
 class BundleEditorErrorBoundary extends React.Component<{
   children: React.ReactNode;
@@ -160,6 +167,7 @@ export function mountCollabEditor(options: CollabEditorMountOptions): CollabEdit
     getDocument: () => sharedDocument,
     getMarkdown: () => getMarkdown(),
     getState: () => session.getState(),
+    hasPendingWrites: () => session.networkProvider?.hasPendingWrites() ?? false,
     getPresence: () => presenceSurface.getPresence(),
     setPresenceActive: (active) => { presenceSurface.setActive(active); },
     flush: (flushOptions) => session.flush(flushOptions),
@@ -240,6 +248,19 @@ export function mountCollabEditor(options: CollabEditorMountOptions): CollabEdit
           hostCanComment: hostCanComment(),
         }).capabilities,
       } : undefined,
+      decisions: {
+        renderArtifact: options.renderDecisionArtifact,
+        getYDoc: () => sharedDocument,
+        currentUser: options.comments?.currentUser ?? { id: resolvedUser.memberId, name: resolvedUser.displayName },
+        getMembers: () => decisionMembersFromComments(options.comments?.getMembers() ?? []),
+        isHydrated: () => !session.networkProvider || session.hasConnectedOnce(),
+        canVote: () => !session.getState().readOnly && (session.networkProvider ? session.canComment() : hostCanComment()),
+        ...(session.networkProvider ? {
+          requestDecision: (command) => session.networkProvider!.requestDecision(command),
+          getDecisionState: session.networkProvider.getDecisionState,
+          onDecisionState: session.networkProvider.onDecisionState,
+        } : {}),
+      },
       onDirtyChange: (dirty) => {
         if (dirty) session.markDirty();
       },
@@ -258,10 +279,12 @@ export function mountCollabEditor(options: CollabEditorMountOptions): CollabEdit
 
     root.render(
       <BundleEditorErrorBoundary onError={(error) => options.onError?.(error)}>
-        <BrowserEditorSurface
-          config={config}
-          subscribeToPresence={subscribeToPresence}
-        />
+        <BrowserDocumentEmbedContext.Provider value={options.renderDecisionArtifact}>
+          <BrowserEditorSurface
+            config={config}
+            subscribeToPresence={subscribeToPresence}
+          />
+        </BrowserDocumentEmbedContext.Provider>
       </BundleEditorErrorBoundary>,
     );
   }

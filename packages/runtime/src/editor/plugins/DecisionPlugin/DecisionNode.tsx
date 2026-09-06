@@ -83,6 +83,10 @@ export class DecisionNode extends DecoratorNode<JSX.Element> {
   createDOM(_config: EditorConfig, _editor: LexicalEditor): HTMLElement {
     const div = document.createElement('div');
     addClassNamesToElement(div, 'decision-container');
+    const id = readDecisionIdFromFence(this.__content);
+    div.id = `decision-${id}`;
+    div.dataset.decisionId = id;
+    div.style.scrollMarginTop = '80px';
     return div;
   }
 

@@ -88,6 +88,8 @@ export const FEEDBACK_DEFAULT_DESTINATION_NAME = 'Feedback requests';
 export type FeedbackComposeQuorumMode = 'first' | 'all';
 
 export interface FeedbackComposeDraft {
+  /** Existing shared markdown subject approved as the host; absent creates a decision document. */
+  hostDocumentId?: string;
   /** Stable id for this draft; also the draft-atom key. */
   draftId: string;
   /** The org the request will be created in. */
@@ -420,6 +422,7 @@ export const FEEDBACK_COMPOSE_BLOCKED_MESSAGES: Record<FeedbackComposeBlockedRea
 // ============================================================
 
 export interface FeedbackComposeSendPayload {
+  hostDocumentId?: string;
   draftId: string;
   orgId: string;
   /**
@@ -455,6 +458,7 @@ export function feedbackComposeSendPayload(
   return {
     draftId: draft.draftId,
     orgId: draft.orgId,
+    ...(draft.hostDocumentId ? { hostDocumentId: draft.hostDocumentId } : {}),
     subjects: draft.subjects.map((subject) => ({
       ref: subject.ref,
       label: subject.label,

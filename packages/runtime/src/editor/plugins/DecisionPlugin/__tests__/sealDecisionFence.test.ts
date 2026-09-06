@@ -225,3 +225,35 @@ seed: Teams can now work in the same document.`;
     ).toEqual({ ok: false, reason: "unparseable" });
   });
 });
+
+it("keeps private rating reconciliation outcome-only even after YAML switches to open", () => {
+  const rating =
+    'id: dcn-private\nask: Confidence?\ntype: rating\nvisibility: open\nresolved: Proceed\nresolvedBy: Author\nresolvedAt: "2026-09-05"\nscore: 5\ndistribution:\n  5: 1\nvotes:\n  - Person: private-note';
+  const result = reconcileDecisionFence(rating, {
+    privateMode: true,
+    outcome: "Proceed carefully",
+    resolvedBy: "Author",
+    resolvedAt: AT,
+    resolvedFrom: "private-author",
+    votes: [
+      {
+        voterId: "anonymous-1",
+        note: "private-note",
+        at: 0,
+        answer: { type: "rating", value: 5 },
+      },
+    ],
+  });
+  expect(result.ok).toBe(true);
+  if (!result.ok) return;
+  expect(result.source.sealed).toEqual({
+    resolved: "Proceed carefully",
+    resolvedBy: "Author",
+    resolvedAt: AT.toISOString(),
+    votes: [],
+  });
+  expect(result.content).not.toContain("private-note");
+  expect(result.content).not.toContain("resolvedFrom");
+  expect(result.content).not.toContain("score:");
+  expect(result.content).not.toContain("distribution:");
+});

@@ -66,6 +66,8 @@ export interface FeedbackRequestSendResult {
      * notified through no other channel.
      */
     shareUrl?: string;
+    /** A non-blocking integration limitation to show with the sent confirmation. */
+    warning?: string;
     error?: string;
 }
 export interface ExitPlanModeResponse {

@@ -61,6 +61,10 @@ export function getEditorToolSchemas(sessionId: string | undefined) {
             description:
               "The collab:// URI of the shared document to read (e.g. 'collab://org:abc:doc:xyz').",
           },
+          includeDecisionState: {
+            type: "boolean",
+            description: "Include a bounded read-only snapshot of current human answers and separate agent recommendations for extant decision blocks. Supplemental state is not editable document source; default false.",
+          },
         },
         required: ["filePath"],
       },
@@ -409,10 +413,10 @@ export async function handleReadCollabDoc(
     };
   }
 
-  const outcome = await requestFromRenderer<{ success: boolean; content?: string; error?: string }>(
+  const outcome = await requestFromRenderer<{ success: boolean; content?: string; decisionState?: unknown; error?: string }>(
     targetWindow,
     "mcp:readCollabDoc",
-    { targetFilePath, workspacePath },
+    { targetFilePath, workspacePath, ...(args?.includeDecisionState === true ? { includeDecisionState: true } : {}) },
     // Generous enough to cover a cold headless acquisition, whose own
     // hydration budget is 10s, without hanging the tool call indefinitely.
     { timeoutMs: 15000 },
@@ -430,7 +434,12 @@ export async function handleReadCollabDoc(
     };
   }
   return {
-    content: [{ type: "text", text: outcome.response.content ?? "" }],
+    content: [
+      { type: "text", text: outcome.response.content ?? "" },
+      ...(args?.includeDecisionState === true && outcome.response.decisionState !== undefined
+        ? [{ type: "text", text: `Read-only decision state (supplemental; do not write into document source). Agent recommendations are not human votes or quorum.\n${JSON.stringify(outcome.response.decisionState)}` }]
+        : []),
+    ],
     isError: false,
   };
 }

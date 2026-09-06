@@ -30,6 +30,11 @@ import Editor from './Editor';
 import { buildNimbalystRootExtension } from './extensions/NimbalystEditorExtensions';
 import { useExtensionLexicalExtensions } from './extensions/extensionLexicalExtensionsStore';
 import { getEditorTransformers } from './markdown';
+import { DecisionsProvider } from './decisions/DecisionsContext';
+import { FrontmatterProvider } from './context/FrontmatterContext';
+import { $getFrontmatter, $setFrontmatter } from './markdown/FrontmatterUtils';
+
+const frontmatterUtils = { $getFrontmatter, $setFrontmatter };
 
 export interface NimbalystEditorProps {
     config?: EditorConfig;
@@ -121,6 +126,10 @@ function NimbalystEditor({config}: NimbalystEditorProps): JSX.Element {
             data-theme={theme}
         >
             <RuntimeSettingsProvider>
+                {/* Lexical renders decorators beside the supplied children. Providers
+                    for decision blocks must wrap the composer itself. */}
+                <FrontmatterProvider value={frontmatterUtils}>
+                <DecisionsProvider config={mergedConfig.decisions}>
                 <LexicalExtensionComposer extension={rootExtension} contentEditable={null}>
                     <LexicalCollaboration>
                         <SharedHistoryContext>
@@ -134,6 +143,8 @@ function NimbalystEditor({config}: NimbalystEditorProps): JSX.Element {
                         </SharedHistoryContext>
                     </LexicalCollaboration>
                 </LexicalExtensionComposer>
+                </DecisionsProvider>
+                </FrontmatterProvider>
             </RuntimeSettingsProvider>
         </div>
     );
