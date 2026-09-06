@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Project Graph keeps loaded data visible instead of repeatedly flashing a blank loading view during startup.
 - Simple document questions and their selection outlines stay at a readable width on wide screens, with controls that wrap on narrow screens.
 - Project Graph keeps loaded data visible instead of repeatedly flashing a blank loading view during startup.
 - Embedded mockups repaint after their frame is attached or moved, preventing intermittent blank previews without resetting interactions on ordinary load events.

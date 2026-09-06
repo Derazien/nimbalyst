@@ -419,24 +419,24 @@ export class ProjectIndex {
     // new state; a partial refresh starts from the committed slices so
     // untouched sources are carried over unchanged.
     const staging = new Map(opts.reset ? [] : this.#slices);
-    // A COPY, always. `progress` is mutated in place as the run advances, so
-    // publishing the live object would rewrite the progress of every state a
-    // subscriber is still holding.
-    this.#publishIf(signal, generation, this.#composeState('loading', { ...progress }));
+    // First-load progress must keep the same staged records as page publishes;
+    // refreshes keep the committed snapshot. Always copy the mutable progress.
+    const visibleSlices = this.#hasCommitted ? this.#slices : staging;
+    this.#publishIf(signal, generation, this.#composeState('loading', { ...progress }, visibleSlices));
 
     try {
       for (const source of active) {
         signal.throwIfCancelled();
         progress.activeSourceId = source.id;
         progress.phase = 'counting';
-        this.#publishIf(signal, generation, this.#composeState('loading', { ...progress, updatedAt: Date.now() }));
+        this.#publishIf(signal, generation, this.#composeState('loading', { ...progress, updatedAt: Date.now() }, visibleSlices));
 
         const slice = await this.#indexSource(source, signal, generation, progress, staging);
         staging.set(source.id, slice);
         this.#touchSlices(staging);
         progress.completedSources += 1;
         progress.phase = 'indexing';
-        this.#publishIf(signal, generation, this.#composeState('loading', { ...progress, updatedAt: Date.now() }));
+        this.#publishIf(signal, generation, this.#composeState('loading', { ...progress, updatedAt: Date.now() }, visibleSlices));
       }
 
       signal.throwIfCancelled();

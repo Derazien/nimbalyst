@@ -846,21 +846,20 @@ describe('timing and paint ordering', () => {
     expect(order.at(-1)).toBe('github');
   });
 
-  it('only reaches ready once, at the end, so the shell can build geometry on it', async () => {
+  it('retains progressive records across source transitions and reaches ready only at the end', async () => {
     const { index } = makeIndex([
       fakeSource({ id: 'trackers', ids: ids(250) }),
       fakeSource({ id: 'docs', prefix: 'doc:', ids: ids(3, 'd') }),
     ]);
-    const statuses: string[] = [];
-    index.subscribe(s => statuses.push(s.status));
-
+    const seen: ProjectIndexState[] = [];
+    index.subscribe(s => seen.push(s));
     await index.load();
-
-    // Intermediate publishes are all `loading`. An area registry built on a
-    // mid-load state would be rebuilt, and the geometry would shift.
-    expect(statuses.filter(s => s === 'ready')).toHaveLength(1);
-    expect(statuses.at(-1)).toBe('ready');
-    expect(index.getState().progress.phase).toBe('done');
+    expect(seen.filter(s => s.status === 'ready')).toHaveLength(1);
+    expect(seen.at(-1)?.status).toBe('ready');
+    expect(seen.at(-1)?.records).toHaveLength(253);
+    // Every publish feeds the view, including counting ticks between sources.
+    for (let i = 1; i < seen.length; i += 1)
+      expect(seen[i]!.records.map(r => r.id)).toEqual(expect.arrayContaining(seen[i - 1]!.records.map(r => r.id)));
   });
 });
 
