@@ -80,6 +80,108 @@ describe('queuedPromptDispatcher', () => {
     expect(processingSet.has('session-1')).toBe(false);
   });
 
+  describe('agent-authored coalescing', () => {
+    const agentPrompt = (id: string, prompt: string): ClaimedQueuedPrompt => ({
+      id,
+      prompt,
+      attachments: null,
+      documentContext: {
+        promptProvenance: { actor: 'agent', origin: 'child-session-update' },
+      } as any,
+    });
+
+    const humanPrompt = (id: string, prompt: string): ClaimedQueuedPrompt => ({
+      id,
+      prompt,
+      attachments: null,
+      documentContext: {
+        promptProvenance: { actor: 'human', origin: 'composer' },
+      } as any,
+    });
+
+    async function drain(pending: ClaimedQueuedPrompt[]) {
+      vi.useFakeTimers();
+      const completed: string[] = [];
+      const sent: string[] = [];
+
+      const queueStore: QueuedPromptStoreLike = {
+        listPending: vi.fn(async () => pending),
+        claim: vi.fn(async (id: string) => pending.find((p) => p.id === id) ?? null),
+        complete: vi.fn(async (id: string) => {
+          completed.push(id);
+        }),
+        fail: vi.fn(async () => {}),
+      };
+
+      const targetWindow = {
+        isDestroyed: () => false,
+        webContents: { send: vi.fn(), mainFrame: {} },
+      } as unknown as Electron.BrowserWindow;
+
+      await tryClaimAndDispatchNextQueuedPrompt({
+        continueQueuedPromptChain: vi.fn(async () => {}),
+        logError: vi.fn(),
+        logInfo: vi.fn(),
+        onPromptClaimed: () => {},
+        processingSet: new SessionProcessingGuard(),
+        queueStore,
+        sendMessageHandler: vi.fn(async (_e, message: string) => {
+          sent.push(message);
+          return { content: 'ok' };
+        }),
+        sessionId: 'session-1',
+        source: 'test queue',
+        startSession: vi.fn(async () => {}),
+        targetWindow,
+        workspacePath: '/workspace/project',
+      });
+
+      await vi.runAllTimersAsync();
+      return { completed, sent };
+    }
+
+    // The orchestration bottleneck: N children reporting cost the parent N
+    // turns, because the drain took pendingPrompts[0] and nothing else.
+    it('merges a run of agent-authored prompts into one turn and completes every row', async () => {
+      const { completed, sent } = await drain([
+        agentPrompt('a', 'first report'),
+        agentPrompt('b', 'second report'),
+        agentPrompt('c', 'third report'),
+      ]);
+
+      expect(sent).toHaveLength(1);
+      expect(sent[0]).toContain('first report');
+      expect(sent[0]).toContain('second report');
+      expect(sent[0]).toContain('third report');
+      expect([...completed].sort()).toEqual(['a', 'b', 'c']);
+    });
+
+    // A human message is a hard boundary: it must never be silently folded in
+    // with agent chatter, and nothing behind it may be pulled forward.
+    it('stops the run at a human-authored prompt', async () => {
+      const { completed, sent } = await drain([
+        agentPrompt('a', 'agent one'),
+        humanPrompt('h', 'stop and do this instead'),
+        agentPrompt('c', 'agent two'),
+      ]);
+
+      expect(sent).toHaveLength(1);
+      expect(sent[0]).toBe('agent one');
+      expect(sent[0]).not.toContain('stop and do this instead');
+      expect(completed).toEqual(['a']);
+    });
+
+    it('leaves a human-authored head as its own turn', async () => {
+      const { completed, sent } = await drain([
+        humanPrompt('h', 'do the thing'),
+        agentPrompt('a', 'agent report'),
+      ]);
+
+      expect(sent).toEqual(['do the thing']);
+      expect(completed).toEqual(['h']);
+    });
+  });
+
   it('fires onChainSettled when no follow-on prompt is dispatched', async () => {
     vi.useFakeTimers();
 

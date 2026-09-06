@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 <!-- Bug fixes go here -->
 - iPhone and iPad share one adaptive layout that preserves the active session and draft through rotation, with a session sidebar on wide screens.
 - Project and session lists show loading until sync finishes instead of prematurely reporting that they are empty.
+- Sessions that orchestrate other sessions keep up with them: messages that arrive while the session is busy are now delivered together, and a repeated update from the same child session replaces the earlier one instead of stacking up.
 
 ### Removed
 <!-- Removed features go here -->

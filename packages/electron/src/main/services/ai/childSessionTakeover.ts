@@ -1,6 +1,6 @@
 import type { SessionData } from '@nimbalyst/runtime/ai/server/types';
 import { AISessionsRepository } from '@nimbalyst/runtime';
-import { database as databaseWorker } from '../../database/PGLiteDatabaseWorker';
+import { deletePendingChildUpdates } from './pendingChildUpdates';
 
 export async function disableParentNotificationsAfterDirectTakeover(session: SessionData): Promise<void> {
   if (!session.createdBySessionId) {
@@ -19,12 +19,5 @@ export async function disableParentNotificationsAfterDirectTakeover(session: Ses
     },
   });
 
-  await databaseWorker.query(
-    `DELETE FROM queued_prompts
-     WHERE session_id = $1
-       AND status = 'pending'
-       AND prompt LIKE '[Child Session Update]%'
-       AND prompt LIKE $2`,
-    [session.createdBySessionId, `%(${session.id})%`]
-  );
+  await deletePendingChildUpdates(session.createdBySessionId, session.id);
 }
