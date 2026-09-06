@@ -1,0 +1,36 @@
+.media-viewer-editor {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--nim-bg-secondary, #1a1a1a);
+}
+
+/*
+ * Fill the pane, letterboxing rather than cropping or stretching -- a video's
+ * aspect ratio is content. `contain` on a full-size box (rather than
+ * max-width/max-height on an intrinsically-sized one) is what lets a
+ * small-resolution clip scale up to the tab instead of sitting tiny in the
+ * middle of it.
+ */
+.media-viewer-video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  outline: none;
+}
+
+.media-viewer-unavailable {
+  flex-direction: column;
+  gap: 4px;
+  color: var(--nim-text-muted, #9a9a9a);
+  text-align: center;
+  user-select: text;
+}
+
+.media-viewer-detail {
+  font-size: 12px;
+  opacity: 0.75;
+}

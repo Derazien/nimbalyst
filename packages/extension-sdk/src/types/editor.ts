@@ -262,6 +262,8 @@ export type EditorHostCapability =
   | 'history'
   /** `openExternal` opens a URL outside the app. */
   | 'externalLinks'
+  /** `getAssetUrl` returns a URL the renderer can load the document from. */
+  | 'assetUrls'
   /** Source-mode toggle (`toggleSourceMode` and friends). */
   | 'sourceMode'
   /** AI diff review (`onDiffRequested` and friends). */
@@ -649,6 +651,30 @@ export interface EditorHost {
    * boundary; custom editors must not navigate the renderer directly.
    */
   openExternal?(url: string): Promise<void>;
+
+  /**
+   * A URL the renderer can load this document from directly, for editors whose
+   * element wants to fetch the bytes itself rather than be handed them.
+   *
+   * `loadBinaryContent` is the right call for a format you parse in full -- a
+   * PDF, a spreadsheet. It is the wrong call for anything streamed: a `<video>`
+   * pointed at a blob built from a whole-file ArrayBuffer pulls a multi-gigabyte
+   * screen recording through IPC and into renderer memory before the first frame
+   * paints. Handing the element a URL instead lets the host serve byte ranges,
+   * so playback starts immediately and seeking costs one range request.
+   *
+   * The returned URL is same-origin to the renderer and readable only by this
+   * app; it is not a `file://` path and must not be treated as one. Hosts that
+   * have no such URL to give -- read-only, embedded, and offscreen hosts, and
+   * any document not backed by a local file -- omit this method.
+   *
+   * @example
+   * ```tsx
+   * const src = host.getAssetUrl?.();
+   * return src ? <video src={src} controls /> : <p>Preview unavailable.</p>;
+   * ```
+   */
+  getAssetUrl?(): string | null;
 
   // ============ DIFF MODE (OPTIONAL) ============
 

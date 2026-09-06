@@ -17,6 +17,7 @@ import type {
 } from '@nimbalyst/runtime';
 import { createEditorAPIOwnerToken, registerEditorAPI, unregisterEditorAPI } from '@nimbalyst/runtime';
 import { normalizeExternalHttpsUrl } from './externalUrl';
+import { nimAssetUrl } from '../../utils/assetUrl';
 
 export interface EditorHostOptions {
   /** Absolute path to the file being edited */
@@ -203,6 +204,15 @@ export function createEditorHost(options: EditorHostOptions): EditorHost {
           await options.openExternal!(normalizeExternalHttpsUrl(url));
         }
       : undefined,
+
+    // ============ ASSET URL ============
+    // Virtual tabs have no file behind them, so there is nothing to serve.
+    // `nim-asset://` itself re-validates the path against the allowlisted
+    // roots, so minting a URL here grants no access on its own.
+    getAssetUrl(): string | null {
+      if (options.filePath.startsWith('virtual://')) return null;
+      return nimAssetUrl(options.filePath);
+    },
 
     // ============ DIFF MODE (OPTIONAL) ============
     onDiffRequested: options.subscribeToDiffRequests

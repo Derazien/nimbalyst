@@ -99,9 +99,10 @@ interface QuickOpenFileNameSearchOptions {
 // Binary file extensions to exclude from QuickOpen results
 // Note: Images are NOT excluded - Nimbalyst can display them
 // Note: PDFs are NOT excluded - extensions may add support
+// Note: .mp4 is NOT excluded - the media viewer extension opens it
 const BINARY_EXTENSIONS = new Set([
     // Audio/Video
-    '.mp3', '.mp4', '.avi', '.mov', '.wmv', '.flac', '.wav', '.ogg', '.webm', '.mkv',
+    '.mp3', '.avi', '.mov', '.wmv', '.flac', '.wav', '.ogg', '.webm', '.mkv',
     // Archives
     '.zip', '.tar', '.gz', '.rar', '.7z', '.bz2', '.xz',
     // Binaries/Libraries

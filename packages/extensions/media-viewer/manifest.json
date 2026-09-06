@@ -1,0 +1,39 @@
+{
+  "id": "com.nimbalyst.media-viewer",
+  "name": "Media Viewer",
+  "version": "1.0.0",
+  "description": "Play video files directly in Nimbalyst",
+  "author": "Nimbalyst Team",
+  "main": "dist/index.mjs",
+  "styles": "dist/style.css",
+  "apiVersion": "1.0.0",
+  "marketplace": {
+    "categories": ["data"],
+    "tags": ["video", "media", "player", "mp4"],
+    "icon": "movie",
+    "tagline": "Play video files directly in the editor",
+    "longDescription": "Open an mp4 in a tab and watch it without leaving Nimbalyst. Video streams from disk as you scrub, so a long screen recording opens as fast as a short one.",
+    "highlights": [
+      "Play mp4 files in a tab, with scrubbing and playback controls",
+      "Streams from disk instead of loading the whole file into memory",
+      "Keeps your workspace context while you watch"
+    ],
+    "fileTypes": [".mp4"]
+  },
+  "permissions": {
+    "filesystem": true
+  },
+  "contributions": {
+    "customEditors": [
+      {
+        "filePatterns": ["*.mp4"],
+        "displayName": "Media Viewer",
+        "component": "MediaViewerEditor",
+        "supportsDiffMode": false
+      }
+    ],
+    "fileIcons": {
+      "*.mp4": "movie"
+    }
+  }
+}

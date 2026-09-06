@@ -21,7 +21,9 @@
  * workspaces are registered/unregistered.
  */
 import { protocol, app, net } from "electron";
-import { realpath } from "fs/promises";
+import { realpath, stat } from "fs/promises";
+import { createReadStream } from "fs";
+import { Readable } from "stream";
 import { resolve, sep, extname } from "path";
 import { pathToFileURL } from "url";
 
@@ -37,6 +39,31 @@ const IMAGE_EXTENSIONS = new Set<string>([
   ".svg",
   ".bmp",
   ".ico",
+]);
+
+/**
+ * Media types served with byte-range support (see `parseRangeHeader`).
+ *
+ * Video is not just "an image that moves" as far as this handler is concerned.
+ * Chromium's media loader reads an mp4's `moov` atom before it can report
+ * duration, and `ffmpeg` only writes `moov` up front when asked for
+ * `+faststart` -- screen recorders and cameras generally do not, so `moov`
+ * lands after the payload. Serving the file as one sequential 200 response
+ * means the media element never reaches `moov` and fails outright with
+ * `MEDIA_ELEMENT_ERROR` code 4. A file that *does* start with `moov` loads,
+ * but then seeks silently resolve to 0: the `seeked` event fires as though it
+ * worked and `currentTime` never leaves the start.
+ */
+const MEDIA_EXTENSIONS = new Set<string>([".mp4"]);
+
+const MEDIA_CONTENT_TYPES: Record<string, string> = {
+  ".mp4": "video/mp4",
+};
+
+/** Extensions this scheme will serve at all. */
+const SERVABLE_EXTENSIONS = new Set<string>([
+  ...IMAGE_EXTENSIONS,
+  ...MEDIA_EXTENSIONS,
 ]);
 
 const allowedRoots = new Set<string>();
@@ -88,7 +115,7 @@ export function encodeNimAssetUrl(absolutePath: string): string {
  * Rejects with `null` if:
  *   - `requestedAbsPath` is empty / not absolute / contains null bytes
  *   - resolved path escapes every allowed root
- *   - file extension is not in the image allowlist
+ *   - file extension is not in the servable allowlist
  *
  * Returns the resolved (but NOT yet realpath'd) absolute path on success.
  * Realpath checking is async and happens in the request handler.
@@ -111,7 +138,7 @@ export function validateNimAssetPath(
   const resolved = resolve(requestedAbsPath);
 
   const ext = extname(resolved).toLowerCase();
-  if (!IMAGE_EXTENSIONS.has(ext)) return null;
+  if (!SERVABLE_EXTENSIONS.has(ext)) return null;
 
   let matched = false;
   for (const root of roots) {
@@ -124,6 +151,71 @@ export function validateNimAssetPath(
   if (!matched) return null;
 
   return resolved;
+}
+
+/** An inclusive byte range, as `Content-Range` reports it. */
+export interface ByteRange {
+  start: number;
+  end: number;
+}
+
+/**
+ * Parse a single-range HTTP `Range` header against a known file size.
+ *
+ * Pure so the interesting cases are testable without an Electron process --
+ * this branch only ever runs behind a real `protocol.handle`, which is exactly
+ * the shape of code that never gets exercised under observation.
+ *
+ * Returns:
+ *   - `null` when there is no range to honor (absent, non-`bytes`, malformed,
+ *     or multi-range). The caller serves a normal 200.
+ *   - `"unsatisfiable"` when the range is well-formed but outside the file.
+ *     The caller must answer 416, not 200 -- a media element treats a 200 here
+ *     as a redelivered stream and mis-seeks.
+ *   - a clamped inclusive `{ start, end }` otherwise.
+ *
+ * Multi-range (`bytes=0-9,20-29`) is deliberately declined rather than
+ * half-honored: a multipart/byteranges response is a different body format,
+ * and Chromium's media loader never asks for one.
+ */
+export function parseRangeHeader(
+  header: string | null | undefined,
+  size: number,
+): ByteRange | "unsatisfiable" | null {
+  if (!header) return null;
+
+  const match = /^bytes=(.*)$/i.exec(header.trim());
+  if (!match) return null;
+
+  const spec = match[1].trim();
+  if (!spec || spec.includes(",")) return null;
+
+  const parts = /^(\d*)-(\d*)$/.exec(spec);
+  if (!parts) return null;
+
+  const [, rawStart, rawEnd] = parts;
+  if (!rawStart && !rawEnd) return null;
+
+  // An empty file cannot satisfy any range, including a suffix range.
+  if (size <= 0) return "unsatisfiable";
+
+  let start: number;
+  let end: number;
+
+  if (!rawStart) {
+    // Suffix form `bytes=-N`: the last N bytes. `bytes=-0` asks for nothing.
+    const suffixLength = Number(rawEnd);
+    if (suffixLength <= 0) return "unsatisfiable";
+    start = Math.max(0, size - suffixLength);
+    end = size - 1;
+  } else {
+    start = Number(rawStart);
+    if (start >= size) return "unsatisfiable";
+    end = rawEnd ? Math.min(Number(rawEnd), size - 1) : size - 1;
+    if (end < start) return "unsatisfiable";
+  }
+
+  return { start, end };
 }
 
 /**
@@ -147,6 +239,61 @@ export function registerNimAssetSchemeAsPrivileged(): void {
       },
     },
   ]);
+}
+
+/**
+ * Stream a media file, honoring `Range`. `net.fetch` on a `file://` URL does
+ * not answer range requests, so media is read here instead: the range is
+ * parsed against the real size and only the requested slice is streamed, which
+ * is what lets a media element reach a trailing `moov` atom and seek.
+ */
+async function serveMediaWithRange(
+  absolutePath: string,
+  ext: string,
+  rangeHeader: string | null,
+): Promise<Response> {
+  const contentType = MEDIA_CONTENT_TYPES[ext] ?? "application/octet-stream";
+
+  const { size } = await stat(absolutePath);
+  const range = parseRangeHeader(rangeHeader, size);
+
+  if (range === "unsatisfiable") {
+    return new Response(null, {
+      status: 416,
+      headers: {
+        "Content-Range": `bytes */${size}`,
+        "Accept-Ranges": "bytes",
+      },
+    });
+  }
+
+  const { start, end } = range ?? { start: 0, end: Math.max(0, size - 1) };
+  const body = Readable.toWeb(
+    createReadStream(absolutePath, { start, end }),
+  ) as ReadableStream<Uint8Array>;
+
+  if (!range) {
+    return new Response(body, {
+      status: 200,
+      headers: {
+        "Content-Type": contentType,
+        "Content-Length": String(size),
+        // Advertised even on the full response so the media element knows it
+        // may seek at all -- without it Chromium will not issue a range request.
+        "Accept-Ranges": "bytes",
+      },
+    });
+  }
+
+  return new Response(body, {
+    status: 206,
+    headers: {
+      "Content-Type": contentType,
+      "Content-Length": String(end - start + 1),
+      "Content-Range": `bytes ${start}-${end}/${size}`,
+      "Accept-Ranges": "bytes",
+    },
+  });
 }
 
 /**
@@ -204,6 +351,11 @@ export function registerNimAssetProtocolHandler(): void {
       }
       if (!realInsideRoot) {
         return new Response("Forbidden", { status: 403 });
+      }
+
+      const ext = extname(real).toLowerCase();
+      if (MEDIA_EXTENSIONS.has(ext)) {
+        return serveMediaWithRange(real, ext, request.headers.get("range"));
       }
 
       // Hand the read off to net.fetch on the file:// URL. This streams the

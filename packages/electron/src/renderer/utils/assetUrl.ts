@@ -5,7 +5,8 @@
  * can run with `webSecurity: true`. The main-process protocol handler
  * (`packages/electron/src/main/protocols/nimAssetProtocol.ts`) decodes the
  * encoded absolute path, validates it against an allowlist of root prefixes,
- * checks the file extension is in the image allowlist, and serves the file.
+ * checks the file extension is in the servable allowlist (images, plus media
+ * served with byte-range support), and serves the file.
  *
  * URL shape: `nim-asset://local/<base64url-of-absolute-path>`.
  *

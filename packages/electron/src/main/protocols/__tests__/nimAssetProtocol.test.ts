@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { sep } from "path";
 import {
   encodeNimAssetUrl,
+  parseRangeHeader,
   validateNimAssetPath,
   NIM_ASSET_SCHEME,
   NIM_ASSET_HOST,
@@ -103,6 +104,55 @@ describe("nimAssetProtocol", () => {
       // root has an image extension, it passes. Realistic roots are
       // directories so this never triggers in production.
       expect(validateNimAssetPath(`${ROOT}.png`, [`${ROOT}.png`])).toBe(`${ROOT}.png`);
+    });
+
+    it("serves .mp4 so video can be opened, but still rejects other binaries", () => {
+      expect(validateNimAssetPath(`${ROOT}/clip.mp4`, [ROOT])).toBe(`${ROOT}/clip.mp4`);
+      expect(validateNimAssetPath(`${ROOT}/archive.zip`, [ROOT])).toBeNull();
+      expect(validateNimAssetPath(`${ROOT}/secrets.env`, [ROOT])).toBeNull();
+    });
+  });
+
+  describe("parseRangeHeader", () => {
+    const SIZE = 1000;
+
+    it("declines when there is no single byte range to honor", () => {
+      // Each of these must fall through to a normal 200, not a 206.
+      expect(parseRangeHeader(null, SIZE)).toBeNull();
+      expect(parseRangeHeader("", SIZE)).toBeNull();
+      expect(parseRangeHeader("items=0-99", SIZE)).toBeNull();
+      expect(parseRangeHeader("bytes=abc", SIZE)).toBeNull();
+      expect(parseRangeHeader("bytes=-", SIZE)).toBeNull();
+      // Multi-range needs a multipart body we do not produce.
+      expect(parseRangeHeader("bytes=0-9,20-29", SIZE)).toBeNull();
+    });
+
+    it("parses an explicit range and clamps the end to the last byte", () => {
+      expect(parseRangeHeader("bytes=0-99", SIZE)).toEqual({ start: 0, end: 99 });
+      expect(parseRangeHeader("bytes=500-499999", SIZE)).toEqual({ start: 500, end: 999 });
+    });
+
+    it("treats an open-ended range as running to the end of the file", () => {
+      // Chromium's media loader opens with exactly this.
+      expect(parseRangeHeader("bytes=0-", SIZE)).toEqual({ start: 0, end: 999 });
+      expect(parseRangeHeader("bytes=900-", SIZE)).toEqual({ start: 900, end: 999 });
+    });
+
+    it("reads a suffix range from the end of the file", () => {
+      // This is the request that reaches a trailing mp4 `moov` atom; getting it
+      // wrong is the difference between a video opening and failing outright.
+      expect(parseRangeHeader("bytes=-100", SIZE)).toEqual({ start: 900, end: 999 });
+      // A suffix longer than the file is the whole file, not a negative start.
+      expect(parseRangeHeader("bytes=-5000", SIZE)).toEqual({ start: 0, end: 999 });
+    });
+
+    it("reports unsatisfiable rather than falling back to a 200", () => {
+      // A 200 here reads to the media element as a redelivered stream and
+      // makes it mis-seek, so these must stay distinguishable from `null`.
+      expect(parseRangeHeader("bytes=1000-", SIZE)).toBe("unsatisfiable");
+      expect(parseRangeHeader("bytes=1500-1600", SIZE)).toBe("unsatisfiable");
+      expect(parseRangeHeader("bytes=-0", SIZE)).toBe("unsatisfiable");
+      expect(parseRangeHeader("bytes=0-", 0)).toBe("unsatisfiable");
     });
   });
 });

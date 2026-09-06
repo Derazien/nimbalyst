@@ -12,6 +12,7 @@
 ../extensions/github-issues-importer
 ../extensions/image-generation
 ../extensions/ios-dev
+../extensions/media-viewer
 ../extensions/mockuplm
 ../extensions/nimbalyst-memory
 ../extensions/pdf-viewer
