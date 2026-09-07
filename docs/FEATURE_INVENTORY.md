@@ -18,6 +18,7 @@ A concise reference of all features in the product. Keep this up to date as feat
 - **Animation editor** (`.anim.json`) -- step-based animated explainer diagrams with a scrubbable timeline, drag-to-retime step boundaries, click-a-part-to-chat selection, and HTML/GIF/MP4 export
 - **Project Canvas** (`.canvas`) -- infinite JSON Canvas board whose cards mount the real editor for the file or shared document they reference, with frames, stickies, labeled edges, and zoom-driven card mounting
 - **Image viewer** (`.png`, `.jpg`, `.gif`, `.svg`, `.webp`, `.bmp`, `.ico`)
+- **Media Viewer** (`.mp4`) -- plays video in a tab with scrubbing through long recordings, streaming over `nim-asset://` with byte-range support so non-faststart files open and seek correctly
 
 ### Cross-Editor Features
 
@@ -27,14 +28,36 @@ A concise reference of all features in the product. Keep this up to date as feat
 - Cell-level diff highlighting (CSV), visual diff slider (MockupLM), side-by-side diff (Monaco)
 - Document history with diff viewer
 - Auto-save
+- Decision blocks inside documents -- solo or collaborative voting on a decision, with the attributed outcome sealed into the markdown itself so it survives outside Nimbalyst
 
 ## AI Providers
 
+Twelve built-in provider lanes, plus any agent an extension contributes. Every lane runs on keys the user entered in Nimbalyst settings or on a CLI the user already logged into — no provider is read from the environment, and no lane is required for another to work.
+
+**Chat**
+
 - Claude (direct Anthropic API)
-- Claude Code (Agent SDK with MCP, file access, plan mode, sub-agents)
 - OpenAI / ChatGPT (direct API)
-- OpenAI Codex (SDK with MCP support)
 - LM Studio (local models, auto-discovered)
+
+**Coding agents**
+
+- Claude Code (Agent SDK with MCP, file access, plan mode, sub-agents)
+- Claude Code CLI (the genuine CLI driven in a terminal, with a raw-terminal drawer for its native pickers and mid-session `/model` switching)
+- OpenAI Codex (SDK / app-server transport with MCP support)
+- OpenAI Codex over ACP
+- GitHub Copilot CLI (ACP)
+- Grok Build (ACP)
+- Cursor Agent
+- Gemini via Google Antigravity (Connect-RPC over the user's Antigravity login; reports no usage numbers, so context and cost display as unavailable rather than guessed)
+- OpenCode
+
+**Cross-provider behavior**
+
+- Extension-contributed agent providers — an extension can register its own agent lane alongside the built-ins
+- Per-provider file-change fidelity (`providerFileTracking.ts`) — each lane declares how well it can report the files it changed (`structured` / `tool-args` / `none`), and the filesystem watcher is switched off only for lanes that report authoritatively. Lanes with no delete or move tool (Grok Build, Gemini) deliberately keep the watcher on so `rm` inside a shell command still shows up in the files-edited sidebar
+- Adding a provider to `AI_PROVIDER_TYPES` fails the build until the new lane declares its fidelity, so the table cannot silently drift
+- Per-project AI provider overrides (Project settings) on top of application-level provider config
 
 ## AI Sessions
 
@@ -53,6 +76,7 @@ A concise reference of all features in the product. Keep this up to date as feat
 - AI auto-naming of sessions after first turn
 - Virtualized session list for large histories
 - Drag-and-drop reparenting into workstreams
+- Session launch provenance -- sessions that launched other sessions are marked with an icon and a launch-count tooltip in session history
 
 ## Workstreams
 
@@ -303,6 +327,7 @@ Companion app; pairs with a desktop over encrypted sync. Voice mode is not inclu
 - Tracker schema overrides in Trackers settings -- customize a built-in type into `.nimbalyst/trackers`, edit an existing override, reset back to the built-in default, and resync the local database mirror when schema files drift
 - External-source importers: import GitHub issues (extension-provided) into the tracker as native bug, task, or feature items with a back-link to the source, a "from GitHub" chip, re-snapshot ("pull latest from source") with conservative merge, and a Source filter; agent tools `tracker_importer_list` / `tracker_importer_search` / `tracker_import` / `tracker_resnapshot` / `tracker_get_by_urn`
 - Per-project "AI Agent Access" toggle in tracker settings -- allow or block AI agents from using tracker tools in that project (on by default)
+- Radar -- a since-you-left digest for a shared tracker covering teammate activity, status moves, bulk sweeps, and work that has gone stalled; available in the desktop app and the web console, and to agents via the `work_radar` tool so a session can check for concurrent work before starting on an item
 
 ## Shared Links
 
@@ -354,7 +379,8 @@ Companion app; pairs with a desktop over encrypted sync. Voice mode is not inclu
 - PDF Viewer
 - Planning
 - Project Canvas — authoring skill for `.canvas` boards; the editor itself is built in
-- Project Graph — navigable whole-project graph of plans, trackers, sessions, commits, and files, with a horizontally scrollable **Timeline mode** (phase-colored lifecycle bars per item; collapse items into per-tag activity lanes)
+- Media Viewer — `.mp4` playback in a tab
+- Project Graph — navigable whole-project graph of plans, trackers, sessions, commits, and files, with a horizontally scrollable **Timeline mode** (phase-colored lifecycle bars per item; collapse items into per-tag activity lanes), plus **Atlas**, **Pulse**, and **Evidence Trails** for exploring a project across broader source coverage, with saved views and linked source exploration
 - SQLite Browser
 
 ## MCP Servers (Internal)
@@ -435,6 +461,7 @@ Companion app; pairs with a desktop over encrypted sync. Voice mode is not inclu
 - Deferred restart (waits for active AI sessions)
 - Splash screen
 - Rosetta warning on Apple Silicon
+- Linux `.deb` package for Debian and Ubuntu, which starts on Ubuntu 24.04 and later where the AppImage is blocked by AppArmor's user-namespace restriction
 - PGLite database with PID-based locking and backup
 
 ## Onboarding & Help
