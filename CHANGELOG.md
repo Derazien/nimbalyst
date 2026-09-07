@@ -10,6 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
+
+### Changed
+<!-- Changes to existing functionality go here -->
+
+### Fixed
+<!-- Bug fixes go here -->
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.77.1] - 2026-09-07
+
+
+### Added
+<!-- New features go here -->
 - Send document questions to teammates, collect private answers, and resume the agent after a human settles the outcome.
 - Open and play `.mp4` files in a tab with the new Media Viewer extension, including scrubbing through long recordings.
 - A session that launches another session can request the reasoning effort it runs at, rather than leaving it on the app-wide default.
@@ -24,11 +39,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Codex sessions receive the first answer to a question even when the turn that asked it has already ended.
 - Project Graph keeps loaded data visible instead of repeatedly flashing a blank loading view during startup.
 - Simple document questions and their selection outlines stay at a readable width on wide screens, with controls that wrap on narrow screens.
-- Project Graph keeps loaded data visible instead of repeatedly flashing a blank loading view during startup.
-- Embedded mockups repaint after their frame is attached or moved, preventing intermittent blank previews without resetting interactions on ordinary load events.
+- Embedded mockups repaint after their frame is attached or moved, preventing intermittent blank previews.
 - iPhone and iPad share one adaptive layout that preserves the active session and draft through rotation, with a session sidebar on wide screens.
 - Project and session lists show loading until sync finishes instead of prematurely reporting that they are empty.
-- Sessions that orchestrate other sessions keep up with them: messages that arrive while the session is busy are now delivered together, and a repeated update from the same child session replaces the earlier one instead of stacking up.
+- Orchestrating sessions keep up with their children: updates arriving mid-turn are delivered together, and a repeat from the same child replaces the earlier one.
 
 ### Removed
 <!-- Removed features go here -->
