@@ -141,6 +141,9 @@ const nodeOnly = [
   // include, paying an environment they cannot use.
   'packages/cli/src/**',
   'packages/tracker-core/src/**',
+  // The headless node host is a terminal process with no Electron and no DOM;
+  // that is the entire point of the package.
+  'packages/node/src/**',
   // The memory engine is host-agnostic with zero app imports, so nothing under
   // it can reach a DOM. Its tests carried `// @vitest-environment node` pragmas
   // that were inert for the same reason as the ones above, and the extension's

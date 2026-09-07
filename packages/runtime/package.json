@@ -273,6 +273,18 @@
         "types": "./dist-node/ai/server/providers/ClaudeCodeProvider.d.ts",
         "import": "./dist-node/ai/server/providers/ClaudeCodeProvider.js"
       }
+    },
+    "./storage/repositories/TranscriptMigrationRepository": {
+      "node": {
+        "types": "./dist-node/storage/repositories/TranscriptMigrationRepository.d.ts",
+        "import": "./dist-node/storage/repositories/TranscriptMigrationRepository.js"
+      }
+    },
+    "./ai/server/transcript/TranscriptMigrationService": {
+      "node": {
+        "types": "./dist-node/ai/server/transcript/TranscriptMigrationService.d.ts",
+        "import": "./dist-node/ai/server/transcript/TranscriptMigrationService.js"
+      }
     }
   },
   "files": [
