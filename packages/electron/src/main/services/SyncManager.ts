@@ -20,6 +20,7 @@ import { asPersonalMemberId } from '@nimbalyst/runtime';
 import type { PersonalJwt, PersonalMemberId } from '@nimbalyst/runtime/auth/jwtScopes';
 import type { DeviceInfo } from '@nimbalyst/runtime/sync';
 import * as syncModule from '@nimbalyst/runtime/sync';
+import { deriveEncryptionKey, personalSyncEncryptionSalt } from '@nimbalyst/runtime/sync';
 import { getSessionSyncConfig, setSessionSyncConfig, getReleaseChannel, getDefaultAIModel, getAlphaFeatures, getPreferredAgentLanguage, getAttachmentStagingConfig, store, type SessionSyncConfig } from '../utils/store';
 import { logger } from '../utils/logger';
 import { getCredentials } from './CredentialService';
@@ -69,33 +70,10 @@ function loadSyncModule() {
   return syncModule;
 }
 
-/**
- * Derive an encryption key from a passphrase using PBKDF2.
- * This is used for E2E encryption in CollabV3.
- */
-async function deriveEncryptionKey(passphrase: string, salt: string): Promise<CryptoKey> {
-  const encoder = new TextEncoder();
-  const keyMaterial = await crypto.subtle.importKey(
-    'raw',
-    encoder.encode(passphrase),
-    'PBKDF2',
-    false,
-    ['deriveKey']
-  );
-
-  return crypto.subtle.deriveKey(
-    {
-      name: 'PBKDF2',
-      salt: encoder.encode(salt),
-      iterations: 100000,
-      hash: 'SHA-256',
-    },
-    keyMaterial,
-    { name: 'AES-GCM', length: 256 },
-    false,
-    ['encrypt', 'decrypt']
-  );
-}
+// `deriveEncryptionKey` used to be defined here. It moved to
+// `@nimbalyst/runtime/sync` (src/sync/encryptionKey.ts) so the headless Node
+// host derives bit-identical keys; its parameters are pinned by fixed vectors
+// in that package's tests.
 
 interface SyncManagerState {
   provider: import('@nimbalyst/runtime/sync').SyncProvider | null;
@@ -416,7 +394,7 @@ export async function initializeSync(baseStore: SessionStore): Promise<SessionSt
 
     // CollabV3 uses the encryption key seed from CredentialService for E2E encryption
     // Use personalUserId for salt to ensure same encryption key across devices
-    const encryptionKey = await deriveEncryptionKey(credentials.encryptionKeySeed, `nimbalyst:${personalUserId}`);
+    const encryptionKey = await deriveEncryptionKey(credentials.encryptionKeySeed, personalSyncEncryptionSalt(personalUserId));
     state.encryptionKey = encryptionKey;
 
     connectionTime = Date.now(); // Reset connection time on init

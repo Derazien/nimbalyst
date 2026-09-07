@@ -56,6 +56,18 @@ import type { FleetActivitySnapshot, PushRejectionCause } from '@nimbalyst/colla
 import type { SyncedReadReceipt } from '../readReceipts/readReceipts';
 
 /**
+ * `readyState` values, spelled out rather than read off the global
+ * `WebSocket` constructor.
+ *
+ * These are fixed by the WHATWG spec, and every implementation a host might
+ * inject through `SyncConfig.createWebSocket` uses the same numbers. Reading
+ * them from the global would make a host with no global `WebSocket` throw
+ * `ReferenceError` on the hot path even though it supplied its own socket.
+ */
+const WS_CONNECTING = 0;
+const WS_OPEN = 1;
+
+/**
  * How long to wait for the server's `mobilePushResult` before giving up. Older
  * servers never send one, so this is also the ceiling on a no-op await.
  */
@@ -944,6 +956,13 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
     config.getDeviceInfo?.() ?? config.deviceInfo;
   const localDeviceId = (): string | undefined => localDeviceInfo()?.deviceId;
 
+  /**
+   * The single place this provider constructs a socket. Hosts without a usable
+   * global `WebSocket` (or that need one proxied) pass `config.createWebSocket`.
+   */
+  const openWebSocket = (url: string): WebSocket =>
+    config.createWebSocket ? config.createWebSocket(url) : new WebSocket(url);
+
   // We need to get the initial JWT synchronously for setup, but will refresh before each connection
   // The getJwt function is called before each WebSocket connection to ensure fresh JWT
   let currentJwt: PersonalJwt | null = null;
@@ -1435,7 +1454,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
     // Get current device info (prefer callback for dynamic presence, fallback to static)
     const deviceInfo = localDeviceInfo();
     // Check both our flag AND the actual WebSocket readyState to avoid "Sent before connected" errors
-    if (deviceInfo && indexWs && indexConnected && indexWs.readyState === WebSocket.OPEN) {
+    if (deviceInfo && indexWs && indexConnected && indexWs.readyState === WS_OPEN) {
       const announceMsg: ClientMessage = {
         type: 'deviceAnnounce',
         device: {
@@ -1472,7 +1491,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
   function startPingInterval(): void {
     stopPingInterval();
     pingInterval = setInterval(() => {
-      if (indexWs && indexWs.readyState === WebSocket.OPEN) {
+      if (indexWs && indexWs.readyState === WS_OPEN) {
         try {
           indexWs.send(JSON.stringify({ type: 'ping' }));
         } catch {
@@ -1901,7 +1920,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
     // Pass JWT via query parameter (WebSocket doesn't support custom headers in browsers)
     const wsUrl = appendSyncClientParams(`${url}?token=${encodeURIComponent(jwt)}`);
 
-    indexWs = new WebSocket(wsUrl);
+    indexWs = openWebSocket(wsUrl);
 
     /**
      * Tracks whether THIS WebSocket instance ever fired `onopen`. Pre-open
@@ -2151,7 +2170,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
               // They were encrypted with a different key (e.g., before personal member id migration).
               // The next sync cycle will re-push them from the local PGLite database
               // with the correct encryption key.
-              if (decryptionFailedSessionIds.length > 0 && indexWs && indexWs.readyState === WebSocket.OPEN) {
+              if (decryptionFailedSessionIds.length > 0 && indexWs && indexWs.readyState === WS_OPEN) {
                 console.log(`[CollabV3] Deleting ${decryptionFailedSessionIds.length} undecryptable index entries from server (will re-sync with correct key)`);
                 for (const badSessionId of decryptionFailedSessionIds) {
                   sessionIndexCache.delete(badSessionId);
@@ -2764,7 +2783,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
     const wsUrl = appendSyncClientParams(`${url}?token=${encodeURIComponent(jwt)}`);
 
     return new Promise((resolve, reject) => {
-      const ws = new WebSocket(wsUrl);
+      const ws = openWebSocket(wsUrl);
       let resolved = false;
 
       const timeout = setTimeout(() => {
@@ -3209,7 +3228,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
       const wsUrl = appendSyncClientParams(`${url}?token=${encodeURIComponent(jwt)}`);
 
       return new Promise((resolve, reject) => {
-        const ws = new WebSocket(wsUrl);
+        const ws = openWebSocket(wsUrl);
 
         const session: SessionConnection = {
           ws,
@@ -4133,7 +4152,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
 
         const msg: ClientMessage = { type: 'settingsSync', settings: payload };
         // console.log('[CollabV3] Syncing settings, version:', settings.version, 'ws state:', indexWs.readyState);
-        if (indexWs.readyState !== WebSocket.OPEN) {
+        if (indexWs.readyState !== WS_OPEN) {
           console.error('[CollabV3] Cannot sync settings - websocket not open, state:', indexWs.readyState);
           return;
         }
@@ -4162,7 +4181,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
           return;
         }
       }
-      if (!indexWs || !indexConnected || indexWs.readyState !== WebSocket.OPEN) {
+      if (!indexWs || !indexConnected || indexWs.readyState !== WS_OPEN) {
         return;
       }
       if (!config.encryptionKey) {
@@ -4206,7 +4225,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
           return;
         }
       }
-      if (!indexWs || !indexConnected || indexWs.readyState !== WebSocket.OPEN) return;
+      if (!indexWs || !indexConnected || indexWs.readyState !== WS_OPEN) return;
       if (!config.encryptionKey) {
         console.error('[CollabV3] Cannot sync tracker personal state - no encryption key');
         return;
@@ -4245,7 +4264,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
      * transition after reconnect carries the full current state anyway.
      */
     async sendFleetActivity(activity: FleetActivitySnapshot, shownOnDesktop = false): Promise<void> {
-      if (!indexWs || !indexConnected || indexWs.readyState !== WebSocket.OPEN) return;
+      if (!indexWs || !indexConnected || indexWs.readyState !== WS_OPEN) return;
       const msg: ClientMessage = { type: 'fleetActivityUpdate', activity, shownOnDesktop };
       try {
         indexWs.send(JSON.stringify(msg));
@@ -4287,7 +4306,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
       }
 
       // Check actual WebSocket state
-      if (indexWs.readyState !== WebSocket.OPEN) {
+      if (indexWs.readyState !== WS_OPEN) {
         console.error('[CollabV3] Cannot request mobile push - WebSocket not open, state:', indexWs.readyState);
         return failed('no_ack');
       }
@@ -4377,7 +4396,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
       // hasn't resolved yet. Don't tear it down -- post-wake the broker fires
       // several network-available events in a ~20s burst and we'd otherwise
       // churn through half-finished sockets.
-      if (indexWs && !indexConnected && indexWs.readyState === WebSocket.CONNECTING) {
+      if (indexWs && !indexConnected && indexWs.readyState === WS_CONNECTING) {
         console.log('[CollabV3] reconnectIndex() - handshake already in flight, skipping');
         return;
       }

@@ -285,6 +285,12 @@
         "types": "./dist-node/ai/server/transcript/TranscriptMigrationService.d.ts",
         "import": "./dist-node/ai/server/transcript/TranscriptMigrationService.js"
       }
+    },
+    "./sync/encryptionKey": {
+      "node": {
+        "types": "./dist-node/sync/encryptionKey.d.ts",
+        "import": "./dist-node/sync/encryptionKey.js"
+      }
     }
   },
   "files": [

@@ -36,6 +36,11 @@
   "files": [
     "src/ai/server/SessionManager.ts",
     "src/ai/adapters/sessionStore.ts",
-    "src/ai/server/providers/ClaudeCodeProvider.ts"
+    "src/ai/server/providers/ClaudeCodeProvider.ts",
+    // Personal-sync key derivation. A separate entry point rather than part of
+    // the session-execution closure: the headless host needs it, and importing
+    // it through `./sync` would drag the whole sync barrel and the Y.js graph
+    // in for a twenty-line function with no imports of its own.
+    "src/sync/encryptionKey.ts"
   ]
 }

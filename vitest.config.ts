@@ -123,6 +123,8 @@ const nodeOnly = [
   'packages/runtime/src/ui/git/__tests__/unifiedDiffModel.test.ts',
   // The recovery planner is a pure function over three numbers.
   'packages/runtime/src/sync/__tests__/trackerIdentityRecovery.test.ts',
+  // Key-derivation vectors are WebCrypto over fixed bytes; no DOM involved.
+  'packages/runtime/src/sync/__tests__/encryptionKey.test.ts',
   // `feedback-ui` is otherwise React components; only the pure scroll-carry
   // arithmetic is routed here, for the same reason as the diff model above.
   'packages/collab-client/src/feedback-ui/__tests__/artifactScrollCarry.test.ts',

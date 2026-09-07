@@ -67,6 +67,7 @@ export type {
   ExtensionAwarenessUser,
 } from './extensionAwarenessBridge';
 export { deriveTrackerPersonalStateKey } from './trackerPersonalStateKey';
+export { deriveEncryptionKey, personalSyncEncryptionSalt } from './encryptionKey';
 export { setSyncImageCompressor } from './syncContentTruncator';
 export type { SyncImageCompressor } from './syncContentTruncator';
 

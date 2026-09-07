@@ -66,6 +66,19 @@ export interface SyncConfig {
    * If provided, takes precedence over static deviceInfo.
    */
   getDeviceInfo?: () => DeviceInfo;
+
+  /**
+   * Factory for every WebSocket this provider opens (the index room and each
+   * session room). Defaults to the global `WebSocket` constructor.
+   *
+   * Hosts that cannot use the global supply their own: the desktop renderer
+   * needs sockets proxied through the main process (a browser `Origin` header
+   * is rejected by the collab server), and a headless host may want to inject
+   * one rather than mutate `globalThis`. The returned object only has to
+   * satisfy the standard `WebSocket` interface this module uses --
+   * `readyState`, `send`, `close`, and the four `on*` handlers.
+   */
+  createWebSocket?: (url: string) => WebSocket;
 }
 
 /**
