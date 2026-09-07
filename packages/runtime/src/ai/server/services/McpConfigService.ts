@@ -367,8 +367,13 @@ export class McpConfigService {
     if (!workspacePath) return;
 
     try {
-      const fs = require('fs');
-      const path = require('path');
+      // Dynamic import, not `require`: this file is emitted as plain ESM for
+      // the Node target, where `require` is not defined. The failure was
+      // invisible -- the ReferenceError landed in the catch below, so workspace
+      // .mcp.json servers silently never loaded. Kept dynamic (rather than a
+      // top-level import) for the original reason `require` was used: it keeps
+      // `fs` out of the browser bundle's static graph.
+      const [fs, path] = await Promise.all([import('node:fs'), import('node:path')]);
       const mcpJsonPath = path.join(workspacePath, '.mcp.json');
 
       if (fs.existsSync(mcpJsonPath)) {

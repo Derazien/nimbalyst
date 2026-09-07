@@ -47,16 +47,21 @@ function resolveSpecifier(fromFile, specifier) {
   if (/\.(js|mjs|cjs|json|css)$/.test(specifier)) return null;
 
   const target = path.resolve(path.dirname(fromFile), specifier);
+
+  // File before directory, matching how Node and every bundler resolve it.
+  // Checking the directory first meant `./foo` resolved to `foo/index.js` even
+  // when `foo.js` existed beside it, silently running a different module, and
+  // threw on a directory without an index even when `foo.js` was right there.
+  if (existsSync(`${target}.js`)) {
+    return `${specifier}.js`;
+  }
   if (existsSync(target) && statSync(target).isDirectory()) {
     if (!existsSync(path.join(target, 'index.js'))) {
       throw new Error(`${path.relative(outDir, fromFile)} imports '${specifier}', a directory with no index.js`);
     }
     return `${specifier}/index.js`;
   }
-  if (!existsSync(`${target}.js`)) {
-    throw new Error(`${path.relative(outDir, fromFile)} imports '${specifier}', which did not emit`);
-  }
-  return `${specifier}.js`;
+  throw new Error(`${path.relative(outDir, fromFile)} imports '${specifier}', which did not emit`);
 }
 
 /** Every node that carries a module specifier, including bare and dynamic imports. */
