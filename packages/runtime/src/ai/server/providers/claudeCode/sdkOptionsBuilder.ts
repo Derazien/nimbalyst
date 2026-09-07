@@ -14,7 +14,7 @@ import type { ContentBlockParam, TextBlockParam, MessageParam } from '@anthropic
 // bump instead of silently becoming a no-op at runtime.
 import type { Options as ClaudeAgentSdkOptions, SettingSource } from '@anthropic-ai/claude-agent-sdk';
 import path from 'path';
-import { app } from 'electron';
+import { getHostEnvironment } from '../../../../host/hostEnvironment';
 import { ClaudeCodeDeps } from './dependencyInjection';
 import { resolveClaudeAgentCliPath } from './cliPathResolver';
 import { hasEnterpriseManagedMcpConfig } from './enterpriseMcpConfig';
@@ -235,7 +235,7 @@ export async function buildSdkOptions(
     // verbatim. In dev the SDK resolves its own native binary via
     // require.resolve, so a failure here is non-fatal; a user-configured custom
     // path also overrides.
-    if (app.isPackaged && !customPath) {
+    if (getHostEnvironment().isPackaged() && !customPath) {
       throw err instanceof Error ? err : new Error(String(err));
     }
     resolvedBinaryPath = undefined;
@@ -509,7 +509,7 @@ export async function buildSdkOptions(
   // find ~/.claude/. We no longer overlay setupClaudeCodeEnvironment() because
   // it was designed for the old Node.js execution path and its Object.assign
   // clobbered our sanitized env.
-  if (app.isPackaged) {
+  if (getHostEnvironment().isPackaged()) {
     if (customPath) {
       helperMethod = 'custom';
     } else {

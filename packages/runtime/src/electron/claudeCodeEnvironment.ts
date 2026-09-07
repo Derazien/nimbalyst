@@ -1,7 +1,11 @@
-import { app } from 'electron';
+// This module no longer imports Electron: it asks the injected HostEnvironment
+// the two questions it used to ask `app`. The file stays under `src/electron/`
+// because ~15 test files mock it by that specifier, and a rename that misses
+// one turns that mock into a silent no-op. See the testing rule in CLAUDE.md.
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
+import { getHostEnvironment } from '../host/hostEnvironment';
 
 function isAsarPackagedPath(candidate: string): boolean {
   const normalized = candidate.replace(/\\/g, '/');
@@ -78,13 +82,13 @@ function getSystemClaudeExecutableCandidates(pathValue?: string): string[] {
  * both look in exactly the same place.
  */
 function getPackagedNativeBinaryLocation(): { dir: string; binaryName: string } | undefined {
-  if (!app.isPackaged) return undefined;
+  if (!getHostEnvironment().isPackaged()) return undefined;
   const platform = process.platform;
   const arch = process.arch;
   const binaryName = getClaudeExecutableNameForPlatform(platform);
   const packageName = `@anthropic-ai/claude-agent-sdk-${platform}-${arch}`;
 
-  const appPath = app.getAppPath();
+  const appPath = getHostEnvironment().getAppPath();
   const unpackedPath = appPath.includes('app.asar')
     ? appPath.replace(/app\.asar(?=[\/\\]|$)/, 'app.asar.unpacked')
     : appPath;
@@ -158,7 +162,7 @@ export function resolveNativeBinaryPath(): string | undefined {
   const packageName = `@anthropic-ai/claude-agent-sdk-${platform}-${arch}`;
 
   // Dev mode: require.resolve works fine
-  if (!app.isPackaged) {
+  if (!getHostEnvironment().isPackaged()) {
     try {
       return require.resolve(`${packageName}/${binaryName}`);
     } catch {
@@ -168,7 +172,7 @@ export function resolveNativeBinaryPath(): string | undefined {
 
   // Packaged mode: construct path to the asar-unpacked binary
   const location = getPackagedNativeBinaryLocation()!;
-  const appPath = app.getAppPath();
+  const appPath = getHostEnvironment().getAppPath();
   const binaryPath = path.join(location.dir, binaryName);
 
   if (fs.existsSync(binaryPath)) {
@@ -261,7 +265,7 @@ function getCandidateNodePaths(isPackaged: boolean): string[] {
     }
   }
 
-  const appPath = app.getAppPath();
+  const appPath = getHostEnvironment().getAppPath();
   const unpackedPath = appPath.includes('app.asar')
     ? appPath.replace(/app\.asar(?=[\/\\]|$)/, 'app.asar.unpacked')
     : appPath;
@@ -287,7 +291,7 @@ function getCandidateNodePaths(isPackaged: boolean): string[] {
  * and temp directories set up correctly.
  */
 export function setupClaudeCodeEnvironment(): NodeJS.ProcessEnv {
-  const isPackaged = app.isPackaged;
+  const isPackaged = getHostEnvironment().isPackaged();
   const env = { ...process.env };
 
   // NIM-1573: Pin the bundled CLI's self-updater OFF for the login/check-login

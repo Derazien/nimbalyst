@@ -26,6 +26,12 @@ import { app } from 'electron';
 import * as path from 'path';
 import Store, { hardenExistingSettings } from './utils/privateSettingsStore';
 import { createUncaughtExceptionHandler } from './uncaughtException';
+import { registerElectronHostEnvironment } from './hostEnvironment';
+
+// Tell the runtime package which host it is running in, before any of its
+// modules resolve a binary path. Runtime no longer imports Electron; without
+// this a packaged build would take the unpackaged branch of every path lookup.
+registerElectronHostEnvironment();
 
 // CRITICAL: Strip inherited API keys from process.env before ANY downstream code
 // (SDKs, providers, services) can observe them. See CLAUDE.md, section

@@ -117,6 +117,9 @@ const nodeOnly = [
   // with projects, so they were paying for jsdom while claiming not to.
   'packages/electron/src/shared/analytics/**',
   'packages/runtime/src/ai/**',
+  // The host capability contract is two methods over `process`; it exists
+  // precisely so runtime can run where there is no DOM and no Electron.
+  'packages/runtime/src/host/**',
   'packages/runtime/src/ui/git/__tests__/unifiedDiffModel.test.ts',
   // The recovery planner is a pure function over three numbers.
   'packages/runtime/src/sync/__tests__/trackerIdentityRecovery.test.ts',

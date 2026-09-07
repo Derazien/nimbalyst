@@ -11,11 +11,11 @@ const {
   getAppPathMock: vi.fn(() => '/Applications/Nimbalyst.app/Contents/Resources/app.asar'),
 }));
 
-vi.mock('electron', () => ({
-  app: {
-    isPackaged: true,
+vi.mock('../../host/hostEnvironment', () => ({
+  getHostEnvironment: () => ({
+    isPackaged: () => true,
     getAppPath: getAppPathMock,
-  },
+  }),
 }));
 
 vi.mock('fs', () => ({
