@@ -31,6 +31,7 @@ import {
   isOSNotificationsEnabled,
   setOSNotificationsEnabled,
   isKeepRunningInTray,
+  setKeepRunningInTray,
 } from '../utils/store';
 import { logger } from '../utils/logger';
 import { isPreventingSleep, getSleepPreventionMode } from '../services/PowerSaveService';
@@ -356,9 +357,19 @@ export class TrayManager {
    * Only the *icon*. The island is the other menu bar surface and answers to
    * `showTrayStrip` plus the style; conflating the two is how the app ended up
    * drawing both at once.
+   *
+   * Hiding the icon also turns "keep running in the tray" off, in the same
+   * breath. The two together are the one combination with no way back: no
+   * window, no icon, no menu, and Task Manager as the only exit. The user keeps
+   * the choice they made -- the icon goes -- and closing the last window falls
+   * back to quitting.
    */
   setVisible(visible: boolean): void {
     setShowTrayIcon(visible);
+    if (!visible && isKeepRunningInTray()) {
+      setKeepRunningInTray(false);
+      logger.main.info('[TrayManager] Tray icon hidden, so keep-running-in-tray is off: the last window close quits again');
+    }
     this.refreshMenuBar();
   }
 
