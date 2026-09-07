@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url';
 import {
   findRuntimeHostViolations,
   collectRuntimeHostImports,
+  measureHeadlessClosure,
+  HEADLESS_CLOSURE_FILE_BUDGET,
 } from '../check-runtime-host-boundary.mjs';
 
 const scriptPath = path.resolve(
@@ -80,4 +82,19 @@ test('runtime source currently satisfies the boundary', () => {
 
 test('scans a non-trivial number of real imports, so a silent no-op is visible', () => {
   assert.ok(collectRuntimeHostImports().length > 1000);
+});
+
+// The source scan cannot see this one. Reverting `ai/server/types.ts` to import
+// the `@nimbalyst/extension-sdk` barrel instead of the deep path takes this
+// closure from 101/0 to 676/181 -- verified by doing exactly that and watching
+// the gate go red -- while every import line still looks perfectly ordinary.
+test('the headless entry points reach no React and no desktop app', () => {
+  const closure = measureHeadlessClosure();
+
+  assert.equal(closure.tsx, 0, 'a React component is reachable from session execution');
+  assert.equal(closure.electron, 0, 'packages/electron is reachable from session execution');
+  assert.ok(
+    closure.files <= HEADLESS_CLOSURE_FILE_BUDGET,
+    `closure grew to ${closure.files}, over the ${HEADLESS_CLOSURE_FILE_BUDGET} budget`,
+  );
 });

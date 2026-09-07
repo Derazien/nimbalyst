@@ -187,10 +187,91 @@ export function checkRuntimeHostBoundary() {
   return entries.length;
 }
 
+/**
+ * The three modules a headless host has to be able to import.
+ *
+ * A source scan cannot protect this. The regression that motivated it was a
+ * single *type-only* import of the `@nimbalyst/extension-sdk` barrel in
+ * `ai/server/types.ts`: the barrel re-exports modules that import
+ * `@nimbalyst/runtime`, closing a package cycle that pulled all 181 editor and
+ * transcript components into the type graph. Nothing about that import line
+ * looks wrong, and runtime imports that barrel in 25 other places where it is
+ * entirely fine. Only the resulting closure distinguishes them.
+ */
+export const HEADLESS_ENTRY_POINTS = [
+  'packages/runtime/src/ai/server/SessionManager.ts',
+  'packages/runtime/src/ai/adapters/sessionStore.ts',
+  'packages/runtime/src/ai/server/providers/ClaudeCodeProvider.ts',
+];
+
+// Headroom over the measured 101 so ordinary growth does not trip the gate. A
+// re-introduced barrel cycle lands at 600+, so this catches the failure mode
+// without policing every added module.
+export const HEADLESS_CLOSURE_FILE_BUDGET = 200;
+
+export function measureHeadlessClosure() {
+  const configPath = path.join(repoRoot, 'packages/runtime/tsconfig.json');
+  const configFile = ts.readConfigFile(configPath, ts.sys.readFile);
+  const parsed = ts.parseJsonConfigFileContent(
+    { ...configFile.config, include: [], files: [] },
+    ts.sys,
+    path.dirname(configPath),
+  );
+
+  const program = ts.createProgram({
+    rootNames: HEADLESS_ENTRY_POINTS.map((entry) => path.join(repoRoot, entry)),
+    options: { ...parsed.options, noEmit: true, types: [] },
+  });
+
+  const projectFiles = program.getSourceFiles()
+    .map((file) => file.fileName)
+    .filter((fileName) => fileName.includes('/packages/') && !fileName.includes('/node_modules/'));
+
+  return {
+    files: projectFiles.length,
+    tsx: projectFiles.filter((fileName) => fileName.endsWith('.tsx')).length,
+    electron: projectFiles.filter((fileName) => fileName.includes('/packages/electron/')).length,
+  };
+}
+
+export function checkHeadlessClosure() {
+  const closure = measureHeadlessClosure();
+  const problems = [];
+
+  if (closure.tsx > 0) {
+    problems.push(
+      `${closure.tsx} .tsx files are reachable. A React component in this graph means a `
+      + 'headless host cannot typecheck it. The usual cause is importing a barrel that '
+      + 're-exports back into @nimbalyst/runtime -- import the deep path instead.',
+    );
+  }
+  if (closure.electron > 0) {
+    problems.push(`${closure.electron} packages/electron files are reachable.`);
+  }
+  if (closure.files > HEADLESS_CLOSURE_FILE_BUDGET) {
+    problems.push(
+      `closure is ${closure.files} files, over the ${HEADLESS_CLOSURE_FILE_BUDGET} budget.`,
+    );
+  }
+
+  if (problems.length > 0) {
+    throw new Error(
+      `the headless entry points reach too far:\n${problems.map((p) => `  + ${p}`).join('\n')}`,
+    );
+  }
+
+  return closure;
+}
+
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     const importCount = checkRuntimeHostBoundary();
     console.log(`[runtime-host-boundary] runtime source clean (${importCount} imports scanned).`);
+    const closure = checkHeadlessClosure();
+    console.log(
+      `[runtime-host-boundary] headless closure ${closure.files} files, `
+      + `${closure.tsx} tsx, ${closure.electron} electron.`,
+    );
   } catch (error) {
     console.error(`[runtime-host-boundary] ${error instanceof Error ? error.message : String(error)}`);
     process.exitCode = 1;
