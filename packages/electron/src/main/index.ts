@@ -2678,6 +2678,31 @@ app.whenReady().then(async () => {
     // the prompt cache. The provider resolves this once per session and freezes
     // it.
     ClaudeCodeProvider.setGitContextLoader((workspacePath: string) => getAgentGitContext(workspacePath));
+    // Document history for the agent tool hooks. The runtime used to import
+    // HistoryManager by a relative path out of its own package, which dragged
+    // the desktop app into every graph that touched session execution.
+    ClaudeCodeProvider.setHistoryManager({
+      createSnapshot: async (filePath, content, snapshotType, message, metadata) => {
+        await historyManager.createSnapshot(filePath, content, snapshotType as any, message, metadata);
+      },
+      getPendingTags: async (filePath) => {
+        const tags = await historyManager.getPendingTags(filePath);
+        return tags.map((tag) => ({ id: tag.id, createdAt: tag.createdAt, sessionId: tag.sessionId }));
+      },
+      tagFile: async (workspacePath, filePath, tagId, content, metadata) => {
+        await historyManager.createTag(
+          workspacePath,
+          filePath,
+          tagId,
+          content,
+          metadata?.sessionId || 'unknown',
+          metadata?.toolUseId || ''
+        );
+      },
+      updateTagStatus: async (filePath, tagId, status) => {
+        await historyManager.updateTagStatus(filePath, tagId, status as any);
+      },
+    });
     ClaudeCodeProvider.setAttachmentStagingLoader((workspacePath: string) => ({
       root: resolveWorkspaceAttachmentStagingDirectory(workspacePath),
       mode: getAttachmentStagingConfig().mode,
