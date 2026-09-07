@@ -1,3 +1,5 @@
+import { hasLiveInteractivePrompt } from '../../mcp/tools/interactivePromptLiveness';
+import { deliverCodexQuestionAnswer } from './codexQuestionDelivery';
 /**
  * MobilePromptDelivery
  *
@@ -112,6 +114,20 @@ export async function deliverMobilePromptResponse(
   // reuses the same raw provider id.
   const receivedAt = new Date();
   const { providerType, provider } = await resolveSessionProvider(sessionId);
+
+  if (providerType === 'openai-codex' && promptType === 'ask_user_question') {
+    const payload = descriptor.ipcPayload;
+    if (typeof payload?.questionId !== 'string') throw new Error('Codex question response is missing its question ID');
+    await deliverCodexQuestionAnswer(sessionId, payload.questionId, {
+      answers: (payload.answers ?? {}) as Record<string, string>,
+      cancelled: payload.cancelled === true, respondedBy: 'mobile',
+    });
+    if (!hasLiveInteractivePrompt(sessionId)) {
+      descriptor.notify();
+      TrayManager.getInstance().onPromptResolved(sessionId);
+    }
+    return;
+  }
 
   // Stage 1 — durable DB record. Persist before waking any consumer so a
   // resumed provider/waiter cannot register a later same-id prompt before this

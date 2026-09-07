@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Codex sessions receive the first answer to a question even when the turn that asked it has already ended.
 - Project Graph keeps loaded data visible instead of repeatedly flashing a blank loading view during startup.
 - Simple document questions and their selection outlines stay at a readable width on wide screens, with controls that wrap on narrow screens.
 - Project Graph keeps loaded data visible instead of repeatedly flashing a blank loading view during startup.

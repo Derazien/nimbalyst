@@ -1,3 +1,4 @@
+import { codexQuestionTurns } from './codexQuestionTurns';
 /**
  * Streaming message handler for AIService.
  *
@@ -121,7 +122,7 @@ import { requestMobilePush } from './mobilePushRequest';
 import { setSessionPendingPrompt } from './pendingPromptPersistence';
 import type { PromptKind } from '../../tray/fleetSnapshot';
 import { getAgentWorkflowService } from '../AgentWorkflowService';
-import { dispatchSessionMetaTool } from '../../mcp/sessionNamingServer';
+import { repairOrphanedSessionMetaCall } from './repairOrphanedSessionMetaCall';
 import { getMetaAgentOpenAITools } from '../../mcp/metaAgentServer';
 import { getDevAgentOpenAITools, resolveDevToolScope } from '../../mcp/devAgentTools';
 import { MetaAgentService } from '../MetaAgentService';
@@ -312,41 +313,6 @@ async function getWorkspacePathForSession(sessionId: string): Promise<string | n
     // Ignore — caller will skip the broadcast.
   }
   return null;
-}
-
-/**
- * Re-apply an `update_session_meta` call the agent transport announced but
- * never completed.
- *
- * Measured on one install: 13 of 3856 such calls (0.34%) ended this way, and
- * they cluster — one session dropped five consecutive calls over 22 minutes and
- * never recovered, so its phase and tags stayed at whatever the last successful
- * call had set. Nimbalyst's MCP server is not the cause; a stale connection
- * answers every request with a fast 404 rather than hanging.
- *
- * Everything needed is in the arguments the agent already announced, so this
- * routes them through the same dispatcher the MCP tool would have reached —
- * deliberately not back through the transport that just dropped the call.
- */
-async function repairOrphanedSessionMetaCall(
-  toolCall: { name?: string; arguments?: unknown },
-  sessionId: string | undefined
-): Promise<void> {
-  const tool = String(toolCall.name ?? '').replace(/^mcp__.+?__/, '');
-  if (tool !== 'update_session_meta') return;
-  if (!sessionId || !toolCall.arguments || typeof toolCall.arguments !== 'object') return;
-
-  try {
-    await dispatchSessionMetaTool(tool, toolCall.arguments as Record<string, unknown>, sessionId);
-    console.warn(
-      `[SessionMeta] re-applied a dropped update_session_meta for session ${sessionId}`
-    );
-  } catch (err) {
-    // Best effort. The agent is already gone; failing here must not disturb the
-    // stream, but it must not be silent either -- silence is what made the
-    // original drop take an hour to characterize.
-    console.error('[SessionMeta] could not re-apply a dropped update_session_meta:', err);
-  }
 }
 
 export class MessageStreamingHandler {
@@ -1349,7 +1315,9 @@ export class MessageStreamingHandler {
       markAlive: (sessionId) => stateManager.markTurnAlive(sessionId),
     });
 
+    let questionTurn: ReturnType<typeof codexQuestionTurns.current>;
     try {
+      questionTurn = session.provider === 'openai-codex' ? codexQuestionTurns.begin(session.id) : undefined;
       let fullResponse = '';
       let lastTextSection = '';  // Track text after the last tool call (for notifications)
       let prevTextSection = '';  // Previous non-empty text section (fallback if last section is empty)
@@ -1872,6 +1840,7 @@ export class MessageStreamingHandler {
 
           case 'tool_call':
             if (chunk.toolCall) {
+              await codexQuestionTurns.observe(questionTurn, chunk.toolCall);
               toolCallCount++;
               toolCalls.push(chunk.toolCall);
 
@@ -2331,6 +2300,7 @@ export class MessageStreamingHandler {
             break;
 
           case 'error':
+            await codexQuestionTurns.end(questionTurn);
             hadError = true;  // Mark that an error occurred to skip auto /context
             if (isClaudeCode) {
               console.error('[CLAUDE-CODE-SERVICE] ERROR FROM PROVIDER:', chunk.error || 'Unknown error');
@@ -2401,6 +2371,7 @@ export class MessageStreamingHandler {
             break;
 
           case 'complete':
+            await codexQuestionTurns.end(questionTurn);
             // if (isClaudeCode) {
             // }
             sawCompleteChunk = true;
@@ -2984,6 +2955,8 @@ export class MessageStreamingHandler {
         }
       }
 
+      await codexQuestionTurns.end(questionTurn);
+
       // A Gemini turn ran, so the Antigravity language server is up. Wake the
       // usage poller, which deliberately never starts the server itself and so
       // otherwise shows a muted chip forever. Fire-and-forget: a usage refresh
@@ -3060,6 +3033,8 @@ export class MessageStreamingHandler {
 
       return { content: fullResponse };
     } catch (error) {
+      const retirement = codexQuestionTurns.end(questionTurn);
+      void retirement.catch(err => logger.main.error('[AIService] Question recovery failed after stream error:', err));
       const errorTime = Date.now() - startTime;
       const isClaudeCode = session?.provider === 'claude-code';
       const logPrefix = isClaudeCode ? '[CLAUDE-CODE-SERVICE]' : '[AIService]';
@@ -3181,12 +3156,14 @@ export class MessageStreamingHandler {
 
       throw error;
     } finally {
+      const questionRetirement = codexQuestionTurns.end(questionTurn);
       // First, and outside anything that can throw: a session that keeps
       // reporting itself alive after its turn died is worse than the bug this
       // ticker fixes, because nothing downstream will ever correct it. The
       // parked-generator case reaches neither exit and is covered by the
       // ticker's own expiry.
       stopTurnLiveness();
+      await questionRetirement;
 
       // A cancelled turn or a provider that disconnected mid-command never sends
       // the completion, so anything still open here will never settle on its
