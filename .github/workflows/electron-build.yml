@@ -368,11 +368,21 @@ jobs:
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_NAME"
           security default-keychain -s "$KEYCHAIN_NAME"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_NAME"
-          
+
+          # electron-builder discovers identities with `security find-identity`,
+          # which searches the keychain SEARCH LIST -- setting the default
+          # keychain alone does not put build.keychain on it. Without this the
+          # CSC_NAME identity is invisible and the build silently goes unsigned.
+          security list-keychains -d user -s "$KEYCHAIN_NAME" login.keychain
+
+          # A signed+notarized build runs well past the default auto-lock
+          # timeout; a relocked keychain fails codesign mid-build.
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_NAME"
+
           # Import certificate
           security import certificate.p12 -k "$KEYCHAIN_NAME" -P "$MACOS_CERTIFICATE_PWD" -T /usr/bin/codesign -T /usr/bin/security
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_NAME"
-          
+
           # Clean up
           rm certificate.p12
 
@@ -517,9 +527,16 @@ jobs:
           # must not create GitHub Releases on its own.
           if [ "${{ matrix.platform }}" == "mac" ]; then
             if [ -n "$MACOS_CSC_LINK" ]; then
+              # Sign from the identity the "Import macOS certificates" step
+              # already put in build.keychain, and do NOT hand electron-builder
+              # CSC_LINK/CSC_KEY_PASSWORD. Given those, it imports the .p12 a
+              # second time into a temp keychain of its own; on the macOS 26.6
+              # runner image that duplicate import fails with "SecKeychainUnlock:
+              # The user name or passphrase you entered is not correct" and takes
+              # the whole mac build down (image 20260831.0337.3 vs the last green
+              # 20260728.0273.1). One keychain, one import.
               export CSC_NAME="$MACOS_CSC_NAME"
-              export CSC_LINK="$MACOS_CSC_LINK"
-              export CSC_KEY_PASSWORD="$MACOS_CSC_KEY_PASSWORD"
+              unset CSC_LINK CSC_KEY_PASSWORD
             else
               # Validation build: IS_RELEASE gated the signing material to
               # empty. Make the unsigned path explicit, the same way the
