@@ -5,6 +5,11 @@ import { safeHandle } from '../utils/ipcRegistry';
 import { SessionManager } from '@nimbalyst/runtime/ai/server';
 import type { AIProviderType, PromptProvenance } from '@nimbalyst/runtime/ai/server/types';
 import { ModelIdentifier } from '@nimbalyst/runtime/ai/server/types';
+import {
+  EFFORT_LEVELS,
+  clampEffortLevel,
+  type EffortLevel,
+} from '@nimbalyst/runtime/ai/server/effortLevels';
 import { AISessionsRepository } from '@nimbalyst/runtime/storage/repositories/AISessionsRepository';
 import { AgentMessagesRepository } from '@nimbalyst/runtime/storage/repositories/AgentMessagesRepository';
 import { SessionFilesRepository } from '@nimbalyst/runtime/storage/repositories/SessionFilesRepository';
@@ -70,6 +75,31 @@ interface CreateChildSessionArgs {
   useWorktree?: boolean;
   worktreeId?: string;
   toolScope?: string;
+  /**
+   * Reasoning effort for the new session. Omit to leave the child on the
+   * app-wide default (what every spawn did before this existed) — an omitted
+   * value is NOT inherited from the caller.
+   */
+  effortLevel?: string;
+}
+
+/**
+ * Validate a caller-supplied effort level. Deliberately throws instead of
+ * using `parseEffortLevel`, which returns the 'high' default for unrecognized
+ * input — that would turn a typo ('mid') into a silent, plausible-looking
+ * choice the caller never made.
+ */
+function validateRequestedEffortLevel(value: string | undefined): EffortLevel | undefined {
+  if (value === undefined || value === null || value === '') {
+    return undefined;
+  }
+  const match = EFFORT_LEVELS.find((entry) => entry.key === value);
+  if (!match) {
+    throw new Error(
+      `Invalid effortLevel "${value}". Expected one of: ${EFFORT_LEVELS.map((entry) => entry.key).join(', ')}`
+    );
+  }
+  return match.key;
 }
 
 function normalizeStoredChildModelIdentifier(
@@ -116,6 +146,13 @@ interface SpawnSessionArgs {
    * caller's workstream.
    */
   isolated?: boolean;
+  /**
+   * Reasoning effort for the new session (e.g. spawn an
+   * `openai-codex:gpt-6-astra` session at 'medium'). Clamped to the resolved
+   * model's ceiling. Omit to leave the child on the app-wide default; unlike
+   * `model` there is no inherit-from-caller mode.
+   */
+  effortLevel?: string;
 }
 
 interface NotifyUserArgs {
@@ -414,6 +451,8 @@ export class MetaAgentService {
     createdBySessionId: string;
     queuedInitialPrompt: boolean;
     parentSessionId: string | null;
+    /** Effort actually applied, after clamping; null when left on the app default. */
+    effortLevel: string | null;
   }> {
     if (!this.aiService) {
       throw new Error('AI service not initialized');
@@ -421,6 +460,10 @@ export class MetaAgentService {
     if (args.useWorktree && args.worktreeId) {
       throw new Error('useWorktree and worktreeId cannot be combined');
     }
+
+    // Validate before any side effect, so a bad effortLevel can't leave a
+    // half-created worktree or session row behind.
+    const requestedEffortLevel = validateRequestedEffortLevel(args.effortLevel);
 
     // Defense-in-depth: a child-completion notification (built in
     // buildNotificationMessage) starts literally with '[Child Session Update]'.
@@ -631,6 +674,20 @@ export class MetaAgentService {
       await AISessionsRepository.updateMetadata(sessionId, { metadata: { toolScope: childToolScope } });
     }
 
+    // Reasoning effort: every turn reads it back out of session metadata
+    // (MessageStreamingHandler for codex/others, buildClaudeCodeRuntimeConfig
+    // for claude-code), so writing it here is all that's needed. Clamp to the
+    // resolved model's ceiling so the child's effort selector displays the same
+    // level the provider will actually run at, rather than a level the
+    // transport would silently lower. Writing nothing leaves the child on the
+    // app-wide default.
+    const childEffortLevel = requestedEffortLevel
+      ? clampEffortLevel(requestedEffortLevel, normalizedModel)
+      : undefined;
+    if (childEffortLevel) {
+      await AISessionsRepository.updateMetadata(sessionId, { metadata: { effortLevel: childEffortLevel } });
+    }
+
     const initialPrompt = args.prompt?.trim();
     const shouldBypassExecution = this.shouldBypassChildAgentExecutionForTests();
 
@@ -687,6 +744,7 @@ export class MetaAgentService {
       createdBySessionId: metaSessionId,
       queuedInitialPrompt: !!initialPrompt,
       parentSessionId: args.parentSessionIdOverride ?? null,
+      effortLevel: childEffortLevel ?? null,
     };
   }
 
@@ -740,6 +798,7 @@ export class MetaAgentService {
       useWorktree: !!args.useWorktree,
       worktreeId: inheritedWorktreeId,
       model: effectiveModel,
+      effortLevel: args.effortLevel,
       parentSessionIdOverride: workstreamId,
     });
 

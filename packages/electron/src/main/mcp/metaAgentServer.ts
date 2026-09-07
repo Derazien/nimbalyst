@@ -22,6 +22,7 @@ type CreateSessionArgs = {
   useWorktree?: boolean;
   worktreeId?: string;
   toolScope?: string;
+  effortLevel?: string;
 };
 
 type SpawnSessionArgs = {
@@ -38,6 +39,7 @@ type SpawnSessionArgs = {
    * spawned as a sibling under the caller's workstream.
    */
   isolated?: boolean;
+  effortLevel?: string;
 };
 
 type RespondToPromptArgs = {
@@ -222,6 +224,12 @@ export const META_AGENT_TOOL_DEFS: Array<{
           description:
             "Capability scope for the child. \"read\" = read_file/list_files/search_files only (pure investigation). \"write\" = those plus write_file but NO run_command, so the child can save a file deliverable (e.g. a report) yet cannot build/test/run anything. \"full\" (default) = all tools including run_command. Use read or write for analyze/research tasks so the child physically cannot run a build, and reserve full for tasks that must build/test.",
         },
+        effortLevel: {
+          type: "string",
+          enum: ["low", "medium", "high", "xhigh", "max", "ultra"],
+          description:
+            "Optional reasoning effort for the child. Omit to leave it on the app-wide default — an omitted value is NOT inherited from the caller. Levels above the model's ceiling are clamped down (Claude models stop at max; only some Codex models reach ultra). Use a lower level for mechanical work and a higher one for hard reasoning.",
+        },
       },
     },
   },
@@ -265,6 +273,12 @@ export const META_AGENT_TOOL_DEFS: Array<{
           type: "boolean",
           description:
             "Default false. When false (the default), the calling session receives no follow-up prompt when the spawned session completes/errors/waits — fire and forget. Set true only when the caller specifically wants to be told the result and continue working with it.",
+        },
+        effortLevel: {
+          type: "string",
+          enum: ["low", "medium", "high", "xhigh", "max", "ultra"],
+          description:
+            "Optional reasoning effort for the new session (e.g. model 'openai-codex:gpt-6-astra' with effortLevel 'medium'). Omit to leave it on the app-wide default — unlike `model` there is no inherit-from-caller mode. Levels above the model's ceiling are clamped down (Claude models stop at max; only some Codex models reach ultra). Use a lower level for mechanical work and a higher one for hard reasoning.",
         },
       },
       required: ["prompt"],

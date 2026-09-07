@@ -2,7 +2,6 @@
 name: autofix-issues
 description: Survey recently triaged GitHub issues, propose the ones safe to fix without a product decision, and fan the selected ones out to independent sessions.
 ---
-
 # /autofix-issues Command
 
 Survey the issues triaged over a recent window and split them two ways: the ones that can be fixed without a decision from the user, offered as a checklist to fan out to independent sessions, and the ones that need the user's attention, with the reason for each.
@@ -108,6 +107,8 @@ Concurrency caps at **4 child sessions in flight**. Queue beyond that and launch
 
 Use `spawn_session` as siblings in the current workstream. Do not pass `useWorktree` — never create worktrees unless the user asked.
 
+Slices implement in Opus 5: pass `model: "claude-code:opus"` rather than leaving them on whatever the app default happens to be, since Step 7 depends on the implementer and the reviewer being different models.
+
 Each brief must be self-contained. A slice that has to re-investigate has already lost the value triage created:
 
 - The confirmed root cause with file:line anchors, and an explicit "do not re-investigate"
@@ -121,24 +122,59 @@ Each brief must be self-contained. A slice that has to re-investigate has alread
 - Its tracker overlay id, to link the session and set status
 - Any hazard specific to that slice, stated as a constraint rather than left implied
 
-## Step 6: Drive it to done
+## Step 6: Gate the batch
 
 1. Wait for the slices. Do not poll in a tight loop; you are notified as each finishes.
 2. Read what each one reports. A slice that declined to commit is a result, not a failure — surface its reasoning.
 3. Run the gate **once** for the whole batch: `npm run typecheck && npm run test:prepush`. Check the reported failure counts, not just the exit code — `test:prepush` has exited 0 with a failing test.
 4. On failure, send the failure back to the slice that owns those files. Do not hand-patch another session's work when that session still has the context.
-5. Write `CHANGELOG.md` yourself, one bullet per user-visible fix, and commit it. Internal-only changes get no entry.
-6. Append a run section to `nimbalyst-local/autofix-log.md` (see below).
-7. Report: what landed, what did not and why, and what still needs the user. Do not push — pushing is the user's call.
 
-## Step 7: Log the run
+The gate is necessary and not sufficient. A green suite says nothing broke that was already covered; it does not say the fixes are right. That is Step 7.
+
+## Step 7: Review the batch in a Codex Astra session
+
+The slices implement in Opus 5; a **different model reviews before anything else lands**. Two models agreeing on a diff is worth far more than one model checking its own work, and this is the only step in the run where a slice's reasoning gets an outside reader.
+
+Run this after the gate is green and **before** the `CHANGELOG.md` commit. Never skip it because the diff looks small.
+
+Spawn one reviewer for the whole batch:
+
+- `spawn_session` with `model: "openai-codex:gpt-6-astra"` and `notifyOnComplete: true`
+- A sibling in the current workstream — no `isolated`, no `useWorktree`
+- `effortLevel: "medium"` — pass it explicitly; without it the reviewer runs at the app-wide default, whatever that happens to be
+
+The reviewer is read-only. It does not edit, commit, or run the gate. Its brief must contain:
+
+- The commit range to review — the slices' commits, by hash, and `git diff` scoped to them
+- One line per slice: the issue, the confirmed root cause it was given, and the fix it claims to have made
+- The house rules the diff has to satisfy, since a fresh session does not carry them: the testing rules and hard exclusions in [CLAUDE.md](../../CLAUDE.md), [destructive-data-paths.md](../rules/destructive-data-paths.md), [end-to-end-verification.md](../rules/end-to-end-verification.md)
+- An instruction to classify every finding as **blocking** or **non-blocking**, with a file:line anchor and a concrete failure scenario for each blocking one
+- An instruction to say plainly when a fix does not actually address the root cause it was handed, or when the test passes without exercising the bug
+
+### Acting on the findings
+
+- **Blocking findings are fixed before the run moves on.** A blocking finding is a correctness bug, a rule violation, a test that cannot fail for the reason it claims, or a fix that does not address its root cause.
+- Send each blocking finding back to the slice that owns those files, with the reviewer's anchor and scenario. Do not hand-patch another session's work while that session still has the context.
+- Re-run the gate after the fixes land, then have the reviewer confirm the specific findings it raised — not a fresh full review.
+- **A finding you disagree with is a decision, not a dismissal.** Say in the report which findings you rejected and why. A reviewer's false positive is worth recording; a quietly ignored true positive is how this step stops working.
+- Non-blocking findings do not hold the batch. Carry them into the report so the user can decide.
+- If the reviewer finds a slice's fix unsalvageable, revert that slice's commit and move the issue to the needs-attention list. Landing a fix the reviewer called wrong is worse than landing nothing.
+
+## Step 8: Land it
+
+1. Write `CHANGELOG.md` yourself, one bullet per user-visible fix, and commit it. Internal-only changes get no entry.
+2. Append a run section to `nimbalyst-local/autofix-log.md` (see below).
+3. Report: what landed, what did not and why, what the review turned up, and what still needs the user. Do not push — pushing is the user's call.
+
+## Step 9: Log the run
 
 Append a section to `nimbalyst-local/autofix-log.md` — gitignored and local-only, never committed and never referenced anywhere that leaves this machine.
 
 The log exists to refine the screening criteria, so its value is entirely in the honest entries. Record:
 
 - One row per slice: issue, the fix in a clause, an outcome of `clean`, `rework`, `should not have shipped`, `withdrawn`, or `blocked`, and the commit it landed in
-- **What went wrong**, in enough detail to act on. A slice that needed a round trip should say what it got wrong and what caught it — the gate, a sibling, or the user
+- **What went wrong, in enough detail to act on.** A slice that needed a round trip should say what it got wrong and what caught it — the gate, the Codex review, a sibling, or the user
+- **Review calibration**: how many blocking findings the reviewer raised, how many were real, and which ones you rejected and why. A run where the reviewer found nothing is a data point about the reviewer as much as about the batch — record it either way. If a blocking finding was something the gate should have caught, that belongs in the slice brief next time
 - **Screening calibration**: how many were fanned out, how many were clean, and whether any candidate should have been held back. If a screening call was wrong, say which bar or exclusion would have caught it
 - Any rule or command change the run produced
 
@@ -162,6 +198,7 @@ Two cases worth a sentence in the entry rather than leaving a reader to puzzle t
 - **Never launch before the user selects.** The checklist is the point of the command.
 - **Both lists ship together.** Producing the checklist without the needs-attention list is an incomplete run.
 - **A slice commits only its own files.** The orchestrator owns `CHANGELOG.md` and the full gate.
+- **Nothing lands unreviewed.** Opus 5 implements, Codex Astra reviews, blocking findings are fixed before the batch moves on. A green gate is not a substitute for the review.
 - **Excluded is a deliverable.** An issue you correctly refused to automate, with the reason, is worth as much as one you fixed.
 - **Do not estimate effort or duration.**
 - Never use emojis.
