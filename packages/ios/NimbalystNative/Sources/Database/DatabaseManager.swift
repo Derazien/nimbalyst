@@ -309,6 +309,16 @@ public final class DatabaseManager: @unchecked Sendable {
             }
         }
 
+        // Action prompts from the desktop workspace's ai-actions.md, stored as a
+        // JSON blob beside the slash commands they arrive with. NULL means the
+        // desktop predates action sync or the workspace has no actions; both
+        // read as an empty picker.
+        migrator.registerMigration("v15_project_action_prompts") { db in
+            try db.alter(table: "projects") { t in
+                t.add(column: "actionsJson", .text)
+            }
+        }
+
         try migrator.migrate(writer)
     }
 

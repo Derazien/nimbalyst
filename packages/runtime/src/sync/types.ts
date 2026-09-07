@@ -662,6 +662,13 @@ export interface ProjectConfig {
   lastCommandsUpdate: number;
   /** SHA-256 hash of the normalized git remote URL (for server-side project identity lookup) */
   gitRemoteHash?: string;
+  /**
+   * Action prompts from the workspace's ai-actions.md. Absent on desktops that
+   * predate this field, so consumers must treat "missing" as "none".
+   */
+  actions?: SyncedActionPrompt[];
+  /** Timestamp of last actions update */
+  lastActionsUpdate?: number;
 }
 
 /**
@@ -672,6 +679,34 @@ export interface SyncedSlashCommand {
   name: string;
   description?: string;
   source: 'builtin' | 'project' | 'user' | 'plugin';
+}
+
+/**
+ * An action prompt as mobile receives it.
+ *
+ * Unlike SyncedSlashCommand, this carries the prompt `body`. A slash command's
+ * content is a desktop-side file the desktop executes, so mobile only needs its
+ * name; an action prompt's body IS the artifact, and the desktop's own behavior
+ * is to paste it into the composer for the user to edit before sending. Mobile
+ * cannot reproduce that without the text. The blob is encrypted with the user's
+ * key, so this is the same exposure class as synced session titles and drafts.
+ *
+ * `foreground` is deliberately absent -- it is a desktop window concept.
+ */
+export interface SyncedActionPrompt {
+  /** kebab-case slug derived from the heading; stable across edits to the body */
+  id: string;
+  label: string;
+  /** The prompt text, verbatim. May be truncated -- see `truncated`. */
+  body: string;
+  /** Set when `body` was cut to fit the payload budget. */
+  truncated?: boolean;
+  /** Only present for launcher actions; same-session actions omit it. */
+  launch?: 'new-session';
+  /** provider:variant the action pins, when it declares one. */
+  model?: string;
+  autoSubmit?: boolean;
+  worktree?: boolean;
 }
 
 /**

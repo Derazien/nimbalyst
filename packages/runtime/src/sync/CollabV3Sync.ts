@@ -23,6 +23,7 @@ import { appendSyncClientParams, redactSyncUrl } from './syncClientInfo';
 import { buildSyncedSessionIndexFields } from './sessionIndexEntryFields';
 import { resolveIndexSortTimestamp } from './sessionSortTimestamp';
 import { deriveTrackerPersonalStateKey } from './trackerPersonalStateKey';
+import { hasPublishableConfig } from './projectConfig';
 import type {
   SyncConfig,
   SyncStatus,
@@ -3683,8 +3684,11 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
       // Encrypt project ID (deterministic)
       const { encryptedProjectId, projectIdIv } = await encryptProjectId(projectId, config.encryptionKey);
 
-      // Build message -- only include encrypted config if there are commands
-      // (skip when just sending gitRemoteHash on startup to avoid overwriting existing config)
+      // Build message -- only include the encrypted config when it carries
+      // content, so a hash-only call doesn't overwrite existing config with an
+      // empty object. This deliberately checks actions as well as commands: an
+      // actions-only workspace used to publish nothing at all, which was
+      // invisible on any repo that happened to have slash commands.
       const message: Record<string, unknown> = {
         type: 'projectConfigUpdate',
         encryptedProjectId,
@@ -3692,7 +3696,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
         gitRemoteHash: projectConfig.gitRemoteHash,
       };
 
-      if (projectConfig.commands.length > 0) {
+      if (hasPublishableConfig(projectConfig)) {
         const configJson = JSON.stringify(projectConfig);
         const { encrypted: encryptedConfig, iv: configIv } = await encrypt(configJson, config.encryptionKey);
         message.encryptedConfig = encryptedConfig;
@@ -3700,7 +3704,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
       }
 
       indexWs.send(JSON.stringify(message));
-      // console.log('[CollabV3] Sent projectConfigUpdate with', projectConfig.commands.length, 'commands');
+      // console.log('[CollabV3] Sent projectConfigUpdate with', projectConfig.commands.length, 'commands and', projectConfig.actions?.length ?? 0, 'actions');
     },
 
     async fetchIndex(): Promise<{ sessions: DecryptedSessionIndexEntry[]; projects: Array<{ projectId: string; name: string; sessionCount: number; lastActivityAt: number; syncEnabled: boolean; gitRemoteHash?: string }> }> {

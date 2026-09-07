@@ -31,6 +31,12 @@ import { getProjectFileSyncService } from './ProjectFileSyncService';
 import { startProjectFileSync, stopAllProjectFileSync } from '../file/WorkspaceWatcher';
 import { windowStates } from '../window/WindowManager';
 import { getGitRemoteIdentities } from '../utils/gitUtils';
+import {
+  composeProjectConfig,
+  toSyncedActionPrompts,
+  type ProjectConfigSlices,
+} from './sync/projectConfigComposer';
+import type { ActionPrompt } from './ActionPromptParser';
 import { resolveProjectPath } from '../utils/workspaceDetection';
 import { createHash } from 'crypto';
 import { setSleepPreventionMode, setSyncConnected, shutdownSleepPrevention, type PreventSleepMode } from './PowerSaveService';
@@ -1321,22 +1327,30 @@ export async function syncSettingsToMobile(_legacyOpenaiApiKey?: string): Promis
 // ============================================================================
 
 /**
- * Sync slash commands for a workspace to mobile via the index room.
- * Called after commands are discovered/updated.
- * @param workspacePath The workspace path (used as project ID)
- * @param commands Array of slash commands to sync (name + description + source only)
+ * Latest known value of each project-config slice, per workspace.
+ *
+ * The blob is a whole-object replace on the wire, but its two producers (slash
+ * commands and action prompts) fire independently. Main cannot recompute the
+ * command list on demand -- `listEntries` needs the provider-native commands
+ * that only the running provider knows -- so the last reported value is cached
+ * and every publish sends both slices together.
  */
-export async function syncProjectCommandsToMobile(
-  workspacePath: string,
-  commands: Array<{ name: string; description?: string; source: string }>
-): Promise<void> {
-  const provider = state.provider;
-  if (!provider) {
-    return; // Sync not initialized, silently skip
-  }
+const projectConfigSlices = new Map<string, ProjectConfigSlices>();
 
-  if (!provider.syncProjectConfig) {
-    return;
+function getProjectConfigSlices(workspacePath: string): ProjectConfigSlices {
+  let slices = projectConfigSlices.get(workspacePath);
+  if (!slices) {
+    slices = { commands: [], lastCommandsUpdate: 0, actions: [], lastActionsUpdate: 0 };
+    projectConfigSlices.set(workspacePath, slices);
+  }
+  return slices;
+}
+
+/** Compose both slices and send the whole blob. The only send site. */
+async function publishProjectConfig(workspacePath: string): Promise<void> {
+  const provider = state.provider;
+  if (!provider?.syncProjectConfig) {
+    return; // Sync not initialized or unsupported, silently skip
   }
 
   try {
@@ -1348,18 +1362,57 @@ export async function syncProjectCommandsToMobile(
       gitRemoteHash = createHash('sha256').update(gitRemote.canonical).digest('hex');
     }
 
-    await provider.syncProjectConfig(workspacePath, {
-      commands: commands.map(cmd => ({
-        name: cmd.name,
-        description: cmd.description,
-        source: cmd.source as 'builtin' | 'project' | 'user' | 'plugin',
-      })),
-      lastCommandsUpdate: Date.now(),
-      gitRemoteHash,
-    });
+    const slices = getProjectConfigSlices(workspacePath);
+    await provider.syncProjectConfig(
+      workspacePath,
+      composeProjectConfig({ ...slices, gitRemoteHash })
+    );
   } catch (error) {
-    logger.main.error('[SyncManager] Failed to sync project commands:', error);
+    logger.main.error('[SyncManager] Failed to sync project config:', error);
   }
+}
+
+/**
+ * Update the slash-command slice and republish.
+ * @param workspacePath The workspace path (used as project ID)
+ * @param commands Array of slash commands to sync (name + description + source only)
+ */
+export async function syncProjectCommandsToMobile(
+  workspacePath: string,
+  commands: Array<{ name: string; description?: string; source: string }>
+): Promise<void> {
+  const slices = getProjectConfigSlices(workspacePath);
+  slices.commands = commands.map(cmd => ({
+    name: cmd.name,
+    description: cmd.description,
+    source: cmd.source as 'builtin' | 'project' | 'user' | 'plugin',
+  }));
+  slices.lastCommandsUpdate = Date.now();
+  await publishProjectConfig(workspacePath);
+}
+
+/**
+ * Update the action-prompt slice and republish.
+ *
+ * Unlike commands, these carry their body: mobile pastes the prompt into its
+ * composer for the user to edit, which it cannot do from a name alone.
+ */
+export async function syncProjectActionsToMobile(
+  workspacePath: string,
+  actions: ActionPrompt[]
+): Promise<void> {
+  const slices = getProjectConfigSlices(workspacePath);
+  const projected = toSyncedActionPrompts(actions);
+  if (projected.droppedForCount > 0 || projected.droppedForSize > 0 || projected.truncatedCount > 0) {
+    logger.main.warn(
+      `[SyncManager] ai-actions.md exceeded the sync budget for ${workspacePath}: ` +
+        `${projected.droppedForCount} over the count cap, ${projected.droppedForSize} over the size budget, ` +
+        `${projected.truncatedCount} truncated`
+    );
+  }
+  slices.actions = projected.actions;
+  slices.lastActionsUpdate = Date.now();
+  await publishProjectConfig(workspacePath);
 }
 
 /**

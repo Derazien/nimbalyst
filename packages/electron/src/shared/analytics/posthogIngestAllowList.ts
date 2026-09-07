@@ -217,6 +217,7 @@ export const INTENTIONALLY_DROPPED = [
   'migration_dry_run_completed',
   'migration_dry_run_failed',
   'mobile_account_deleted',
+  'mobile_action_prompt_launched_new_session',
   'mobile_analytics_opt_out',
   'mobile_child_session_created',
   'mobile_convert_to_workstream',

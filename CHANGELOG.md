@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
+- Pick one of your project's action prompts from the mobile composer's + menu to prefill it, or open a new session with it.
 
 ### Changed
 <!-- Changes to existing functionality go here -->

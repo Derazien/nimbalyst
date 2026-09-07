@@ -459,17 +459,11 @@ public final class SyncManager: ObservableObject {
         }
 
         // Decrypt project config if present
-        var commandsJson: String? = nil
+        var decodedConfig = DecodedProjectConfig.empty
         if let encryptedConfig = entry.encryptedConfig,
            let configIv = entry.configIv,
-           let configJson = crypto.decryptOrNil(encryptedBase64: encryptedConfig, ivBase64: configIv),
-           let configData = configJson.data(using: .utf8),
-           let config = try? JSONDecoder().decode(ProjectConfig.self, from: configData) {
-            // Encode just the commands array as JSON for storage
-            if let encoded = try? JSONEncoder().encode(config.commands),
-               let jsonStr = String(data: encoded, encoding: .utf8) {
-                commandsJson = jsonStr
-            }
+           let configJson = crypto.decryptOrNil(encryptedBase64: encryptedConfig, ivBase64: configIv) {
+            decodedConfig = decodeProjectConfig(fromJson: configJson)
         }
 
         let name = (projectId as NSString).lastPathComponent
@@ -478,7 +472,8 @@ public final class SyncManager: ObservableObject {
             name: name,
             sessionCount: entry.sessionCount ?? 0,
             lastUpdatedAt: entry.lastActivityAt,
-            commandsJson: commandsJson,
+            commandsJson: decodedConfig.commandsJson,
+            actionsJson: decodedConfig.actionsJson,
             gitRemoteHash: entry.gitRemoteHash
         )
 
@@ -635,16 +630,11 @@ public final class SyncManager: ObservableObject {
         let name = (projectId as NSString).lastPathComponent
 
         // Decrypt project config if present
-        var commandsJson: String? = nil
+        var decodedConfig = DecodedProjectConfig.empty
         if let encryptedConfig = entry.encryptedConfig,
            let configIv = entry.configIv,
-           let configJson = crypto.decryptOrNil(encryptedBase64: encryptedConfig, ivBase64: configIv),
-           let configData = configJson.data(using: .utf8),
-           let config = try? JSONDecoder().decode(ProjectConfig.self, from: configData) {
-            if let encoded = try? JSONEncoder().encode(config.commands),
-               let jsonStr = String(data: encoded, encoding: .utf8) {
-                commandsJson = jsonStr
-            }
+           let configJson = crypto.decryptOrNil(encryptedBase64: encryptedConfig, ivBase64: configIv) {
+            decodedConfig = decodeProjectConfig(fromJson: configJson)
         }
 
         let project = Project(
@@ -652,7 +642,8 @@ public final class SyncManager: ObservableObject {
             name: name,
             sessionCount: entry.sessionCount ?? 0,
             lastUpdatedAt: entry.lastActivityAt,
-            commandsJson: commandsJson,
+            commandsJson: decodedConfig.commandsJson,
+            actionsJson: decodedConfig.actionsJson,
             gitRemoteHash: entry.gitRemoteHash
         )
 
