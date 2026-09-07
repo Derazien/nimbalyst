@@ -905,6 +905,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The menu bar sessions panel can mark every unread session as read at once.
 - Clicking the session name the menu bar is showing opens that session in Nimbalyst.
 - A `.deb` download for Debian and Ubuntu, which starts on Ubuntu 24.04 and later where the AppImage is blocked by AppArmor's user-namespace restriction.
+- A setting to keep Nimbalyst running in the tray when you close the last window, so sessions keep going; click the tray icon to bring the app back.
 
 ### Changed
 <!-- Changes to existing functionality go here -->

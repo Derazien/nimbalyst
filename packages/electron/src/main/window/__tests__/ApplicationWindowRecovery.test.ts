@@ -5,7 +5,8 @@ vi.mock('electron', async () => {
     const { EventEmitter } = await import('node:events');
     return { app: Object.assign(new EventEmitter(), { isReady: vi.fn(() => true), quit: vi.fn() }) };
 });
-vi.mock('../../utils/store', () => ({ getAttachedFolders: () => [] }));
+const keepRunningInTray = vi.hoisted(() => ({ value: false }));
+vi.mock('../../utils/store', () => ({ getAttachedFolders: () => [], isKeepRunningInTray: () => keepRunningInTray.value }));
 vi.mock('../../utils/logger', () => ({ logger: { main: { info: vi.fn() } } }));
 
 import { app, type BrowserWindow } from 'electron';
@@ -45,6 +46,7 @@ describe('application window recovery (#1609)', () => {
         preferred = manager = null;
         vi.mocked(app.isReady).mockReturnValue(true);
         wasManuallyClosed.mockReturnValue(false);
+        keepRunningInTray.value = false;
         dispose = initializeApplicationWindowRecovery({
             isQuitting: () => quitting,
             getPreferredProjectWindow: () => preferred,
@@ -183,6 +185,22 @@ describe('application window recovery (#1609)', () => {
                 app.emit('activate');
                 expect(createManager).toHaveBeenCalledOnce();
             }
+        } finally {
+            Object.defineProperty(process, 'platform', original);
+        }
+    });
+
+    it('keeps running in the tray on win32 when the user opted in', async () => {
+        const original = Object.getOwnPropertyDescriptor(process, 'platform')!;
+        Object.defineProperty(process, 'platform', { value: 'win32' });
+        try {
+            keepRunningInTray.value = true;
+            wasManuallyClosed.mockReturnValue(true);
+            recoverAfterProjectWindowClosed();
+            app.emit('window-all-closed');
+            await vi.runAllTimersAsync();
+            expect(app.quit).not.toHaveBeenCalled();
+            expect(createManager).not.toHaveBeenCalled();
         } finally {
             Object.defineProperty(process, 'platform', original);
         }

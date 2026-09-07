@@ -138,6 +138,7 @@ export function AdvancedPanel() {
     customPathDirs,
     spellcheckEnabled,
     showDirectChatProviders,
+    keepRunningInTray,
     historyMaxAgeDays,
     historyMaxSnapshots,
     preferredTerminalShell,
@@ -404,6 +405,17 @@ export function AdvancedPanel() {
         <UnlimitedProjectsToggle />
 
         <RestorePreviousProjectsToggle />
+
+        {/* macOS already stays running when the last window closes, so the
+            toggle would promise something it does not control there. */}
+        {process.platform !== 'darwin' && (
+          <SettingsToggle
+            checked={keepRunningInTray}
+            onChange={(checked) => updateSettings({ keepRunningInTray: checked })}
+            name="Keep running in the tray when the last window closes"
+            description="When on, closing the last window leaves Nimbalyst running in the system tray and sessions keep going. Click the tray icon to bring the app back. When off, closing the last window quits."
+          />
+        )}
 
         <SettingsToggle
           checked={analyticsEnabled}

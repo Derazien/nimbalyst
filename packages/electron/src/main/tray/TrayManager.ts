@@ -30,6 +30,7 @@ import {
   setSessionSyncConfig,
   isOSNotificationsEnabled,
   setOSNotificationsEnabled,
+  isKeepRunningInTray,
 } from '../utils/store';
 import { logger } from '../utils/logger';
 import { isPreventingSleep, getSleepPreventionMode } from '../services/PowerSaveService';
@@ -375,7 +376,19 @@ export class TrayManager {
       this.tray.on('right-click', () => {
         if (this.tray && this.appMenu) this.tray.popUpContextMenu(this.appMenu);
       });
+      return;
     }
+
+    // Off macOS the context menu answers the right-click, leaving the left one
+    // free. It is gated on the setting rather than always live so that an
+    // install which never turns "keep running in the tray" on sees exactly the
+    // tray it saw before: a right-click menu and nothing else. Read at click
+    // time, not here, because the tray is built once at startup and the setting
+    // can be flipped at any point after that.
+    this.tray.on('click', () => {
+      if (!isKeepRunningInTray()) return;
+      this.handleOpenApp();
+    });
   }
 
   /**
@@ -1630,7 +1643,13 @@ export class TrayManager {
     }
   }
 
-  /** Focus any project window. Shared by the native menu item and the panel footer. */
+  /**
+   * Focus any project window. Shared by the native menu item, the panel footer
+   * and, off macOS, a left-click on the tray icon.
+   *
+   * restoreApplicationWindow reopens the Project Manager when no window is left,
+   * which off macOS is only reachable once "keep running in the tray" is on.
+   */
   handleOpenApp(): void {
     restoreApplicationWindow();
   }

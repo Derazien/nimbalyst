@@ -2,6 +2,7 @@ import { app, type BrowserWindow } from 'electron';
 import { getProjectWindows } from './windowState';
 import { logger } from '../utils/logger';
 import { isStartupActivationPending } from './StartupActivation';
+import { isKeepRunningInTray } from '../utils/store';
 
 interface RecoveryDependencies {
     isQuitting(): boolean;
@@ -55,7 +56,8 @@ export function recoverAfterProjectWindowClosed(): void {
         // window can keep from ever firing.
         if (dependencies.wasWorkspaceManagerManuallyClosed()) {
             logger.main.info('[WindowLifecycle] Project Manager was closed by the user; not reopening it');
-            if (process.platform !== 'darwin') app.quit();
+            // Off macOS the last close quits, unless the user opted to keep running in the tray.
+            if (process.platform !== 'darwin' && !isKeepRunningInTray()) app.quit();
             return;
         }
         if (isStartupActivationPending()) return;
