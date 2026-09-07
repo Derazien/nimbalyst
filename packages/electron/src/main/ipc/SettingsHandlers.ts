@@ -1,3 +1,4 @@
+import { registerProviderCredentialHandlers } from './ProviderCredentialHandlers';
 import { BrowserWindow, safeStorage, session, dialog } from 'electron';
 import { applyAnalyticsEnabled } from '../services/analytics/applyAnalyticsEnabled';
 import { safeHandle, safeOn } from '../utils/ipcRegistry';
@@ -157,6 +158,7 @@ function getLocalNetworkIP(): string | null {
 }
 
 export function registerSettingsHandlers() {
+    registerProviderCredentialHandlers();
     // ============================================================
     // Flat-key SettingsService (per-key reads/writes + broadcast)
     //

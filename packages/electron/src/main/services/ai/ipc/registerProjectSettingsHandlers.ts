@@ -1,3 +1,5 @@
+import { withoutProviderConfigCredentials } from '../../../../shared/providerCredentials';
+import { getProviderCredentials } from '../../credentials/providerCredentials';
 import { safeHandle } from '../../../utils/ipcRegistry';
 import {
   getAIProviderOverrides,
@@ -67,8 +69,8 @@ export function registerProjectSettingsHandlers(ctx: AIServiceContext): void {
   safeHandle('ai:getEffectiveSettings', async (_event, workspacePath?: string) => {
 
     // Get global settings
-    const apiKeys = ctx.getSettingsStore().get('apiKeys', {}) as Record<string, string>;
-    const providerSettings = ctx.getSettingsStore().get('providerSettings', {}) as any;
+    const apiKeys = { ...getProviderCredentials().availableKeys(), lmstudio_url: ctx.getSettingsStore().get('apiKeys.lmstudio_url', '') as string };
+    const providerSettings = withoutProviderConfigCredentials(ctx.getSettingsStore().get('providerSettings', {}) as any);
     const showToolCalls = ctx.getSettingsStore().get('showToolCalls', false) as boolean;
     const chatShowToolCalls = ctx.getSettingsStore().get('chatShowToolCalls', true) as boolean;
     const aiDebugLogging = ctx.getSettingsStore().get('aiDebugLogging', false) as boolean;
@@ -90,7 +92,7 @@ export function registerProjectSettingsHandlers(ctx: AIServiceContext): void {
 
     return {
       success: true,
-      settings: effective,
+      settings: { ...effective, apiKeys: ctx.maskApiKeys(effective.apiKeys), providerSettings: Object.fromEntries(Object.entries(effective.providerSettings).map(([id, config]) => [id, { ...config, ...(config.apiKey ? { apiKey: ctx.maskApiKey(config.apiKey) } : {}) }])) },
     };
   });
 

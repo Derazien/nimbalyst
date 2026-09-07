@@ -18,7 +18,8 @@ const mocks = vi.hoisted(() => ({
 
 // MessageStreamingHandler pulls in most of the main process. Everything below
 // exists only to let it import; nothing here is under test.
-vi.mock("electron", () => ({
+vi.mock("electron", async () => ({
+  app: (await import('../../../../../test-stubs/privateUserData')).testApp,
   BrowserWindow: {
     fromWebContents: vi.fn(() => null),
     getAllWindows: vi.fn(() => []),

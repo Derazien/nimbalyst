@@ -66,9 +66,9 @@ if (typeof window !== 'undefined') {
 }
 
 // Mock electron for tests that import it
-vi.mock('electron', () => ({
+vi.mock('electron', async () => ({
   app: {
-    getPath: vi.fn(() => '/mock/path'),
+    getPath: (await import('./test-stubs/privateUserData')).testApp.getPath,
     getName: vi.fn(() => 'test-app'),
     getVersion: vi.fn(() => '1.0.0'),
     // Lifecycle event registration: several main-process modules call

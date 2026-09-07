@@ -744,7 +744,9 @@ export function registerWorkspaceHandlers() {
 
     // Get entire workspace state - no routing, no BS
     safeHandle('workspace:get-state', async (event, workspacePath: string) => {
-        return getWorkspaceState(workspacePath);
+        const state = structuredClone(getWorkspaceState(workspacePath));
+        for (const config of Object.values(state.aiProviderOverrides?.providers ?? {})) delete config.apiKey;
+        return state;
     });
 
     /**
@@ -811,6 +813,7 @@ export function registerWorkspaceHandlers() {
 
     // Update workspace state - takes partial update, merges atomically with deep merge
     safeHandle('workspace:update-state', async (event, workspacePath: string, updates: any) => {
+        if (Object.values(updates?.aiProviderOverrides?.providers ?? {}).some((config: any) => config && 'apiKey' in config)) throw new Error('Use the provider credential API to change keys.');
         if (
             updates
             && (
@@ -820,7 +823,7 @@ export function registerWorkspaceHandlers() {
         ) {
             throw new Error('Local tracker numbering state must be changed through the validated tracker-local-key API.');
         }
-        return updateWorkspaceState(workspacePath, (state) => {
+        const updated = updateWorkspaceState(workspacePath, (state) => {
             // Extension storage writes carry the complete cache. Replace this one
             // field so deletions survive; deepMerge intentionally preserves keys.
             if (updates && Object.prototype.hasOwnProperty.call(updates, 'extensionStorage')) {
@@ -831,6 +834,8 @@ export function registerWorkspaceHandlers() {
             }
             deepMerge(state, updates);
         });
+        for (const config of Object.values(updated.aiProviderOverrides?.providers ?? {})) delete config.apiKey;
+        return updated;
     });
 
     // File operations for workspace files

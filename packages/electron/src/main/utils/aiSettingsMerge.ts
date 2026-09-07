@@ -1,3 +1,4 @@
+import { getProviderCredentials } from '../services/credentials/providerCredentials';
 /**
  * AI Settings Merge Utility
  *
@@ -213,7 +214,8 @@ export function mergeAISettings(
     // If provider has a project-specific API key, add it to apiKeys
     if (overrideProvider?.apiKey) {
       // Store under provider-specific key to allow per-project keys
-      effective.apiKeys[`${providerId}_project`] = overrideProvider.apiKey;
+      const key = getProviderCredentials().availableKeys({ workspacePath: getAIProviderOverrides(workspacePath!) ? workspacePath! : resolveProjectPath(workspacePath!) })[providerId];
+      if (key) effective.apiKeys[`${providerId}_project`] = key;
     }
   }
 

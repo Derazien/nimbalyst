@@ -1,6 +1,7 @@
 export type SettingsScope = 'application' | 'account' | 'project';
 
 export type ApplicationSettingsCategory =
+  | 'provider-credentials'
   | 'notifications'
   | 'themes'
   | 'voice-mode'
@@ -142,6 +143,7 @@ const builtinSettingsRouteDefinitions: readonly Omit<BuiltinSettingsRoute, 'sour
   { id: 'advanced', scope: 'application', group: 'Application', label: 'Advanced', icon: 'settings' },
   { id: 'database', scope: 'application', group: 'Application', label: 'Database', icon: 'database', isAlpha: true, isAvailable: developerOnly },
   { id: 'beta-features', scope: 'application', group: 'Application', label: 'Beta Features', icon: 'biotech', isAvailable: () => false },
+  { id: 'provider-credentials', scope: 'application', group: 'Agent Providers', label: 'Saved API keys', icon: 'key' },
   { id: 'claude-code', scope: 'application', group: 'Agent Providers', label: 'Claude Agent', icon: 'smart_toy' },
   { id: 'openai-codex', scope: 'application', group: 'Agent Providers', label: 'OpenAI Codex', icon: 'smart_toy' },
   { id: 'opencode', scope: 'application', group: 'Agent Providers', label: 'OpenCode', icon: 'terminal', isAlpha: true },

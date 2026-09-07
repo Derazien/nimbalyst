@@ -1,3 +1,4 @@
+import { withoutProviderConfigCredentials } from '../../shared/providerCredentials';
 /**
  * SettingsService — main-process authority for flat-key settings.
  *
@@ -20,7 +21,7 @@
  * working unchanged while the renderer talks only to this service).
  */
 
-import Store from 'electron-store';
+import Store from '../utils/privateSettingsStore';
 import { BrowserWindow } from 'electron';
 import {
   SETTINGS_REGISTRY,
@@ -33,6 +34,8 @@ import {
   type SettingStorage,
 } from '../../shared/settings/keys';
 import { logger } from '../utils/logger';
+import { getProviderCredentials } from './credentials/providerCredentials';
+import { isProviderCredentialKey, SAVED_CREDENTIAL } from '../../shared/providerCredentials';
 
 /**
  * Providers that use dynamic model discovery -- their `models` field must
@@ -111,6 +114,11 @@ class SettingsServiceImpl {
    */
   get<K extends SettingKey>(key: K): SettingValue<K> {
     this.init();
+    if (isProviderCredentialKey(key)) {
+      const name = key.slice('ai.apiKey.'.length);
+      const configured = getProviderCredentials().snapshot().credentials.some(c => c.name === name && !c.workspacePath);
+      return (configured ? SAVED_CREDENTIAL : '') as SettingValue<K>;
+    }
     const desc = getDescriptor(key);
     const raw = this.getStore(desc.storage.store).get(desc.storage.path);
     if (raw === undefined || raw === null) {
@@ -133,7 +141,7 @@ class SettingsServiceImpl {
       );
       return (desc.defaultValue as SettingValue<K>);
     }
-    return parsed.data as SettingValue<K>;
+    return (key.startsWith('ai.provider.') ? withoutProviderConfigCredentials({ config: parsed.data }).config : parsed.data) as SettingValue<K>;
   }
 
   /**
@@ -143,6 +151,16 @@ class SettingsServiceImpl {
    */
   set<K extends SettingKey>(key: K, value: SettingValue<K>): void {
     this.init();
+    if (isProviderCredentialKey(key)) {
+      const name = key.slice('ai.apiKey.'.length);
+      if (typeof value !== 'string') throw new Error('Invalid provider credential');
+      if (value) getProviderCredentials().set(name, value);
+      else getProviderCredentials().delete(name);
+      this.notify(key, value ? SAVED_CREDENTIAL : '');
+      return;
+    }
+    if (key.startsWith('ai.provider.') && value && typeof value === 'object' && 'apiKey' in value)
+      throw new Error('Use the dedicated API key control to change credentials');
     const desc = getDescriptor(key);
     const parsed = desc.schema.safeParse(value);
     if (!parsed.success) {
@@ -163,6 +181,11 @@ class SettingsServiceImpl {
    */
   delete<K extends SettingKey>(key: K): void {
     this.init();
+    if (isProviderCredentialKey(key)) {
+      getProviderCredentials().delete(key.slice('ai.apiKey.'.length));
+      this.notify(key, '');
+      return;
+    }
     const desc = getDescriptor(key);
     this.getStore(desc.storage.store).delete(desc.storage.path as any);
     // Broadcast the post-delete value (= default) so renderers update their

@@ -1,3 +1,4 @@
+import Store from '../../utils/privateSettingsStore';
 export { handleAskUserQuestion } from './askUserQuestionHandler';
 import { BrowserWindow, ipcMain } from "electron";
 import {
@@ -647,7 +648,6 @@ export async function handleGitCommitProposal(
   // Check if auto-commit is enabled
   let isAutoCommit = false;
   try {
-    const Store = (await import("electron-store")).default;
     const aiSettingsStore = new Store({ name: "ai-settings" });
     isAutoCommit = aiSettingsStore.get("autoCommitEnabled", false) as boolean;
   } catch {

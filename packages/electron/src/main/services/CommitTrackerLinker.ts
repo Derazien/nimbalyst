@@ -15,7 +15,7 @@
  */
 
 import { execFile } from 'child_process';
-import Store from 'electron-store';
+import Store from '../utils/privateSettingsStore';
 import { logger } from '../utils/logger';
 import { parseJsonObjectColumn } from '../utils/jsonColumn';
 import { isLocalIssueKey } from '../../shared/localIssueKey';

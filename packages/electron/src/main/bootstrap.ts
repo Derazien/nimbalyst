@@ -24,7 +24,7 @@
 
 import { app } from 'electron';
 import * as path from 'path';
-import Store from 'electron-store';
+import Store, { hardenExistingSettings } from './utils/privateSettingsStore';
 import { createUncaughtExceptionHandler } from './uncaughtException';
 
 // CRITICAL: Strip inherited API keys from process.env before ANY downstream code
@@ -75,6 +75,8 @@ if (customUserDataDir) {
   app.setPath('appData', path.dirname(customUserDataDir));
   // console.log(`[Bootstrap] Using custom userData directory: ${customUserDataDir}`);
 }
+
+hardenExistingSettings(app.getPath('userData'));
 
 // Configure V8 heap memory limit from app settings
 // This must happen before app.whenReady() for the flag to take effect

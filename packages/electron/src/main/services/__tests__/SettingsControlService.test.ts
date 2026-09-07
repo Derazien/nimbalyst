@@ -6,7 +6,8 @@ import { describe, expect, it, vi } from 'vitest';
 // StytchAuthService, WindowManager). For these invariants we only need the
 // exported constants, so stub the heavy modules to keep the test fast.
 
-vi.mock('electron', () => ({
+vi.mock('electron', async () => ({
+  app: (await import('../../../../test-stubs/privateUserData')).testApp,
   BrowserWindow: { getAllWindows: () => [] },
 }));
 

@@ -1,3 +1,4 @@
+import { getProviderCredentials } from '../../credentials/providerCredentials';
 import { getAgentProviderRegistry } from '../../../extensions/AgentProviderRegistry';
 import { safeHandle } from '../../../utils/ipcRegistry';
 import { getWindowIdForWindow, resolveActiveWorkspacePathForWindowId } from '../../../window/windowState';
@@ -28,7 +29,7 @@ export function registerModelHandlers(ctx: AIServiceContext): void {
       getWindowIdForWindow(BrowserWindow.fromWebContents(event.sender)),
     ) ?? undefined;
     const providerSettings = ctx.getNormalizedProviderSettings() as Record<AIProviderType, any>;
-    const apiKeys = ctx.getSettingsStore().get('apiKeys', {}) as Record<string, string>;
+    const apiKeys = getProviderCredentials().availableKeys();
 
     // Only fetch from providers that are enabled (skip LMStudio network call when disabled)
     const enabledSet = new Set<AIProviderType>();
@@ -168,7 +169,7 @@ export function registerModelHandlers(ctx: AIServiceContext): void {
       getWindowIdForWindow(BrowserWindow.fromWebContents(event.sender)),
     ) ?? undefined;
     const providerSettings = ctx.getNormalizedProviderSettings() as Record<AIProviderType, any>;
-    const apiKeys = ctx.getSettingsStore().get('apiKeys', {}) as Record<string, string>;
+    const apiKeys = getProviderCredentials().availableKeys();
     const claudeCodeSettings = providerSettings['claude-code'] || {};
 
     // console.log('[AIService] ai:getModels - claude-code settings:', {

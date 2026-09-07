@@ -17,12 +17,12 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('electron', () => {
+vi.mock('electron', async () => {
   const noop = () => {};
   return {
     app: {
       on: vi.fn(), once: vi.fn(), whenReady: vi.fn(() => Promise.resolve()),
-      getPath: vi.fn(() => '/mock/path'), getName: vi.fn(() => 'test-app'),
+      getPath: (await import('../../../../test-stubs/privateUserData')).testApp.getPath, getName: vi.fn(() => 'test-app'),
       getVersion: vi.fn(() => '1.0.0'), setName: vi.fn(), setPath: vi.fn(), quit: vi.fn(),
       requestSingleInstanceLock: vi.fn(() => true), commandLine: { appendSwitch: vi.fn() },
       isPackaged: false,

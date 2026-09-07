@@ -1,3 +1,6 @@
+import { resolveProviderApiKey } from './resolveProviderApiKey';
+import { SAVED_CREDENTIAL, withoutProviderConfigCredentials } from '../../../shared/providerCredentials';
+import { getProviderCredentials } from '../credentials/providerCredentials';
 /**
  * Main AI service that coordinates providers and sessions
  */
@@ -5,7 +8,7 @@
 import { BrowserWindow, ipcMain } from 'electron';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import Store from 'electron-store';
+import Store from '../../utils/privateSettingsStore';
 import {
   isExtensionAgentProvider,
 } from './providerResolution';
@@ -759,59 +762,9 @@ export class AIService {
    * Project-specific API keys take precedence over global keys.
    */
   private getApiKeyForProvider(provider: string, workspacePath?: string): string | undefined {
-    const globalApiKeys = this.getSettingsStore().get('apiKeys', {}) as Record<string, string>;
-    const providerSettings = this.getNormalizedProviderSettings() as any;
-
-    // Claude Code must never use implicit keys.
-    // It only uses its dedicated key when API-key auth is explicitly selected.
-    if (provider === 'claude-code') {
-      const authMethod = providerSettings?.['claude-code']?.authMethod ?? 'login';
-      if (authMethod !== 'api-key') {
-        return undefined;
-      }
-    }
-
-    // Check for project-level API key override
-    if (workspacePath) {
-      const overrides = getAIProviderOverrides(workspacePath);
-      const overrideKey = overrides?.providers?.[provider]?.apiKey;
-      if (overrideKey) {
-        return overrideKey;
-      }
-    }
-
-    // Return the explicitly-configured global API key.
-    // NEVER fall back to process.env — users must explicitly set keys in settings.
-    // Implicit env-var usage caused a user to burn $100+ on their personal Anthropic
-    // account because Nimbalyst silently picked up ANTHROPIC_API_KEY from a .env file.
-
-    // Extension-agent providers (aiAgentProviders contributions) defer auth to
-    // the extension itself (e.g. Antigravity rides ~/.gemini OAuth). The host
-    // does not manage their API key. See providerResolution.ts for the shim
-    // until session.provider is widened to a discriminated union.
-    if (isExtensionAgentProvider(provider)) {
-      return 'not-required';
-    }
-
-    switch (provider) {
-      case 'claude':
-        return globalApiKeys['anthropic'];
-      case 'claude-code':
-        return globalApiKeys['claude-code'];
-      case 'openai':
-        return globalApiKeys['openai'];
-      case 'openai-codex':
-        return globalApiKeys['openai-codex'];
-      case 'lmstudio':
-        return 'not-required';
-      case 'antigravity-gemini-agent':
-        // Rides the user's existing Antigravity / ~/.gemini login. Nimbalyst
-        // holds no key for it, and deliberately reads no env var -- see the
-        // standing rule in CLAUDE.md.
-        return 'not-required';
-      default:
-        return globalApiKeys[provider];
-    }
+    const settings = this.getNormalizedProviderSettings() as any;
+    return resolveProviderApiKey(getProviderCredentials(), provider, workspacePath,
+      settings?.['claude-code']?.authMethod, isExtensionAgentProvider(provider));
   }
 
   /**
@@ -1370,8 +1323,8 @@ export class AIService {
     if (normalized !== providerSettings) {
       this.getSettingsStore().set('providerSettings', normalized);
     }
-    this.cachedNormalizedProviderSettings = normalized;
-    return normalized;
+    this.cachedNormalizedProviderSettings = withoutProviderConfigCredentials(normalized);
+    return this.cachedNormalizedProviderSettings;
   }
 
   private normalizeProviderSettings(providerSettings: Record<string, any>): Record<string, any> {
@@ -1386,14 +1339,13 @@ export class AIService {
   }
 
   private maskApiKey(key: string): string {
-    if (!key || key.length <= 20) return key;
-    return `${key.substring(0, 10)}...${key.substring(key.length - 4)}`;
+    return key ? SAVED_CREDENTIAL : '';
   }
 
   private maskApiKeys(keys: Record<string, string>): Record<string, string> {
     const masked: Record<string, string> = {};
     for (const [provider, key] of Object.entries(keys)) {
-      masked[provider] = this.maskApiKey(key);
+      masked[provider] = provider === 'lmstudio_url' ? key : this.maskApiKey(key);
     }
     return masked;
   }

@@ -1,3 +1,4 @@
+import Store from '../utils/privateSettingsStore';
 /**
  * IPC handlers for the extension marketplace.
  *
@@ -665,7 +666,6 @@ async function installFromGitHubCloneSource(
  */
 async function pruneAiSettingsProviders(providerIds: string[]): Promise<void> {
   if (providerIds.length === 0) return;
-  const { default: Store } = await import('electron-store');
   const aiStore = new Store<Record<string, unknown>>({ name: 'ai-settings' });
   const providerSettings = (aiStore.get('providerSettings', {}) as Record<string, unknown>) ?? {};
   const removed: string[] = [];

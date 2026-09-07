@@ -1,3 +1,4 @@
+import { getProviderCredentials } from '../../credentials/providerCredentials';
 import { findOwnedBackendTool } from '../../../mcp/backendToolRegistry';
 import { resolveBackendWorkspacePath } from '../../../mcp/mcpWorkspaceResolver';
 import { handleBackendTool } from '../../../mcp/tools/backendToolHandler';
@@ -174,7 +175,7 @@ export function registerExtensionChatHandlers(ctx: AIServiceContext): void {
   safeHandle('extensions:ai-list-models', async () => {
     const CHAT_PROVIDERS: AIProviderType[] = ['claude', 'openai', 'lmstudio'];
     const providerSettings = ctx.getNormalizedProviderSettings() as any;
-    const globalApiKeys = ctx.getSettingsStore().get('apiKeys', {}) as Record<string, string>;
+    const globalApiKeys = getProviderCredentials().availableKeys();
 
     const allModels: Array<{ id: string; name: string; provider: string }> = [];
 
@@ -186,7 +187,7 @@ export function registerExtensionChatHandlers(ctx: AIServiceContext): void {
       const apiKey = provider === 'claude' ? globalApiKeys['anthropic']
         : provider === 'openai' ? globalApiKeys['openai']
         : undefined;
-      const baseUrl = provider === 'lmstudio' ? (globalApiKeys['lmstudio_url'] || undefined) : undefined;
+      const baseUrl = provider === 'lmstudio' ? (ctx.getSettingsStore().get('apiKeys.lmstudio_url', '') as string || undefined) : undefined;
 
       try {
         // CHAT_PROVIDERS above is claude/openai/lmstudio -- none project-scoped.
@@ -389,8 +390,7 @@ async function resolveExtensionChatProvider(
 
   // LM Studio needs baseUrl
   if (providerType === 'lmstudio') {
-    const globalApiKeys = ctx.getSettingsStore().get('apiKeys', {}) as Record<string, string>;
-    providerConfig.baseUrl = globalApiKeys['lmstudio_url'] || 'http://127.0.0.1:1234';
+    providerConfig.baseUrl = ctx.getSettingsStore().get('apiKeys.lmstudio_url', '') as string || 'http://127.0.0.1:1234';
   }
 
   const syntheticSessionId = `ext-completion-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;

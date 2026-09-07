@@ -1,3 +1,5 @@
+import { SAVED_CREDENTIAL } from '../../../shared/providerCredentials';
+import { ProviderCredentialsPanel } from '../GlobalSettings/panels/ProviderCredentialsPanel';
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useAtom, useAtomValue, useSetAtom } from 'jotai';
 import { usePostHog } from 'posthog-js/react';
@@ -323,7 +325,8 @@ export function SettingsView({
   const [, updateAvailableModels] = useAtom(setAvailableModelsAtom);
 
   // Destructure for easier access (these update when atom updates)
-  const { providers, apiKeys, availableModels } = aiProviderSettings;
+  const { providers, availableModels } = aiProviderSettings;
+  const apiKeys = Object.fromEntries(Object.entries(aiProviderSettings.apiKeys).map(([name, value]) => [name, value === SAVED_CREDENTIAL ? '' : value]));
   const showDirectChatProviders = shouldShowDirectChatProviderSettings(
     advancedSettings.showDirectChatProviders,
     aiProviderSettings,
@@ -878,6 +881,8 @@ export function SettingsView({
     }
 
     switch (selectedCategory) {
+      case 'provider-credentials':
+        return <ProviderCredentialsPanel />;
       case 'claude':
         return wrapWithOverride('claude', 'Claude', <ClaudePanel {...commonProps} />);
       case 'claude-code':
@@ -1188,6 +1193,7 @@ export function SettingsView({
 
         <main className="settings-view-main flex-1 overflow-y-auto p-6 bg-[var(--nim-bg)] relative z-0">
           <div className="settings-panel-container max-w-[800px]">
+            {scope === 'application' && ['claude', 'claude-code', 'openai', 'openai-codex', 'opencode'].includes(selectedCategory) && <ProviderCredentialsPanel compact name={selectedCategory === 'claude' ? 'anthropic' : selectedCategory} />}
             {renderPanel()}
           </div>
         </main>

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('electron', () => ({
-  app: {
+vi.mock('electron', async () => ({
+  app: { ...(await import('../../../../../../electron/test-stubs/privateUserData')).testApp,
     isPackaged: false,
   },
 }));

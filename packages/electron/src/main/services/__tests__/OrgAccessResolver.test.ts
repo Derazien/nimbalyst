@@ -13,9 +13,9 @@ import * as os from 'os';
 import * as path from 'path';
 import { asTeamMemberId } from '@nimbalyst/runtime/auth/jwtScopes';
 
-vi.mock('electron', () => ({
+vi.mock('electron', async () => ({
   app: {
-    getPath: vi.fn(() => '/mock/path'),
+    getPath: (await import('../../../../test-stubs/privateUserData')).testApp.getPath,
     getName: vi.fn(() => 'test-app'),
     getVersion: vi.fn(() => '1.0.0'),
     on: vi.fn(),

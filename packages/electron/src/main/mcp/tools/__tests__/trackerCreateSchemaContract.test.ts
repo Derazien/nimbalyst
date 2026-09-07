@@ -60,9 +60,9 @@ vi.mock('../../../services/MainBodyDocService', () => ({
   applyHeadlessBodyMarkdown: vi.fn(async () => undefined),
 }));
 
-vi.mock('electron', () => ({
+vi.mock('electron', async () => ({
   app: {
-    getPath: vi.fn(() => '/tmp'),
+    getPath: (await import('../../../../../test-stubs/privateUserData')).testApp.getPath,
     isPackaged: false,
     getName: vi.fn(() => 'Nimbalyst'),
   },

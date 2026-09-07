@@ -256,3 +256,21 @@ describe('the golden set itself', () => {
     expect(semantic.length / GOLDEN_SET.length).toBeGreaterThan(0.3);
   });
 });
+
+
+it('requires an explicit evaluation credential file and never echoes malformed secret input', async () => {
+  const { resolveApiKey } = await import('../keySource.js');
+  const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  expect(resolveApiKey().key).toBeNull();
+  const directory = mkdtempSync(join(tmpdir(), 'eval-key-'));
+  const file = join(directory, 'key.json');
+  try {
+    writeFileSync(file, JSON.stringify({apiKeys: {openai: 'dummy-eval-key'}}));
+    expect(resolveApiKey(file).key).toBe('dummy-eval-key');
+    writeFileSync(file, '{"apiKeys": "dummy-eval-key" invalid}');
+    expect(resolveApiKey(file).key).toBeNull();
+    expect(resolveApiKey(file).detail.includes('dummy-eval-key')).toBe(false);
+  } finally { rmSync(directory, {recursive: true, force: true}); }
+});

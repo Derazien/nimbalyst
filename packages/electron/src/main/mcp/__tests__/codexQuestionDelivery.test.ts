@@ -24,7 +24,8 @@ const mocks = vi.hoisted(() => ({
   active: false,
   updateActivity: vi.fn(async () => {}),
 }));
-vi.mock("electron", () => ({
+vi.mock("electron", async () => ({
+  app: (await import('../../../../test-stubs/privateUserData')).testApp,
   ipcMain: new EventEmitter(),
   BrowserWindow: { getAllWindows: () => [] },
 }));

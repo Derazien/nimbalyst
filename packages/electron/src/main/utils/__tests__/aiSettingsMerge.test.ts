@@ -1,3 +1,5 @@
+// @vitest-environment node
+vi.mock('../logger', () => ({ logger: { main: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } } }));
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const { getAIProviderOverridesMock, resolveProjectPathMock } = vi.hoisted(() => ({
@@ -5,20 +7,14 @@ const { getAIProviderOverridesMock, resolveProjectPathMock } = vi.hoisted(() => 
   resolveProjectPathMock: vi.fn((workspacePath: string) => workspacePath),
 }));
 
-vi.mock('../store', async () => {
-  const actual = await vi.importActual<typeof import('../store')>('../store');
-  return {
-    ...actual,
-    getAIProviderOverrides: getAIProviderOverridesMock,
-  };
-});
+vi.mock('../store', () => ({ getAIProviderOverrides: getAIProviderOverridesMock }));
 
 vi.mock('../workspaceDetection', () => ({
   resolveProjectPath: resolveProjectPathMock,
 }));
 
 import { mergeAISettings, GlobalAISettings } from '../aiSettingsMerge';
-import { normalizeAIProviderOverrides } from '../store';
+import { normalizeAIProviderOverrides } from '../normalizeAIProviderOverrides';
 
 const baseGlobal: GlobalAISettings = {
   defaultProvider: 'claude-code',

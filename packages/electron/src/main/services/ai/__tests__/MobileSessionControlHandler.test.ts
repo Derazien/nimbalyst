@@ -24,7 +24,8 @@ const mocks = vi.hoisted(() => {
 
 vi.mock('../codexQuestionDelivery', () => ({ deliverCodexQuestionAnswer: mocks.deliverCodex }));
 
-vi.mock('electron', () => ({
+vi.mock('electron', async () => ({
+  app: (await import('../../../../../test-stubs/privateUserData')).testApp,
   ipcMain: {
     listenerCount: mocks.ipcListenerCount,
     emit: mocks.ipcEmit,

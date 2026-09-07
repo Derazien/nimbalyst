@@ -1,3 +1,5 @@
+import PrivateSettingsStore from '../utils/privateSettingsStore';
+import { getProviderCredentials } from './credentials/providerCredentials';
 /**
  * ProjectMigrationService.ts
  *
@@ -418,8 +420,8 @@ export class ProjectMigrationService {
   private async migrateWorkspaceSettings(oldPath: string, newPath: string): Promise<void> {
     // Get the electron-store for workspace settings
     // We need to access it directly since the exported functions don't expose key migration
-    const ElectronStore = require('electron-store');
-    const workspaceStore = new ElectronStore({
+    getProviderCredentials().moveWorkspace(oldPath, newPath);
+    const workspaceStore = new PrivateSettingsStore<Record<string, any>>({
       name: 'workspace-settings',
       cwd: app.getPath('userData'),
     });

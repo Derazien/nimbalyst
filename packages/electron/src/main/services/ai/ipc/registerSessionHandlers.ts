@@ -236,8 +236,7 @@ export function registerSessionHandlers(ctx: AIServiceContext): void {
     // Add LMStudio-specific config
     if (provider === 'lmstudio') {
       const lmstudioSettings = ctx.getSettingsStore().get('providerSettings.lmstudio', {}) as any;
-      const storedApiKeys = ctx.getSettingsStore().get('apiKeys', {}) as Record<string, string>;
-      initConfig.baseUrl = lmstudioSettings.baseUrl || storedApiKeys['lmstudio_url'] || 'http://127.0.0.1:8234';
+      initConfig.baseUrl = lmstudioSettings.baseUrl || ctx.getSettingsStore().get('apiKeys.lmstudio_url', '') || 'http://127.0.0.1:8234';
     }
 
     // Pass through allowedTools and effort level settings for Claude Code

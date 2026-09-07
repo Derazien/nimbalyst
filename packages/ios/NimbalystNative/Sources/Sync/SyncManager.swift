@@ -998,10 +998,12 @@ public final class SyncManager: ObservableObject {
         logger.info("Decrypted settings: version=\(settings.version), hasOpenAIKey=\(settings.openaiApiKey != nil)")
 
         // Store the OpenAI API key in the Keychain
-        if let apiKey = settings.openaiApiKey, !apiKey.isEmpty {
-            try? KeychainManager.storeOpenAIApiKey(apiKey)
-            logger.info("Stored OpenAI API key from desktop sync")
-            NotificationCenter.default.post(name: .init("OpenAIApiKeySynced"), object: nil)
+        do {
+            if try applySyncedOpenAIKey(settings.openaiApiKey, store: KeychainManager.storeOpenAIApiKey, delete: KeychainManager.deleteOpenAIApiKey) {
+                NotificationCenter.default.post(name: .init("OpenAIApiKeySynced"), object: nil)
+            }
+        } catch {
+            logger.error("Could not apply synced OpenAI credential to Keychain")
         }
 
         #if os(iOS)

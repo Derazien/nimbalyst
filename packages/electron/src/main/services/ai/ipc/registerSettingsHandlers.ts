@@ -1,3 +1,5 @@
+import { SAVED_CREDENTIAL } from '../../../../shared/providerCredentials';
+import { getProviderCredentials } from '../../credentials/providerCredentials';
 import { safeHandle } from '../../../utils/ipcRegistry';
 import { logger } from '../../../utils/logger';
 import { getWindowId } from '../../../window/WindowManager';
@@ -57,7 +59,7 @@ export function registerSettingsHandlers(ctx: AIServiceContext): void {
 
   // Settings handlers
   safeHandle('ai:getSettings', async () => {
-    const apiKeys = ctx.getSettingsStore().get('apiKeys', {}) as Record<string, string>;
+    const apiKeys = { ...getProviderCredentials().availableKeys(), lmstudio_url: ctx.getSettingsStore().get('apiKeys.lmstudio_url', '') as string };
     const providerSettings = ctx.getNormalizedProviderSettings();
     const showToolCalls = ctx.getSettingsStore().get('showToolCalls', false) as boolean;
     const chatShowToolCalls = ctx.getSettingsStore().get('chatShowToolCalls', true) as boolean;
@@ -127,23 +129,18 @@ export function registerSettingsHandlers(ctx: AIServiceContext): void {
       // The renderer sends the masked form of unchanged keys so it can show
       // them in form fields. Don't overwrite real keys with masks; compare
       // each incoming value against the stored mask before writing.
-      const stored = (ctx.getSettingsStore().get('apiKeys', {}) as Record<string, string>) ?? {};
+      const stored = (getProviderCredentials().availableKeys()) ?? {};
       const writeApiKey = (name: string, incoming: unknown): void => {
         if (incoming === undefined) return;
         if (!incoming) {
           // Empty string / null clears the key.
-          safeSet(`ai.apiKey.${name}`, '');
+          svc.set(`ai.apiKey.${name}` as any, '');
           return;
         }
         if (typeof incoming !== 'string') return;
-        if (incoming === ctx.maskApiKey(stored[name] || '')) return; // unchanged
-        safeSet(`ai.apiKey.${name}`, incoming);
-        if (name === 'openai') {
-          // Sync openai key to mobile devices for voice mode.
-          import('../../SyncManager').then(({ syncSettingsToMobile }) => {
-            syncSettingsToMobile(incoming);
-          }).catch(() => { /* sync manager may not be available */ });
-        }
+        if (incoming === SAVED_CREDENTIAL || incoming === ctx.maskApiKey(stored[name] || '')) return; // unchanged
+        svc.set(`ai.apiKey.${name}` as any, incoming);
+
       };
       writeApiKey('anthropic', settings.apiKeys.anthropic);
       writeApiKey('claude-code', settings.apiKeys['claude-code']);
@@ -218,7 +215,7 @@ export function registerSettingsHandlers(ctx: AIServiceContext): void {
 
   // Test connection
   safeHandle('ai:testConnection', async (event, provider: string, workspacePath?: string) => {
-    const apiKeys = ctx.getSettingsStore().get('apiKeys', {}) as Record<string, string>;
+    const resolvedApiKey = ctx.getApiKeyForProvider(provider, workspacePath);
 
     // Get the appropriate API key based on provider.
     // Extension-agent providers (aiAgentProviders contributions) handle their
@@ -235,28 +232,28 @@ export function registerSettingsHandlers(ctx: AIServiceContext): void {
     } else {
       switch (provider) {
         case 'claude':
-          apiKey = apiKeys['anthropic'];
+          apiKey = resolvedApiKey;
           if (!apiKey) {
             return { success: false, error: 'Anthropic API key not configured' };
           }
           break;
         case 'claude-code':
           // Claude Code: API key is optional, uses SSO login if not provided
-          apiKey = apiKeys['claude-code'];
+          apiKey = resolvedApiKey;
           // No error if missing - will use SSO login
           break;
         case 'openai':
-          apiKey = apiKeys['openai'];
+          apiKey = resolvedApiKey;
           if (!apiKey) {
             return { success: false, error: 'OpenAI API key not configured' };
           }
           break;
         case 'openai-codex':
-          apiKey = apiKeys['openai-codex'];
+          apiKey = resolvedApiKey;
           break;
         case 'opencode':
           // OpenCode: API key is optional, uses its own config
-          apiKey = apiKeys['opencode'] || 'not-required';
+          apiKey = resolvedApiKey || 'not-required';
           break;
         case 'copilot-cli':
           // Copilot uses its own CLI auth, no API key needed

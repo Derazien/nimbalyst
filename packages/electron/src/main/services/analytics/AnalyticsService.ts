@@ -1,4 +1,4 @@
-import Store from "electron-store";
+import Store from "../../utils/privateSettingsStore";
 import {PostHog} from "posthog-node";
 import {ulid} from "ulid";
 import {logger} from "../../utils/logger";

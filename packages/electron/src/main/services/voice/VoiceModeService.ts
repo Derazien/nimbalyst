@@ -1,3 +1,4 @@
+import { getProviderCredentials } from '../credentials/providerCredentials';
 /**
  * Voice Mode Service - manages voice mode sessions and integrates with OpenAI Realtime API
  */
@@ -14,7 +15,7 @@ import {
 import { handleExtensionTool } from '../../mcp/tools/extensionToolHandler';
 import { handleBackendTool, isBackendTool } from '../../mcp/tools/backendToolHandler';
 import { safeHandle } from '../../utils/ipcRegistry';
-import Store from 'electron-store';
+import Store from '../../utils/privateSettingsStore';
 import { AnalyticsService } from '../analytics/AnalyticsService';
 import { AISessionsRepository } from '@nimbalyst/runtime';
 import { searchSessionsForVoice } from './sessionSearch';
@@ -341,8 +342,7 @@ export function initVoiceModeService() {
       }
 
       // Get OpenAI API key from settings store
-      const apiKeys = settingsStore.get('apiKeys', {}) as Record<string, string>;
-      const apiKey = apiKeys['openai'];
+      const apiKey = getProviderCredentials().get('openai');
 
       if (!apiKey) {
         throw new Error('OpenAI API key not configured. Please add it in Settings.');
@@ -1251,8 +1251,7 @@ export function initVoiceModeService() {
   safeHandle('voice-mode:preview-voice', async (event, voiceId: string) => {
     try {
       // Get OpenAI API key
-      const apiKeys = settingsStore.get('apiKeys') as Record<string, string> | undefined;
-      const apiKey = apiKeys?.openai;
+      const apiKey = getProviderCredentials().get('openai');
 
       if (!apiKey) {
         return {

@@ -1,3 +1,5 @@
+import { changeProviderCredential } from '../providerCredentials';
+import { SAVED_CREDENTIAL } from '../../../shared/providerCredentials';
 /**
  * App Settings Atoms
  *
@@ -1404,8 +1406,15 @@ async function flushAIProviderPersist(): Promise<void> {
       const value = snapshot.apiKeys[name];
       if (value === undefined) continue;
       writes.push(
-        window.electronAPI.settingsSet(`ai.apiKey.${name}`, value).catch((err) => {
-          console.error(`[appSettings] settingsSet(ai.apiKey.${name}) failed:`, err);
+        (name === 'lmstudio_url'
+          ? window.electronAPI.settingsSet('ai.apiKey.lmstudio_url', value)
+          : changeProviderCredential(name, value)
+        ).then(() => {
+          if (name === 'lmstudio_url') return;
+          const latest = store.get(aiProviderSettingsAtom);
+          if (latest.apiKeys[name] === value) store.set(aiProviderSettingsAtom, { ...latest, apiKeys: { ...latest.apiKeys, [name]: value ? SAVED_CREDENTIAL : '' } });
+        }).catch(() => {
+          if (store.get(aiProviderSettingsAtom).apiKeys[name] === value) pendingApiKeyNames.add(name);
         }),
       );
     }
@@ -1677,6 +1686,7 @@ function ensureProviderBroadcastBridge(): void {
       }
     } else if (key.startsWith('ai.apiKey.')) {
       const keyName = key.slice('ai.apiKey.'.length);
+      if (pendingApiKeyNames.has(keyName)) return;
       const current = store.get(aiProviderSettingsAtom);
       if (typeof value === 'string') {
         store.set(aiProviderSettingsAtom, {
@@ -2438,4 +2448,11 @@ export async function initGutterCustomization(): Promise<GutterCustomizationStat
     console.error('[appSettings] Failed to load gutter customization:', error);
     return DEFAULT_GUTTER_CUSTOMIZATION;
   }
+}
+
+/** Cancel a queued edit before an explicit clear so it cannot recreate the key. */
+export function cancelPendingProviderKey(name: string): void {
+  pendingApiKeyNames.delete(name);
+  const current = store.get(aiProviderSettingsAtom);
+  store.set(aiProviderSettingsAtom, { ...current, apiKeys: { ...current.apiKeys, [name]: '' } });
 }

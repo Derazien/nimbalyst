@@ -120,8 +120,8 @@ vi.mock('../database/PGLiteDatabaseWorker', () => ({
   },
 }));
 
-vi.mock('electron', () => ({
-  app: { getPath: vi.fn(() => '/tmp') },
+vi.mock('electron', async () => ({
+  app: { getPath: (await import('../../../test-stubs/privateUserData')).testApp.getPath },
   BrowserWindow: { getAllWindows: () => [] },
 }));
 

@@ -1,4 +1,3 @@
-import Store from 'electron-store';
 
 // Debounced re-sync of the available-models list to mobile. The renderer can
 // send rapid providerSettings slices when toggling providers, so coalesce them
@@ -12,10 +11,7 @@ export function scheduleMobileSettingsSync(): void {
   mobileSettingsSyncTimer = setTimeout(() => {
     mobileSettingsSyncTimer = null;
     import('../SyncManager').then(({ syncSettingsToMobile }) => {
-      // Pass the stored OpenAI key so we don't drop it from the mobile payload;
-      // mobile keeps its existing key when the field is absent, so either is safe.
-      const apiKeys = new Store<Record<string, unknown>>({ name: 'ai-settings' }).get('apiKeys', {}) as Record<string, string>;
-      syncSettingsToMobile(apiKeys['openai']);
+      syncSettingsToMobile();
     }).catch(() => { /* sync manager may not be available */ });
   }, 500);
 }

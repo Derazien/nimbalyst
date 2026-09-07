@@ -1,5 +1,5 @@
 import log from 'electron-log/main';
-import Store from 'electron-store';
+import Store from './privateSettingsStore';
 import { app, ipcMain } from 'electron';
 import { formatLogArgs } from './formatLogArgs';
 import { createConsoleStallGuard } from './consoleStallGuard';

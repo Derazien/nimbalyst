@@ -13,10 +13,10 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('electron', () => ({
+vi.mock('electron', async () => ({
   app: {
     on: vi.fn(), once: vi.fn(), whenReady: vi.fn(() => Promise.resolve()),
-    getPath: vi.fn(() => '/mock/path'), getName: vi.fn(() => 'test-app'),
+    getPath: (await import('../../../../test-stubs/privateUserData')).testApp.getPath, getName: vi.fn(() => 'test-app'),
     getVersion: vi.fn(() => '1.0.0'), isPackaged: false,
   },
   BrowserWindow: class { static getAllWindows = vi.fn(() => []); },

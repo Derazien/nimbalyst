@@ -40,7 +40,8 @@ const {
   };
 });
 
-vi.mock('electron', () => ({
+vi.mock('electron', async () => ({
+  app: (await import('../../../../test-stubs/privateUserData')).testApp,
   BrowserWindow: class {
     static getAllWindows() {
       return browserWindowsMock();

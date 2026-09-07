@@ -1,4 +1,4 @@
-import Store from 'electron-store';
+import Store from '../../utils/privateSettingsStore';
 import { app } from 'electron';
 
 /**

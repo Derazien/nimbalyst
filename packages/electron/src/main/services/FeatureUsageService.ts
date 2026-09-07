@@ -1,4 +1,4 @@
-import Store from 'electron-store';
+import Store from '../utils/privateSettingsStore';
 import {
   FEATURE_USAGE_KEYS,
   type FeatureUsageRecord,

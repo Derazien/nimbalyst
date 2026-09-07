@@ -1,3 +1,5 @@
+import Store from '../utils/privateSettingsStore';
+import { getProviderCredentials, subscribeProviderCredentialChanges } from './credentials/providerCredentials';
 /**
  * SyncManager - Manages optional session sync.
  *
@@ -818,15 +820,12 @@ export async function initializeSync(baseStore: SessionStore): Promise<SessionSt
     // Sync current OpenAI API key to mobile (in case mobile connects after key was set)
     setTimeout(async () => {
       try {
-        const Store = (await import('electron-store')).default;
-        const aiStore = new Store({ name: 'ai-settings' });
-        const apiKeys = aiStore.get('apiKeys', {}) as Record<string, string>;
-        const openaiKey = apiKeys['openai'];
+
         // Always sync so the mobile model picker gets the available-models list
         // even for agent-only users with no OpenAI key (e.g. Codex). Mobile
         // keeps its stored key when openaiKey is undefined (NIM-976).
         // logger.main.info('[SyncManager] Syncing existing settings to mobile devices');
-        syncSettingsToMobile(openaiKey);
+        syncSettingsToMobile();
       } catch (error) {
         logger.main.warn('[SyncManager] Failed to sync initial settings:', error);
       }
@@ -850,17 +849,7 @@ export async function initializeSync(baseStore: SessionStore): Promise<SessionSt
             const delay = isFirstCallback ? 1000 : 0;
             setTimeout(() => {
               // Sync settings to the mobile device
-              import('electron-store').then(({ default: Store }) => {
-                const aiStore = new Store({ name: 'ai-settings' });
-                const apiKeys = aiStore.get('apiKeys', {}) as Record<string, string>;
-                const openaiKey = apiKeys['openai'];
-                // Always sync the available-models list so agent-only users with
-                // no OpenAI key still get the model picker populated (NIM-976).
-                // Mobile retains its stored key when openaiKey is undefined.
-                syncSettingsToMobile(openaiKey);
-              }).catch((err) => {
-                logger.main.warn('[SyncManager] Failed to sync settings to device:', err);
-              });
+              void syncSettingsToMobile();
             }, delay);
           }
         }
@@ -1214,7 +1203,6 @@ let settingsVersion = 0;
  */
 async function getVoiceModeSettings(): Promise<{ voice?: string; submitDelayMs?: number } | undefined> {
   try {
-    const Store = (await import('electron-store')).default;
     const settingsStore = new Store<Record<string, unknown>>({ name: 'nimbalyst-settings' });
     const voiceMode = settingsStore.get('voiceMode') as { voice?: string; submitDelayMs?: number } | undefined;
     return voiceMode;
@@ -1229,11 +1217,10 @@ async function getVoiceModeSettings(): Promise<{ voice?: string; submitDelayMs?:
  */
 async function getAvailableModelsForMobile(): Promise<{ models: Array<{ id: string; name: string; provider: string }>; defaultModel?: string }> {
   try {
-    const Store = (await import('electron-store')).default;
     const { ModelRegistry } = await import('@nimbalyst/runtime/ai/server/ModelRegistry');
 
     const aiStore = new Store<Record<string, unknown>>({ name: 'ai-settings' });
-    const apiKeys = aiStore.get('apiKeys', {}) as Record<string, string>;
+    const apiKeys = getProviderCredentials().availableKeys();
     const providerSettings = aiStore.get('providerSettings', {}) as Record<string, { enabled?: boolean; models?: string[]; baseUrl?: string }>;
 
     // Build enabled provider set to avoid fetching from disabled providers (e.g., LMStudio network call)
@@ -1277,9 +1264,9 @@ async function getAvailableModelsForMobile(): Promise<{ models: Array<{ id: stri
  * Sync sensitive settings to mobile devices.
  * Syncs the OpenAI API key, voice mode settings, and available AI models.
  *
- * @param openaiApiKey The OpenAI API key to sync
+ * Reads the current protected value at send time; omitted preserves, empty deletes.
  */
-export async function syncSettingsToMobile(openaiApiKey?: string): Promise<void> {
+export async function syncSettingsToMobile(_legacyOpenaiApiKey?: string): Promise<void> {
   const provider = state.provider;
   if (!provider) {
     logger.main.debug('[SyncManager] Cannot sync settings - provider not initialized');
@@ -1312,7 +1299,7 @@ export async function syncSettingsToMobile(openaiApiKey?: string): Promise<void>
 
   try {
     await provider.syncSettings({
-      openaiApiKey,
+      openaiApiKey: getProviderCredentials().mobileOpenAIKey(),
       voiceMode: voiceModeSettings ? {
         voice: voiceModeSettings.voice as 'alloy' | 'ash' | 'ballad' | 'coral' | 'echo' | 'sage' | 'shimmer' | 'verse' | 'marin' | 'cedar' | undefined,
         submitDelayMs: voiceModeSettings.submitDelayMs,
@@ -1570,3 +1557,6 @@ export async function attemptReconnect(): Promise<void> {
     attemptReconnectInFlight = false;
   }
 }
+
+// Reconnect also sends the durable vault tombstone if a clear occurred offline.
+subscribeProviderCredentialChanges(() => { void syncSettingsToMobile(); });

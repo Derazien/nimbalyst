@@ -22,14 +22,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // this. None of these stubs touch the broker dispatch path under test -- they
 // only let the transitive module graph load. Provided as a noop surface so the
 // REAL host code runs unmodified.
-vi.mock('electron', () => {
+vi.mock('electron', async () => {
   const noop = () => {};
   return {
     app: {
       on: vi.fn(),
       once: vi.fn(),
       whenReady: vi.fn(() => Promise.resolve()),
-      getPath: vi.fn(() => '/mock/path'),
+      getPath: (await import('../../../../test-stubs/privateUserData')).testApp.getPath,
       getName: vi.fn(() => 'test-app'),
       getVersion: vi.fn(() => '1.0.0'),
       setName: vi.fn(),

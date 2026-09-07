@@ -816,6 +816,7 @@ export interface SyncedVoiceModeSettings {
  */
 export interface SyncedSettings {
   /** OpenAI API key for voice transcription */
+  /** Omitted: unchanged. Empty string: delete the previously synced key. */
   openaiApiKey?: string;
   /** Voice mode settings */
   voiceMode?: SyncedVoiceModeSettings;

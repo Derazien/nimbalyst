@@ -153,9 +153,9 @@ vi.mock('@nimbalyst/runtime/plugins/TrackerPlugin/models/TrackerDataModel', () =
   getRoleField: (model: any, role: string) => model?.roles?.[role],
 }));
 
-vi.mock('electron', () => ({
+vi.mock('electron', async () => ({
   app: {
-    getPath: vi.fn(() => '/tmp'),
+    getPath: (await import('../../../../../test-stubs/privateUserData')).testApp.getPath,
     isPackaged: false,
     getName: vi.fn(() => 'Nimbalyst'),
   },

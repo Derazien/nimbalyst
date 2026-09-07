@@ -21,13 +21,16 @@ vi.setConfig({ testTimeout: 20000, hookTimeout: 20000 });
 
 describe('granular AI provider persistence', () => {
   let settingsSet: ReturnType<typeof vi.fn>;
+  let invoke: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     vi.resetModules();
     settingsSet = vi.fn().mockResolvedValue({ ok: true });
+    invoke = vi.fn().mockResolvedValue({ state: 'available', credentials: [] });
     (globalThis as { window?: unknown }).window = {
       electronAPI: {
         settingsSet,
+        invoke,
         onSettingsChanged: () => () => {},
         aiGetSettings: vi.fn().mockResolvedValue({ providerSettings: {}, apiKeys: {} }),
       },
@@ -70,7 +73,9 @@ describe('granular AI provider persistence', () => {
 
     await mod.flushPendingAIProviderPersist();
 
-    expect(settingsSet.mock.calls).toEqual([['ai.apiKey.opencode', 'sk-opencode']]);
+    expect(settingsSet).not.toHaveBeenCalled();
+    expect(invoke.mock.calls).toEqual([['provider-credentials:set', 'opencode', 'sk-opencode', {}]]);
+    expect(store.get(mod.aiProviderSettingsAtom).apiKeys.opencode).toBe('••••••••');
   });
 
   it('schedules nothing when the full object is handed back unchanged', async () => {

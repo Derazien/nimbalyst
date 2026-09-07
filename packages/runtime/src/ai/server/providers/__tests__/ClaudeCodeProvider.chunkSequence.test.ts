@@ -19,8 +19,8 @@
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
-vi.mock('electron', () => ({
-  app: { isPackaged: false },
+vi.mock('electron', async () => ({
+  app: { ...(await import('../../../../../../electron/test-stubs/privateUserData')).testApp, isPackaged: false },
 }));
 
 vi.mock('../claudeCode/cliPathResolver', () => ({

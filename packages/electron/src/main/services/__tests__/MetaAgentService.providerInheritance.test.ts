@@ -339,6 +339,77 @@ describe('MetaAgentService child-spawn provider inheritance', () => {
   });
 });
 
+describe('MetaAgentService child-spawn effort level', () => {
+  beforeEach(() => {
+    vi.mocked(AISessionsRepository.create).mockReset();
+    vi.mocked(AISessionsRepository.get).mockReset();
+    vi.mocked(AISessionsRepository.updateMetadata).mockReset();
+    vi.mocked(databaseWorker.query).mockResolvedValue({ rows: [{ in_flight: '0', total: '0' }] } as any);
+  });
+
+  const effortWrites = () =>
+    vi.mocked(AISessionsRepository.updateMetadata).mock.calls
+      .map((call) => (call[1] as any)?.metadata?.effortLevel)
+      .filter((level) => level !== undefined);
+
+  it('persists a requested effort level so the child runs at it instead of the app default', async () => {
+    const service = MetaAgentService.getInstance();
+    (service as any).aiService = { queuePromptForSession: vi.fn() };
+    vi.mocked(AISessionsRepository.get).mockResolvedValue(CLAUDE_PARENT as any);
+
+    // The motivating case: spawn astra at medium. Every turn reads effort back
+    // out of session metadata, so the metadata write IS the feature.
+    await (service as any).createChildSessionInternal('parent-claude-session', '/workspace/path', {
+      model: 'openai-codex:gpt-6-astra',
+      effortLevel: 'medium',
+    });
+
+    expect(effortWrites()).toEqual(['medium']);
+  });
+
+  it('clamps a requested level down to the model ceiling rather than storing one the transport would lower', async () => {
+    const service = MetaAgentService.getInstance();
+    (service as any).aiService = { queuePromptForSession: vi.fn() };
+    vi.mocked(AISessionsRepository.get).mockResolvedValue(CLAUDE_PARENT as any);
+
+    // ultra is Codex-only; a claude-code child tops out at max. Storing the raw
+    // 'ultra' would leave the child's effort selector showing a level the
+    // provider never runs at.
+    await (service as any).createChildSessionInternal('parent-claude-session', '/workspace/path', {
+      model: 'claude-code:opus',
+      effortLevel: 'ultra',
+    });
+
+    expect(effortWrites()).toEqual(['max']);
+  });
+
+  it('writes no effort level when none is requested, leaving the child on the app default', async () => {
+    const service = MetaAgentService.getInstance();
+    (service as any).aiService = { queuePromptForSession: vi.fn() };
+    vi.mocked(AISessionsRepository.get).mockResolvedValue(CLAUDE_PARENT as any);
+
+    // Omitted means app default, NOT inherited from the caller — so nothing may
+    // be written, or resolveEffortLevel would stop consulting the default.
+    await (service as any).createChildSessionInternal('parent-claude-session', '/workspace/path', {});
+
+    expect(effortWrites()).toEqual([]);
+  });
+
+  it('rejects an unrecognized effort level before creating the session instead of silently using the default', async () => {
+    const service = MetaAgentService.getInstance();
+    (service as any).aiService = { queuePromptForSession: vi.fn() };
+    vi.mocked(AISessionsRepository.get).mockResolvedValue(CLAUDE_PARENT as any);
+
+    await expect(
+      (service as any).createChildSessionInternal('parent-claude-session', '/workspace/path', {
+        effortLevel: 'mid',
+      })
+    ).rejects.toThrow(/Invalid effortLevel "mid"/);
+
+    expect(AISessionsRepository.create).not.toHaveBeenCalled();
+  });
+});
+
 describe('MetaAgentService spawn gates', () => {
   beforeEach(() => {
     vi.mocked(AISessionsRepository.create).mockReset();

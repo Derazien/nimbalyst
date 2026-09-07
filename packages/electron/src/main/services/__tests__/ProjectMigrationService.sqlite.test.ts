@@ -18,9 +18,9 @@ import * as path from 'path';
 
 // ProjectMigrationService -> WindowManager calls app.on() at module load; the
 // shared setup mock only stubs app.getPath. Extend it here.
-vi.mock('electron', () => ({
+vi.mock('electron', async () => ({
   app: {
-    getPath: vi.fn(() => '/mock/path'),
+    getPath: (await import('../../../../test-stubs/privateUserData')).testApp.getPath,
     getName: vi.fn(() => 'test-app'),
     getVersion: vi.fn(() => '1.0.0'),
     on: vi.fn(),

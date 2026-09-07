@@ -15,9 +15,9 @@ import * as path from 'path';
 
 // SQLiteDatabase -> (transitively) modules that call into electron at load.
 // The shared test setup only stubs app.getPath; extend it here to be safe.
-vi.mock('electron', () => ({
+vi.mock('electron', async () => ({
   app: {
-    getPath: vi.fn(() => '/mock/path'),
+    getPath: (await import('../../../../../test-stubs/privateUserData')).testApp.getPath,
     getName: vi.fn(() => 'test-app'),
     getVersion: vi.fn(() => '1.0.0'),
     on: vi.fn(),

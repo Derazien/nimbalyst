@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Provider API keys are encrypted on disk, settings files keep private permissions, and saved keys remain clearable when a provider is disabled.
 - Workstream session tabs scroll in one row with readable names and a new-session button that stays visible when the strip is full.
 - Codex sessions receive the first answer to a question even when the turn that asked it has already ended.
 - Project Graph keeps loaded data visible instead of repeatedly flashing a blank loading view during startup.

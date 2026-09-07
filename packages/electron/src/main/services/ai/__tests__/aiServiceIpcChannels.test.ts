@@ -46,6 +46,15 @@ vi.mock('@nimbalyst/runtime/ai/server', () => ({
   SessionManager: class {},
   isAskUserQuestionProvider: () => false,
 }));
+vi.mock('../../../utils/logger', () => ({ logger: { main: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } } }));
+vi.mock('../../../utils/privateSettingsStore', () => ({ default: class {
+  store: Record<string, unknown>;
+  constructor(options: { defaults?: Record<string, unknown> } = {}) { this.store = options.defaults ?? {}; }
+  get(key: string, fallback?: unknown) { return this.store[key] ?? fallback; }
+  set(key: string, value: unknown) { this.store[key] = value; }
+  onDidChange() { return () => {}; }
+  onDidAnyChange() { return () => {}; }
+} }));
 vi.mock('../../../window/WindowManager', () => ({ getWindowId: () => undefined }));
 vi.mock('../../TerminalSessionManager', () => ({ getTerminalSessionManager: () => undefined }));
 vi.mock('../../../mcp/tools/backendToolHandler', () => ({ handleBackendTool: () => undefined }));

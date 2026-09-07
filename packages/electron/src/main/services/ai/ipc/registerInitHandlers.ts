@@ -1,3 +1,4 @@
+import { getProviderCredentials } from '../../credentials/providerCredentials';
 import { safeHandle } from '../../../utils/ipcRegistry';
 import type { AIServiceContext } from './AIServiceContext';
 
@@ -11,7 +12,7 @@ import type { AIServiceContext } from './AIServiceContext';
 export function registerInitHandlers(ctx: AIServiceContext): void {
   // Check if any AI provider is configured with usable models
   safeHandle('ai:hasApiKey', async () => {  // Keeping the name for backward compatibility
-    const apiKeys = ctx.getSettingsStore().get('apiKeys', {}) as Record<string, string>;
+    const apiKeys = getProviderCredentials().availableKeys();
     const providerSettings = ctx.getNormalizedProviderSettings() as any;
 
     // Claude Code uses its own auth (SSO) - always available if enabled
@@ -51,9 +52,7 @@ export function registerInitHandlers(ctx: AIServiceContext): void {
     if (apiKey) {
       // Save API key for the Claude Chat provider only
       // Claude Code has its own auth (SSO) and should never use this key
-      const apiKeys = ctx.getSettingsStore().get('apiKeys', {}) as Record<string, string>;
-      apiKeys['anthropic'] = apiKey;
-      ctx.getSettingsStore().set('apiKeys', apiKeys);
+      getProviderCredentials().set('anthropic', apiKey);
     }
 
     return { success: true };

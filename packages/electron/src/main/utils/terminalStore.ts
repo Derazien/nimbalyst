@@ -10,7 +10,7 @@
  * - Scrollback: ~/Library/Application Support/@nimbalyst/electron/terminal-scrollback/<terminalId>.scrollback
  */
 
-import Store from 'electron-store';
+import Store from './privateSettingsStore';
 import { app } from 'electron';
 import { promises as fs } from 'fs';
 import path from 'path';
