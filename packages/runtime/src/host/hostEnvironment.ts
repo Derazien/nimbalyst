@@ -37,29 +37,59 @@ export interface HostEnvironment {
  * The host used when nothing has been injected: a plain Node process, never
  * packaged, rooted at the working directory.
  *
- * This is the correct answer for `nimbalyst-node` and for unit tests, and it is
- * deliberately not an error. It is *not* correct for Electron, which is why
- * `packages/electron` registers its own during main-process startup — see
- * `registerElectronHostEnvironment`. A packaged Electron build that failed to
- * register would silently take the dev branch of every path resolution, so that
- * registration is covered by a test rather than left to review.
+ * Correct for `nimbalyst-node` and for unit tests. Emphatically *not* correct
+ * for Electron — see `assertHostRegistered` below.
  */
 export const nodeHostEnvironment: HostEnvironment = {
   isPackaged: () => false,
   getAppPath: () => process.cwd(),
 };
 
-let current: HostEnvironment = nodeHostEnvironment;
+/**
+ * Null means "nobody registered", which is a different state from "registered
+ * the Node host". Keeping them distinct is what lets an Electron main process
+ * fail loudly instead of quietly answering `isPackaged() === false`.
+ */
+let current: HostEnvironment | null = null;
+
+/**
+ * True only inside a real Electron main process.
+ *
+ * `process.versions.electron` alone is not enough: it is also set in the
+ * renderer, where runtime code legitimately runs and nothing registers a host,
+ * and under `ELECTRON_RUN_AS_NODE`, where the process is plain Node. Electron
+ * sets `process.type` to `'browser'` in the main process only, and leaves it
+ * undefined in the run-as-node case.
+ */
+function isElectronMainProcess(): boolean {
+  const candidate = process as NodeJS.Process & { type?: string; versions: { electron?: string } };
+  return Boolean(candidate.versions?.electron) && candidate.type === 'browser';
+}
 
 /**
  * Install the host implementation. Called once, early, by whichever package
- * owns the process. Passing null restores the Node default, which is what test
- * teardown wants.
+ * owns the process. Passing null clears it, which is what test teardown wants.
  */
 export function setHostEnvironment(host: HostEnvironment | null): void {
-  current = host ?? nodeHostEnvironment;
+  current = host;
 }
 
 export function getHostEnvironment(): HostEnvironment {
-  return current;
+  if (current) return current;
+
+  // A packaged Electron build running on the Node default would report "not
+  // packaged" and take the dev branch of every path resolution: the bundled
+  // Claude binary would be looked up via an unchecked `require.resolve` that
+  // can hand back a path inside app.asar, and the missing-binary error would be
+  // swallowed as a development fallback. That is silent and shows up much later
+  // as a misleading SDK error, so refuse to guess.
+  if (isElectronMainProcess()) {
+    throw new Error(
+      'HostEnvironment was never registered in the Electron main process. '
+      + 'packages/electron/src/main/hostEnvironment.ts must be imported before '
+      + 'anything resolves a binary path.',
+    );
+  }
+
+  return nodeHostEnvironment;
 }

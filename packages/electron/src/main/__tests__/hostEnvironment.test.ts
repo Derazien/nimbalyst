@@ -10,12 +10,23 @@ vi.mock('electron', () => ({ app: appMock }));
 import { setHostEnvironment, getHostEnvironment } from '@nimbalyst/runtime/host/hostEnvironment';
 import { electronHostEnvironment, registerElectronHostEnvironment } from '../hostEnvironment';
 
+// Captured at module-load time, before any test clears the slot. Importing the
+// Electron host module must register it as a side effect -- bootstrap cannot do
+// this from its own body, because ESM evaluates `import './index.js'` first.
+// Asserting on a value sampled here is what makes deleting that registration a
+// failing test rather than a green one.
+const hostAtImportTime = getHostEnvironment();
+
 afterEach(() => {
   setHostEnvironment(null);
   appMock.isPackaged = true;
 });
 
 describe('electron host environment', () => {
+  it('registers itself when the module is imported, not when a caller asks', () => {
+    expect(hostAtImportTime).toBe(electronHostEnvironment);
+  });
+
   it('answers both questions from Electron rather than the Node defaults', () => {
     expect(electronHostEnvironment.isPackaged()).toBe(true);
     expect(electronHostEnvironment.getAppPath()).toBe(
@@ -31,13 +42,8 @@ describe('electron host environment', () => {
     expect(electronHostEnvironment.isPackaged()).toBe(true);
   });
 
-  // bootstrap.ts calls this before it imports the main entry. If that call is
-  // ever dropped the app boots on the Node default, silently reporting "not
-  // packaged" and sending every binary-path lookup down the dev branch.
-  it('installs itself into the runtime host slot', () => {
-    expect(getHostEnvironment().isPackaged()).toBe(false); // Node default
+  it('is idempotent, so an explicit call after the import changes nothing', () => {
     registerElectronHostEnvironment();
     expect(getHostEnvironment()).toBe(electronHostEnvironment);
-    expect(getHostEnvironment().isPackaged()).toBe(true);
   });
 });

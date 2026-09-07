@@ -21,12 +21,21 @@ export const electronHostEnvironment: HostEnvironment = {
 /**
  * Install the Electron host into runtime. Must run before anything resolves a
  * Claude binary path or builds SDK options.
- *
- * Skipping this is not a loud failure: runtime falls back to its Node default,
- * which reports "not packaged" and would send a packaged build down the dev
- * branch of every path resolution. That is why bootstrap calls this before it
- * imports the main entry, and why a unit test asserts the call happens.
  */
 export function registerElectronHostEnvironment(): void {
   setHostEnvironment(electronHostEnvironment);
 }
+
+// Registered as a side effect of importing this module, not from a caller's
+// function body.
+//
+// ESM hoists every static import above the importing module's statements, so
+// `bootstrap.ts` calling this in its body could NOT beat its own
+// `import './index.js'` -- the entire main graph evaluates first. Ordering here
+// is by import position instead: bootstrap imports this module near the top of
+// its import list and `./index.js` last, so this runs first for real.
+//
+// Runtime now throws rather than defaulting when an Electron main process
+// reaches an unregistered host, so a future reordering fails loudly instead of
+// silently taking the unpackaged branch.
+registerElectronHostEnvironment();

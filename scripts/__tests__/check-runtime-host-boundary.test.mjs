@@ -30,6 +30,32 @@ test('catches both host escapes that actually happened', () => {
   assert.deepEqual(violations.map(({ name }) => name), ['electron', 'packages/electron']);
 });
 
+test('catches the CommonJS and test-file bypasses a source scan can miss', () => {
+  const violations = findRuntimeHostViolations([
+    // require('electron') / import electron = require('electron'), which the
+    // first version of this gate read straight past.
+    { file: 'a.cts', specifier: 'electron', resolved: 'electron' },
+    // Shipped code importing a test file would launder an Electron import
+    // through the scan's own exclusion, since test files are never scanned.
+    {
+      file: 'packages/runtime/src/ai/thing.ts',
+      specifier: './__tests__/helper',
+      resolved: path.join('/repo', 'packages', 'runtime', 'src', 'ai', '__tests__', 'helper'),
+    },
+    {
+      file: 'packages/runtime/src/ai/other.ts',
+      specifier: './helper.test.ts',
+      resolved: path.join('/repo', 'packages', 'runtime', 'src', 'ai', 'helper.test.ts'),
+    },
+  ]);
+
+  assert.deepEqual(
+    violations.map(({ name }) => name),
+    ['electron', 'test file from shipped code'],
+  );
+  assert.equal(violations[1].hits.length, 2);
+});
+
 test('does not fire on the runtime paths that merely look host-shaped', () => {
   const violations = findRuntimeHostViolations([
     // The module kept at src/electron/ for its mock specifier; it is runtime's
