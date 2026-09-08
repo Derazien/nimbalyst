@@ -10,10 +10,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
+
+### Changed
+<!-- Changes to existing functionality go here -->
+
+### Fixed
+<!-- Bug fixes go here -->
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.77.3] - 2026-09-08
+
+
+### Added
+<!-- New features go here -->
 - Jump to unanswered agent questions and automatically scroll to new ones.
 - Choose whether Agent mode opens file tabs above the transcript or in the right pane.
 - Pick one of your project's action prompts from the mobile composer's + menu to prefill it, or open a new session with it.
-- Right-click a row on the Shared Docs home to open, rename, move, or trash that document.
+- Browse folders on the Shared Docs home and right-click a row to open, rename, move, or trash it.
 
 ### Changed
 <!-- Changes to existing functionality go here -->
@@ -27,6 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - SQLite migrations recover from slow batches and copy large session tables more efficiently.
 - Sent document questions now appear in Feedback with response progress and links back to each question.
 - Invalid tracker update requests are rejected instead of changing an unrelated item.
+- Slash command search results are sorted alphabetically.
+- File quick search opens from the Agent mode file viewer.
 
 ### Removed
 <!-- Removed features go here -->
