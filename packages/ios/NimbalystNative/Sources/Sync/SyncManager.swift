@@ -37,9 +37,10 @@ public final class SyncManager: ObservableObject {
     /// The desktop's default model ID (e.g., "claude-code:opus").
     @Published public var desktopDefaultModel: String?
 
-    /// When true, most or all encrypted data failed to decrypt, indicating
-    /// the encryption key is wrong and the user needs to re-pair.
+    /// A complete full index had no decryptable entries, so pairing may need
+    /// attention. Partial sync and database failures cannot establish this.
     @Published public var encryptionKeyMismatch = false
+    private var hasDecryptedIndexEntry = false
 
     /// Called when a session transitions from executing to idle (isExecuting: true -> false).
     /// Parameters: (sessionId, lastAssistantMessageSummary)
@@ -377,238 +378,19 @@ public final class SyncManager: ObservableObject {
         let crypto = self.crypto
         let database = self.database
         Task.detached {
-            // Process projects
-            var failedProjectCount = 0
-            for serverProject in response.projects {
-                if !Self.processServerProjectBackground(serverProject, crypto: crypto, database: database) {
-                    failedProjectCount += 1
-                }
-            }
-
-            // Process sessions - track success/failure/skip counts
-            var processedCount = 0
-            var skippedCount = 0
-            var failedDecryptCount = 0
-            for serverSession in response.sessions {
-                let result = Self.processServerSessionBackground(serverSession, crypto: crypto, database: database)
-                switch result {
-                case .updated: processedCount += 1
-                case .skipped: skippedCount += 1
-                case .failed: failedDecryptCount += 1
-                }
-            }
-            if failedDecryptCount > 0 || skippedCount > 0 {
-                let logger = Logger(subsystem: "com.nimbalyst.app", category: "SyncManager")
-                logger.info("Session processing: \(processedCount) updated, \(skippedCount) unchanged, \(failedDecryptCount) failed")
-            }
-
-            // If the vast majority of sessions failed to decrypt, the encryption key is wrong.
-            // This happens when the pairing encryption seed or userId salt is out of sync
-            // with the desktop. The user needs to re-pair.
-            let totalAttempted = processedCount + failedDecryptCount
-            let isMismatch = totalAttempted > 5 && failedDecryptCount > (totalAttempted * 80 / 100)
-            if isMismatch {
-                let logger = Logger(subsystem: "com.nimbalyst.app", category: "SyncManager")
-                logger.error("Encryption key mismatch detected: \(failedDecryptCount)/\(totalAttempted) sessions failed to decrypt")
-                await MainActor.run { [weak self] in
-                    self?.encryptionKeyMismatch = true
-                }
-            }
-
-            // Recalculate project stats from session data (more reliable than server-side stats)
-            do {
-                try database.refreshAllProjectStats()
-            } catch {
-                let logger = Logger(subsystem: "com.nimbalyst.app", category: "SyncManager")
-                logger.error("Failed to refresh project stats: \(error.localizedDescription)")
-            }
-
-            // Update sync state watermark using the max updatedAt from received sessions.
-            // This ensures the `since` parameter on the next request matches server timestamps exactly.
-            let maxUpdatedAt = response.sessions.map(\.updatedAt).max()
-            if let watermark = maxUpdatedAt {
-                let syncState = SyncState(roomId: "index", lastCursor: nil, lastSequence: 0, lastSyncedAt: watermark)
-                try? database.updateSyncState(syncState)
-            }
-            let isTruncated = !isIncremental && response.totalSessionCount.map { $0 != response.sessions.count } == true
-            let failed = failedProjectCount > 0 || failedDecryptCount > 0 || isTruncated
-            // Receipt of the envelope is too early: rows must be decrypted and committed first.
+            let result = IndexSyncImporter.process(response, crypto: crypto, database: database)
             await MainActor.run { [weak self] in
-                self?.indexLoadState = failed ? .failed : .loaded
-            }
-        }
-    }
-
-    // MARK: - Background Processing Helpers
-
-    private enum SyncResult {
-        case updated, skipped, failed
-    }
-
-    /// Process a server project entry on a background thread.
-    @discardableResult
-    private nonisolated static func processServerProjectBackground(_ entry: ServerProjectEntry, crypto: CryptoManager, database: DatabaseManager) -> Bool {
-        let logger = Logger(subsystem: "com.nimbalyst.app", category: "SyncManager")
-
-        guard let projectId = crypto.decryptOrNil(
-            encryptedBase64: entry.encryptedProjectId,
-            ivBase64: entry.projectIdIv
-        ) else {
-            logger.warning("Failed to decrypt project ID")
-            return false
-        }
-
-        // Decrypt project config if present
-        var decodedConfig = DecodedProjectConfig.empty
-        if let encryptedConfig = entry.encryptedConfig,
-           let configIv = entry.configIv,
-           let configJson = crypto.decryptOrNil(encryptedBase64: encryptedConfig, ivBase64: configIv) {
-            decodedConfig = decodeProjectConfig(fromJson: configJson)
-        }
-
-        let name = (projectId as NSString).lastPathComponent
-        let project = Project(
-            id: projectId,
-            name: name,
-            sessionCount: entry.sessionCount ?? 0,
-            lastUpdatedAt: entry.lastActivityAt,
-            commandsJson: decodedConfig.commandsJson,
-            actionsJson: decodedConfig.actionsJson,
-            gitRemoteHash: entry.gitRemoteHash
-        )
-
-        do {
-            try database.upsertProject(project)
-            // Server's sessionCount includes archived sessions; recompute locally
-            // so the displayed count matches what SessionListView actually shows.
-            try database.refreshSessionCount(forProject: projectId)
-        } catch {
-            logger.error("Failed to upsert project: \(error.localizedDescription)")
-            return false
-        }
-        return true
-    }
-
-    /// Process a server session entry on a background thread.
-    @discardableResult
-    private nonisolated static func processServerSessionBackground(_ entry: ServerSessionEntry, crypto: CryptoManager, database: DatabaseManager) -> SyncResult {
-        let logger = Logger(subsystem: "com.nimbalyst.app", category: "SyncManager")
-
-        let existing = try? database.session(byId: entry.sessionId)
-
-        // Skip if the session hasn't changed since we last wrote it
-        if let existing = existing, existing.updatedAt == entry.updatedAt {
-            return .skipped
-        }
-
-        guard let projectId = crypto.decryptOrNil(
-            encryptedBase64: entry.encryptedProjectId,
-            ivBase64: entry.projectIdIv
-        ) else {
-            logger.warning("Failed to decrypt project ID for session \(entry.sessionId)")
-            return .failed
-        }
-
-        // Ensure the project exists
-        if (try? database.writer.read({ db in try Project.fetchOne(db, id: projectId) })) == nil {
-            let projectName = (projectId as NSString).lastPathComponent
-            let project = Project(id: projectId, name: projectName, lastUpdatedAt: entry.updatedAt)
-            try? database.upsertProject(project)
-        }
-
-        let titleDecrypted = crypto.decryptOrNil(
-            encryptedBase64: entry.encryptedTitle,
-            ivBase64: entry.titleIv
-        )
-
-        var clientMeta: ClientMetadata?
-        if let encryptedMeta = entry.encryptedClientMetadata,
-           let metaIv = entry.clientMetadataIv,
-           let metaJson = crypto.decryptOrNil(encryptedBase64: encryptedMeta, ivBase64: metaIv),
-           let metaData = metaJson.data(using: .utf8) {
-            clientMeta = try? JSONDecoder().decode(ClientMetadata.self, from: metaData)
-        }
-
-        // Encode tags array to JSON string for storage
-        var tagsJson: String? = nil
-        if let tags = clientMeta?.tags, !tags.isEmpty,
-           let data = try? JSONEncoder().encode(tags) {
-            tagsJson = String(data: data, encoding: .utf8)
-        }
-
-        let session = Session(
-            id: entry.sessionId,
-            projectId: projectId,
-            titleEncrypted: entry.encryptedTitle,
-            titleIv: entry.titleIv,
-            titleDecrypted: titleDecrypted,
-            // Preserve local provider/model/mode when the server omits them.
-            // Older server rows can be missing these fields, and overwriting
-            // with nil wipes the session's identity (e.g. the session-list
-            // badge would lose "Opus 4.7" because the incoming entry had a
-            // null model column). Matches the pattern used for every other
-            // field below.
-            provider: entry.provider ?? existing?.provider,
-            model: entry.model ?? existing?.model,
-            mode: entry.mode ?? existing?.mode,
-            sessionType: entry.sessionType ?? existing?.sessionType,
-            parentSessionId: entry.parentSessionId ?? existing?.parentSessionId,
-            agentRole: entry.agentRole ?? existing?.agentRole,
-            createdBySessionId: entry.createdBySessionId ?? existing?.createdBySessionId,
-            phase: clientMeta?.phase ?? existing?.phase,
-            tagsJson: tagsJson ?? existing?.tagsJson,
-            worktreeId: entry.worktreeId ?? existing?.worktreeId,
-            hostDeviceId: entry.hostDeviceId ?? existing?.hostDeviceId,
-            isArchived: entry.isArchived ?? existing?.isArchived ?? false,
-            isPinned: entry.isPinned ?? existing?.isPinned ?? false,
-            branchedFromSessionId: entry.branchedFromSessionId ?? existing?.branchedFromSessionId,
-            branchPointMessageId: entry.branchPointMessageId ?? existing?.branchPointMessageId,
-            branchedAt: entry.branchedAt ?? existing?.branchedAt,
-            isExecuting: entry.isExecuting ?? existing?.isExecuting ?? false,
-            hasQueuedPrompts: clientMeta?.hasPendingPrompt ?? entry.hasPendingPrompt ?? existing?.hasQueuedPrompts ?? false,
-            contextTokens: clientMeta?.currentContext?.tokens ?? existing?.contextTokens,
-            contextWindow: clientMeta?.currentContext?.contextWindow ?? existing?.contextWindow,
-            createdAt: entry.createdAt,
-            updatedAt: entry.updatedAt,
-            lastSyncedSeq: entry.messageCount ?? existing?.lastSyncedSeq ?? 0,
-            lastReadAt: entry.lastReadAt ?? existing?.lastReadAt,
-            lastMessageAt: entry.lastMessageAt ?? existing?.lastMessageAt,
-            // "" from remote means "cleared" -> nil locally; nil means "not sent" -> keep existing
-            draftInput: clientMeta?.draftInput != nil ? (clientMeta!.draftInput!.isEmpty ? nil : clientMeta!.draftInput!) : existing?.draftInput,
-            draftUpdatedAt: clientMeta?.draftUpdatedAt ?? existing?.draftUpdatedAt
-        )
-
-        do {
-            try database.upsertSession(session)
-            try database.updateProjectLastActivity(projectId: projectId, activityAt: entry.updatedAt)
-
-            // Decrypt and store queued prompts from remote for display
-            if let encryptedPrompts = entry.encryptedQueuedPrompts, !encryptedPrompts.isEmpty {
-                var decrypted: [QueuedPrompt] = []
-                for ep in encryptedPrompts {
-                    guard let plaintext = crypto.decryptOrNil(encryptedBase64: ep.encryptedPrompt, ivBase64: ep.iv) else {
-                        continue
-                    }
-                    decrypted.append(QueuedPrompt(
-                        id: ep.id,
-                        sessionId: entry.sessionId,
-                        promptTextEncrypted: ep.encryptedPrompt,
-                        iv: ep.iv,
-                        createdAt: ep.timestamp,
-                        sentAt: nil,
-                        promptTextDecrypted: plaintext,
-                        source: ep.source ?? "desktop"
-                    ))
+                guard let self else { return }
+                // Successful decryption clears earlier suspicion. A failed delta
+                // cannot create a new device-wide pairing warning.
+                if result.decryptedEntryCount > 0 {
+                    self.hasDecryptedIndexEntry = true
+                    self.encryptionKeyMismatch = false
+                } else if !isIncremental {
+                    self.encryptionKeyMismatch = result.shouldSuggestRepair && !self.hasDecryptedIndexEntry
                 }
-                try? database.replaceQueuedPrompts(forSession: entry.sessionId, with: decrypted)
-            } else if entry.queuedPromptCount == 0 || entry.encryptedQueuedPrompts?.isEmpty == true {
-                try? database.deleteRemoteQueuedPrompts(forSession: entry.sessionId)
+                self.indexLoadState = result.failed ? .failed : .loaded
             }
-
-            return .updated
-        } catch {
-            logger.error("Failed to upsert session: \(error.localizedDescription)")
-            return .failed
         }
     }
 

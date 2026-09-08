@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 <!-- Bug fixes go here -->
+- iOS no longer asks you to re-pair a working device because of partial sync failures or local database errors.
 
 ### Removed
 <!-- Removed features go here -->

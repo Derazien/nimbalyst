@@ -615,6 +615,7 @@ public final class AppState: ObservableObject {
 
         // Observe encryption key mismatch (wrong pairing / stale key)
         sync.$encryptionKeyMismatch
+            .removeDuplicates()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] mismatch in
                 self?.needsRepair = mismatch
