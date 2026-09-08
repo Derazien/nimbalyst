@@ -1,5 +1,5 @@
 import React, { createRef, type ReactNode } from "react";
-import { act, cleanup, render } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { Provider, createStore } from "jotai";
 import { afterEach, expect, it, vi } from "vitest";
 import {
@@ -13,7 +13,8 @@ import {
 } from "../../../store/atoms/workstreamState";
 import { revealEditorPosition } from "../../TabEditor/editorRevealCommand";
 
-const { actions, tabs } = vi.hoisted(() => ({
+const { actions, tabs, openDialog } = vi.hoisted(() => ({
+  openDialog: vi.fn(),
   actions: {
     addTab: vi.fn(),
     switchTab: vi.fn(),
@@ -21,6 +22,9 @@ const { actions, tabs } = vi.hoisted(() => ({
     removeTab: vi.fn(),
   },
   tabs: [],
+}));
+vi.mock("../../../contexts/DialogContext", () => ({
+  useDialog: () => ({ open: openDialog, close: vi.fn(), activeDialogs: [] }),
 }));
 vi.mock("../../../contexts/TabsContext", () => ({
   TabsProvider: ({ children }: { children: ReactNode }) => children,
@@ -40,6 +44,31 @@ vi.mock("../../TabEditor/editorRevealCommand", () => ({
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+});
+
+it("opens file quick open in the worktree and routes the selection into this viewer", () => {
+  initWorkstreamState("/project");
+  const store = createStore();
+  const id = "quick-open-editor";
+  render(
+    <Provider store={store}>
+      <WorkstreamEditorTabs
+        workstreamId={id}
+        workspacePath="/project"
+        basePath="/project-worktree"
+      />
+    </Provider>
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Open file…" }));
+  expect(openDialog).toHaveBeenCalledWith("unified-quick-open", expect.objectContaining({
+    initialTab: "files",
+    workspacePath: "/project-worktree",
+    onFileSelect: expect.any(Function),
+  }));
+  expect(actions.addTab).not.toHaveBeenCalled();
+  act(() => openDialog.mock.calls[0][1].onFileSelect("/project-worktree/source.ts"));
+  expect(actions.addTab).toHaveBeenCalledWith("/project-worktree/source.ts");
+  expect(store.get(workstreamStateAtom(id)).layoutMode).toBe("split");
 });
 
 it("does not mirror an empty hidden editor before hydration, forwards file locations, and acknowledges hidden tracker opens", () => {
