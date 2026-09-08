@@ -666,7 +666,14 @@ struct FileYjsCompactMessage: Encodable {
 
 /// Response to projectSyncRequest.
 struct ProjectSyncResponse: Codable {
+    enum CodingKeys: String, CodingKey {
+        case type, transferId, batchIndex, isLastBatch
+        case updatedFiles, newFiles, yjsUpdates, needFromClient, deletedSyncIds
+    }
     let type: String
+    var transferId: String? = nil
+    var batchIndex: Int? = nil
+    var isLastBatch: Bool? = nil
     /// Files the client is missing or has stale content for.
     let updatedFiles: [ProjectSyncFileEntry]
     /// Yjs updates the client hasn't seen.

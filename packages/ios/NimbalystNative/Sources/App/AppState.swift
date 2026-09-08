@@ -126,7 +126,8 @@ public final class AppState: ObservableObject {
     }
 
     /// Initialize with pre-built managers (for testing and previews).
-    public init(databaseManager: DatabaseManager) {
+    public init(databaseManager: DatabaseManager, documentSyncManager: DocumentSyncManager? = nil) {
+        self.documentSyncManager = documentSyncManager
         self.databaseManager = databaseManager
         self.indexLoadState = .loaded
         self.isPaired = true

@@ -2,6 +2,31 @@ import XCTest
 
 final class NavigationContinuityTests: XCTestCase {
     @MainActor
+    func testFilesDownloadsLargeProjectAndRetriesInterruptedSync() throws {
+        continueAfterFailure = false
+        guard let server = ProcessInfo.processInfo.environment["NIMBALYST_DOCUMENT_FIXTURE_URL"] else {
+            throw XCTSkip("Requires the local document-sync-fixture.cjs server; see ios/TESTING.md")
+        }
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication()
+        app.launchArguments = ["--screenshot-mode", "--screenshot-screen=sessions", "--document-sync-fixture=\(server)", "-hasPromptedForNotifications", "YES"]
+        app.launch()
+        defer { app.terminate() }
+        let filesTab = app.buttons["Files"]
+        XCTAssertTrue(filesTab.waitForExistence(timeout: 10))
+        filesTab.tap()
+        XCTAssertFalse(app.staticTexts["No Documents"].exists)
+        XCTAssertTrue(app.buttons["Retry"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Document 0000.md"].exists)
+        app.buttons["Retry"].tap()
+        let completed = app.staticTexts["2,293 files"]
+        XCTAssertTrue(completed.waitForExistence(timeout: 15))
+        app.staticTexts["Document 0000.md"].tap()
+        XCTAssertTrue(app.webViews.firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.webViews.staticTexts["Downloaded document"].waitForExistence(timeout: 10))
+    }
+
+    @MainActor
     func testEmptyListsWaitForIndexSync() {
         continueAfterFailure = false
         XCUIDevice.shared.orientation = .portrait
