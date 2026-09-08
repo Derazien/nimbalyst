@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Codex shell edits now appear in file-session links with inferred attribution and live updates.
 - Files on iOS load large projects reliably and show sync progress and retryable errors.
 - Display math beginning with a number renders correctly in chat.
 - SQLite migrations recover from slow batches and copy large session tables more efficiently.

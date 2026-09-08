@@ -235,7 +235,7 @@ export function registerFileHandlers() {
 
             // Mark that we're saving to prevent file watcher from reacting
             savingWindows.add(windowId);
-            SessionFileWatcher.markEditorSave(filePath);
+            SessionFileWatcher.markEditorSave(filePath, content);
 
             saveFile(filePath, content);
 
@@ -345,7 +345,7 @@ export function registerFileHandlers() {
 
                 // Mark that we're saving to prevent file watcher from reacting
                 savingWindows.add(windowId);
-                SessionFileWatcher.markEditorSave(filePath);
+                SessionFileWatcher.markEditorSave(filePath, content);
 
                 if (state) {
                     state.filePath = filePath;

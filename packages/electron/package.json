@@ -363,6 +363,10 @@
         "to": "codex-pre-edit-hook.mjs"
       },
       {
+        "from": "resources/codex-shell-hook.cjs",
+        "to": "codex-shell-hook.cjs"
+      },
+      {
         "from": "resources/claudeCliPermissionHook.cjs",
         "to": "claudeCliPermissionHook.cjs"
       },

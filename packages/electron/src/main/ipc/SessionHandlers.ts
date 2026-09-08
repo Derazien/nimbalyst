@@ -19,7 +19,7 @@ import type { SessionCreateResult } from '../../shared/ipc/types';
 import { AnalyticsService } from '../services/analytics/AnalyticsService';
 import { trackCreateAiSession } from '../services/analytics/sessionLaunchAnalytics';
 import { SessionCommitService } from '../services/SessionCommitService';
-import { findSessionIdsForFile } from '../services/sessionFilesByPath';
+import { findSessionAttributionForFile } from '../services/sessionFilesByPath';
 import { normalizeSessionPhaseMetadataUpdate } from '../services/session/sessionPhaseTransition';
 import { destroyProviderForArchivedSession } from '../services/ai/archiveSessionProviderLifecycle';
 import { resolveSessionModelSelection } from '../services/ai/sessionModelSelection';
@@ -875,13 +875,15 @@ export async function registerSessionHandlers() {
 
             const projectPath = resolveProjectPath(workspaceId);
 
-            const sessionIds = await findSessionIdsForFile(database, {
+            const fileSessions = await findSessionAttributionForFile(database, {
                 workspaceId,
                 projectPath,
                 relativePath,
                 filePath,
             });
 
+            const sessionIds = fileSessions.map(s => s.id);
+            const fileAttribution = new Map(fileSessions.map(s => [s.id, s]));
             if (sessionIds.length === 0) {
                 return [];
             }
@@ -914,7 +916,8 @@ export async function registerSessionHandlers() {
                         updatedAt: session.updatedAt,
                         messageCount: entry?.messageCount || 0,
                         worktreeId: (session as any).worktreeId || null,
-                        isCurrentWorkspace: isCurrentWs
+                        isCurrentWorkspace: isCurrentWs,
+                        ...fileAttribution.get(session.id),
                     };
                 })
                 .sort((a, b) => {
