@@ -132,6 +132,17 @@ jobs:
         working-directory: packages/runtime
         run: npm run build
 
+      # The cache contains the browser dist only. A cache miss builds dist-node
+      # as part of the runtime build; a hit still needs its Node declarations.
+      - name: Build Node runtime on cache hit
+        if: steps.cache-runtime-dist.outputs.cache-hit == 'true'
+        run: npm run build:node --workspace=@nimbalyst/runtime
+
+      # This consumes runtime's built Node exports, so it must run after runtime
+      # rather than in npm ci's workspace prepare lifecycle.
+      - name: Build Node package
+        run: npm run build --workspace=@nimbalyst/node
+
       # Typecheck core packages
       - name: TypeScript check - electron
         working-directory: packages/electron
