@@ -2724,6 +2724,36 @@ describe('handleTrackerUpdate description / collab body', () => {
     }
   });
 
+  it.each([
+    { itemId: 'partner-person_target' },
+    { itemId: 'NIM-4275' },
+    {}, { id: null }, { id: '' }, { id: ' \t ' }, { id: 42 },
+  ])('rejects malformed update target %j without touching an unkeyed frontmatter item', async (target) => {
+    const plan = makeItem({ id: 'fm:plan:plans/unrelated.md', issueKey: undefined, source: 'frontmatter' });
+    mockDocumentServices.set('/tmp/ws', mockDocService);
+    mockDocService.getTrackerItemById.mockReset().mockResolvedValue(null);
+    mockDocService.listTrackerItems.mockReset().mockResolvedValue([plan]);
+    mockQuery.mockReset().mockResolvedValue({ rows: [] });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const result = await handleTrackerUpdate({ ...target, status: 'in-progress' }, '/tmp/ws');
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('tracker_update requires a non-empty string id');
+      expect(result.content[0].text).toContain('Use id, not itemId');
+      expect(mockDocService.getTrackerItemById).not.toHaveBeenCalled();
+      expect(mockDocService.listTrackerItems).not.toHaveBeenCalled();
+      expect(mockDocService.ensureTrackerProjection).not.toHaveBeenCalled();
+      expect(mockDocService.updateTrackerItemInFile).not.toHaveBeenCalled();
+      expect(mockDocService.setTrackerItemPublished).not.toHaveBeenCalled();
+      expect(mockQuery).not.toHaveBeenCalled();
+      expect(mockApplyHeadlessBodyMarkdown).not.toHaveBeenCalled();
+      expect(vi.mocked(syncTrackerItem)).not.toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+      mockDocService.listTrackerItems.mockResolvedValue([]);
+    }
+  });
+
   it('routes frontmatter-backed plan status updates through updateTrackerItemInFile', async () => {
     const publicId = 'fm:plan:plans/example.md';
     const trackerRow = makeRow({

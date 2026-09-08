@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Invalid tracker update requests are rejected instead of changing an unrelated item.
 
 ### Removed
 <!-- Removed features go here -->

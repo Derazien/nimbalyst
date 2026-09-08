@@ -60,6 +60,7 @@ import {
   resolveTrackerRowByReference,
 } from './trackerToolItemAccess';
 import { handleTrackerPublicationUpdate } from './trackerPublicationTool';
+import { prepareTrackerUpdateInput } from './trackerToolUpdateInput';
 import { handleGithubIssueOverlayCreate } from './githubIssueOverlayTool';
 import {
   bodyWriteFailure,
@@ -2247,22 +2248,7 @@ export async function handleTrackerUpdate(
   sessionId?: string | undefined
 ): Promise<McpToolResult> {
   try {
-    // NIM-438: a description delivered via the generic fields bag
-    // (fields.description) must update the canonical visible body the same way
-    // a top-level `description` does. The body-seed path keys off
-    // args.description, so hoist fields.description up to the top level (and
-    // drop it from the bag to avoid a redundant data.description write) before
-    // any field processing runs.
-    if (
-      args &&
-      args.fields &&
-      typeof args.fields === 'object' &&
-      args.fields.description !== undefined &&
-      args.description === undefined
-    ) {
-      args.description = args.fields.description;
-      delete args.fields.description;
-    }
+    prepareTrackerUpdateInput(args);
 
     // Make custom (.nimbalyst/trackers/*.yaml) types visible so primaryType
     // reassignment and schema validation accept them (NIM-760).
