@@ -4,6 +4,8 @@ import './hooks/useExtensionInputGuard';
 
 // Side-effect: ensure atomFamily registry is initialized and window.__atomFamilyStats is set
 import './store/debug/atomFamilyRegistry';
+import { agentRightPanelOptions } from './components/AgentMode/agentRightPanelOptions';
+import { revealWorkstreamEditorAtom } from './store/atoms/agentFileViewer';
 
 import React, { Activity, useCallback, useEffect, useRef, useState, useMemo } from 'react';
 import { useAtomValue, useSetAtom } from 'jotai';
@@ -69,7 +71,6 @@ import { DocumentModelRegistry } from './services/document-model/DocumentModelRe
 import {
   addWorkstreamFileAtom,
   addWorkstreamTrackerAtom,
-  setWorkstreamLayoutModeAtom,
   workstreamStateAtom,
 } from './store/atoms/workstreamState';
 import {
@@ -955,7 +956,7 @@ export default function App() {
             selection: { type: 'session', id: result.id },
           });
           store.set(addWorkstreamFileAtom, { workstreamId: result.id, filePath });
-          store.set(setWorkstreamLayoutModeAtom, { workstreamId: result.id, mode: 'split' });
+          store.set(revealWorkstreamEditorAtom, result.id);
           return result.id;
         },
       };
@@ -1277,35 +1278,7 @@ export default function App() {
           // No 'Hidden' entry: the split button's toggle half hides the panel,
           // and the selection stays marked while hidden so re-showing restores
           // the last-used mode.
-          options: [
-            {
-              id: 'edited-files',
-              label: 'Edited Files',
-              icon: 'description',
-              selected: agentPanelState.mode === 'edited-files',
-              onSelect: () => {
-                agentModeRef.current?.showRightPanel('edited-files');
-              },
-            },
-            {
-              id: 'review',
-              label: 'Review',
-              icon: 'rate_review',
-              selected: agentPanelState.mode === 'review',
-              onSelect: () => {
-                agentModeRef.current?.showRightPanel('review');
-              },
-            },
-            {
-              id: 'session-chat',
-              label: 'Chat with Session',
-              icon: 'forum',
-              selected: agentPanelState.mode === 'session-chat',
-              onSelect: () => {
-                agentModeRef.current?.showRightPanel('session-chat');
-              },
-            },
-          ],
+          options: agentRightPanelOptions(agentPanelState.mode, (mode) => agentModeRef.current?.showRightPanel(mode)),
         } : undefined,
       };
     }
@@ -2211,21 +2184,14 @@ export default function App() {
         : null;
       if (currentMode === 'agent' && selection?.id) {
         const workstreamId = selection.id;
-        const layout = store.get(workstreamStateAtom(workstreamId)).layoutMode;
-        if (layout === 'transcript') {
-          // Editor strip not mounted: seed openResources so the mount-time
-          // restore projects the tracker tab, then reveal the strip.
+        const event = new CustomEvent('nimbalyst:workstream-open-tracker', {
+          detail: { workstreamId, trackerItemId: itemId }, cancelable: true,
+        });
+        window.dispatchEvent(event);
+        if (!event.defaultPrevented) {
           store.set(addWorkstreamTrackerAtom, { workstreamId, trackerItemId: itemId });
-          store.set(setWorkstreamLayoutModeAtom, { workstreamId, mode: 'split' });
-        } else {
-          // Already mounted: open imperatively. TabsContext is authoritative
-          // once mounted; the persist effect mirrors the change to openResources.
-          window.dispatchEvent(
-            new CustomEvent('nimbalyst:workstream-open-tracker', {
-              detail: { workstreamId, trackerItemId: itemId },
-            })
-          );
         }
+        store.set(revealWorkstreamEditorAtom, workstreamId);
         return;
       }
 
