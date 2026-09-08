@@ -241,6 +241,7 @@ export function getMigrations(schemaDir: string): Migration[] {
       name: 'worktree_source_folder',
       sqlFile: path.join(schemaDir, '0040_worktree_source_folder.sql'),
     },
+    { version: 41, name: 'document_feedback_index', sqlFile: path.join(schemaDir, '0041_document_feedback_index.sql') },
   ];
 }
 

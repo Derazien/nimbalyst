@@ -166,6 +166,7 @@ const COPY_TABLES: readonly string[] = [
   'collab_document_assets',
   'project_file_sync_baseline',
   'feedback_request_cache',
+  'document_feedback_index_cache',
   'feedback_request_index',
   'feedback_request_index_backfill',
 ];

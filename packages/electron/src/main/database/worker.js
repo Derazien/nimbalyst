@@ -3279,6 +3279,15 @@ class PGLiteWorker {
       throw error;
     }
 
+    await this.db.exec(`CREATE TABLE IF NOT EXISTS document_feedback_index_cache (
+  workspace_path TEXT NOT NULL,
+  org_id TEXT NOT NULL,
+  viewer_user_id TEXT NOT NULL,
+  data JSONB NOT NULL,
+  PRIMARY KEY (workspace_path, org_id, viewer_user_id)
+);
+`);
+
     // Migration: pure GitHub issues cache (schema version 35).
     // Mirror of SQLite 0035_github_issues.sql, using native JSONB.
     try {
