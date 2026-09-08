@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
+- Jump to unanswered agent questions and automatically scroll to new ones.
 - Choose whether Agent mode opens file tabs above the transcript or in the right pane.
 - Pick one of your project's action prompts from the mobile composer's + menu to prefill it, or open a new session with it.
 
