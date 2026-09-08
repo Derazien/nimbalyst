@@ -25,6 +25,7 @@
  * so try/catch in callers behaves the same as before.
  */
 
+import { serializeBridgeError } from './worker/migrationReadBridge';
 import { Worker } from 'worker_threads';
 import * as path from 'path';
 import { v4 as uuidv4 } from 'uuid';
@@ -59,6 +60,7 @@ import { MIGRATION_OUTCOME_EVENT, type MigrationOutcome } from './migrationOutco
  * PGLite (which lives in a different worker_threads thread).
  */
 export interface LivePgliteReader {
+  assertAvailable?: () => void;
   queryReadOnly<T = unknown>(
     sql: string,
     params?: unknown[],
@@ -101,17 +103,6 @@ export interface SQLiteDatabaseProxyOptions {
   requestTimeoutMs?: number;
 }
 
-function serializeBridgeError(err: unknown): SerializedError {
-  if (err instanceof Error) {
-    return {
-      message: err.message,
-      name: err.name,
-      stack: err.stack,
-      code: (err as { code?: string }).code,
-    };
-  }
-  return { message: String(err) };
-}
 
 /**
  * Backup requests copy and scan the whole database, so their duration scales
@@ -419,6 +410,7 @@ export class SQLiteDatabaseProxy {
     this.ensureWorkerSpawned();
     // Migration can take a very long time on large DBs; bound generously.
     // Worker side guards against concurrent starts.
+    this.pgliteReader?.assertAvailable?.();
     return (await this.send('migrationStart', args, 60 * 60 * 1000)) as {
       summary: MigrationSummary;
     };
@@ -429,6 +421,7 @@ export class SQLiteDatabaseProxy {
     schemaDir: string;
   }): Promise<{ result: DryRunResult }> {
     this.ensureWorkerSpawned();
+    this.pgliteReader?.assertAvailable?.();
     return (await this.send('migrationStartDryRun', args, 60 * 60 * 1000)) as {
       result: DryRunResult;
     };
@@ -444,6 +437,7 @@ export class SQLiteDatabaseProxy {
 
   async adoptDryRun(args: AdoptDryRunPayload): Promise<{ result: AdoptResult }> {
     this.ensureWorkerSpawned();
+    this.pgliteReader?.assertAvailable?.();
     return (await this.send('migrationAdoptDryRun', args, 60 * 60 * 1000)) as {
       result: AdoptResult;
     };

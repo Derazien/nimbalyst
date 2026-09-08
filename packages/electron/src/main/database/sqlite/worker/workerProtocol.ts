@@ -34,7 +34,9 @@ export interface SerializedError {
   stack?: string;
   code?: string;
   /**
-   * Structured payload for errors that carry a decision. `MigrationRefusedError`
+   * Structured payload for migration read settlement and refusal decisions.
+   * Retry eligibility requires the sourceSettled acknowledgement; preserve it
+   * across both worker hops. `MigrationRefusedError`
    * puts its `MigrationRefusal` here so main gets the reason code and bucketed
    * facts intact instead of having to parse them back out of `message`.
    */

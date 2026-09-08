@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 <!-- Bug fixes go here -->
+- SQLite migrations recover from slow batches and copy large session tables more efficiently.
 - Sent document questions now appear in Feedback with response progress and links back to each question.
 - Invalid tracker update requests are rejected instead of changing an unrelated item.
 

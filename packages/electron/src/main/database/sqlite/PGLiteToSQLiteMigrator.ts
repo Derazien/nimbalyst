@@ -8,14 +8,10 @@
  * IPC handler that drives this class.
  *
  * Design choices:
- *   - Reads PGLite via the `@electric-sql/pglite` ESM module in the same
- *     process. The PGLite worker thread must be closed before the migrator
- *     runs; the migrator opens its own short-lived PGLite handle in
- *     `readonly: true` mode against the source directory.
- *   - Writes SQLite through `coordinator.runBackground(...)` so the JS event
- *     loop stays responsive during long table copies. Each batch is wrapped
- *     in a single `BEGIN IMMEDIATE / COMMIT` via better-sqlite3's transaction
- *     helper for fsync amortization.
+ *   - Reads through the live PGLite worker bridge; final cutover reconciliation
+ *     uses the source opened by the existing quiescence flow.
+ *   - Writes each batch through the SQLite coordinator in a transaction.
+ *     Source timeout recovery waits for actual source completion before retry.
  *   - `PRAGMA foreign_keys = OFF` during copy so we can insert tables in any
  *     order, plus self-referential FKs (`ai_sessions.parent_session_id`)
  *     don't need ordering. We turn them back on and run
@@ -37,6 +33,7 @@
  *   - `PRAGMA foreign_key_check` returns no rows.
  */
 
+import { copyMigrationTable } from './migrationTableCopy';
 import type { Database as BetterSqliteDb } from 'better-sqlite3';
 import type { SQLiteDatabase } from './SQLiteDatabase';
 
@@ -94,8 +91,8 @@ export interface MigrationSummary {
  *     anything newer than this in PGLite must be incrementally copied.
  *   - `rows`: row count at the time of the dry-run; used for sanity warnings
  *     in the UI ("X new rows since dry-run").
- *   - `cursorColumn`: the PK column we used; null/absent means the table was
- *     copied via OFFSET (composite PK) and adopt re-copies it whole.
+ *   - `cursorColumn`: the incremental catch-up key; absent means adoption
+ *     re-copies the table, regardless of how its initial copy was paged.
  */
 export interface DryRunManifest {
   /** ISO timestamp of dry-run completion. */
@@ -189,8 +186,8 @@ const SOURCE_AUTHORITATIVE_CONFLICT_KEYS: Readonly<Record<string, readonly strin
  * unsafe for incremental catch-up because a newly inserted row can sort
  * *before* the previous high-water mark and be skipped forever.
  *
- * Tables not in this map fall back to LIMIT/OFFSET for the initial full copy
- * and full re-copy during catch-up. That's slower, but it is exact.
+ * Tables not in this map receive a full re-copy during catch-up. Full-copy
+ * paging is selected separately, so TEXT keys do not force OFFSET scans.
  */
 const CURSOR_COLUMNS: Record<string, string> = {
   document_history: 'id',
@@ -200,6 +197,13 @@ const CURSOR_COLUMNS: Record<string, string> = {
   // worktrees, ai_sessions, session_files, tracker_items, queued_prompts,
   // ai_session_wakeups, super_loops, super_iterations, tracker_body_cache,
   // tracker_transactions, collab_local_origins.
+};
+
+// Full copies can page TEXT keys; adoption must still re-copy those tables.
+const FULL_COPY_COLUMNS: Record<string, string> = {
+  ...CURSOR_COLUMNS,
+  ai_sessions: 'id',
+  session_files: 'id',
 };
 
 const DEFAULT_BATCH_SIZE = 5000;
@@ -243,7 +247,7 @@ function getSourceTableFilterSql(table: string): string {
   `;
 }
 
-interface TargetColumn {
+export interface TargetColumn {
   name: string;
   type: string;
   /** Whether this column is GENERATED (must not appear in INSERT). */
@@ -314,7 +318,7 @@ export class PGLiteToSQLiteMigrator {
         sqlite: opts.sqlite,
         sqliteHandle,
         batchSize,
-        cursorColumn: CURSOR_COLUMNS[name],
+        cursorColumn: FULL_COPY_COLUMNS[name],
         sampleSize: Math.min(spotCheckPerTable, Math.max(1, tableExpected)),
         onBatchProgress: (tableRowsCopied) => {
           totalCopied = pgliteCounts
@@ -342,7 +346,7 @@ export class PGLiteToSQLiteMigrator {
         name,
         rows: copied,
         cursorColumn: CURSOR_COLUMNS[name],
-        cursorMax,
+        cursorMax: CURSOR_COLUMNS[name] ? cursorMax : undefined,
       });
       log('info', `[migrator] copied ${copied}/${tableExpected} rows from ${name}`);
     }
@@ -669,7 +673,7 @@ export class PGLiteToSQLiteMigrator {
           sqlite: opts.sqlite,
           sqliteHandle,
           batchSize,
-          cursorColumn,
+          cursorColumn: FULL_COPY_COLUMNS[name],
           sampleSize: 0,
           onBatchProgress: () => { /* recopy progress is short; skip per-batch noise */ },
           log,
@@ -679,7 +683,7 @@ export class PGLiteToSQLiteMigrator {
           name,
           rows: currentTotal,
           cursorColumn,
-          cursorMax,
+          cursorMax: cursorColumn ? cursorMax : undefined,
         });
       }
 
@@ -761,9 +765,7 @@ export class PGLiteToSQLiteMigrator {
     batchSize: number;
     /**
      * Single-column PK to drive cursor pagination (WHERE col > $cursor ORDER
-     * BY col). When omitted falls back to LIMIT/OFFSET — only used for the
-     * tiny composite-PK tables. OFFSET is O(n^2) on large tables, hence the
-     * cursor path for everything > a few hundred rows.
+     * BY col). Tables without an eligible key retain LIMIT/OFFSET paging.
      */
     cursorColumn?: string;
     /**
@@ -780,137 +782,14 @@ export class PGLiteToSQLiteMigrator {
       opts.onBatchProgress(0);
       return { copied: 0, samples: [] };
     }
-
-    const target = this.getTargetColumns(opts.sqliteHandle, opts.sourceTable);
-    // Intersect with the source's columns so we don't try to INSERT a target
-    // column the source never had (the SQLite schema may legitimately add
-    // columns that the PGLite end-state didn't carry). SQLite fills in the
-    // DEFAULT for any column we omit.
-    const sourceCols = await this.getSourceColumns(opts.pglite, opts.sourceTable);
-    const insertableCols = target.filter(
-      (c) => !c.generated && sourceCols.has(c.name),
-    );
-    if (insertableCols.length === 0) {
-      throw new Error(`No insertable columns for ${opts.sourceTable}`);
-    }
-    const conflictKeys = SOURCE_AUTHORITATIVE_CONFLICT_KEYS[opts.sourceTable];
-    const conflictClause = conflictKeys
-      ? (() => {
-          const keySet = new Set(conflictKeys);
-          const updateCols = insertableCols.filter((column) => !keySet.has(column.name));
-          const action = updateCols.length > 0
-            ? `DO UPDATE SET ${updateCols
-                .map((column) => `${quoteIdent(column.name)} = excluded.${quoteIdent(column.name)}`)
-                .join(',')}`
-            : 'DO NOTHING';
-          return ` ON CONFLICT (${conflictKeys.map(quoteIdent).join(',')}) ${action}`;
-        })()
-      : '';
-    const insertSql = `INSERT INTO ${quoteIdent(opts.sourceTable)}(${insertableCols
-      .map((c) => quoteIdent(c.name))
-      .join(',')}) VALUES (${insertableCols.map(() => '?').join(',')})${conflictClause}`;
-
-    const stmt = opts.sqliteHandle.prepare(insertSql);
-    const insertMany = opts.sqliteHandle.transaction((rows: unknown[][]) => {
-      for (const r of rows) stmt.run(...r);
+    return copyMigrationTable({
+      ...opts,
+      targetColumns: this.getTargetColumns(opts.sqliteHandle, opts.sourceTable),
+      sourceColumns: await this.getSourceColumns(opts.pglite, opts.sourceTable),
+      translateRow: (row, cols) => this.translateRow(row, cols),
+      filterSql: getSourceTableFilterSql(opts.sourceTable),
+      conflictKeys: SOURCE_AUTHORITATIVE_CONFLICT_KEYS[opts.sourceTable],
     });
-
-    // Cursor-paginated path: WHERE pk > $cursor ORDER BY pk LIMIT N. This is
-    // O(n) total work across the whole table because each batch starts from
-    // an indexed position, not from row 0. For ai_agent_messages this is the
-    // difference between minutes and hours.
-    const useCursor = opts.cursorColumn !== undefined
-      && sourceCols.has(opts.cursorColumn);
-    if (opts.cursorColumn && !useCursor) {
-      opts.log(
-        'warn',
-        `[migrator] ${opts.sourceTable}: cursor column "${opts.cursorColumn}" not in source; falling back to OFFSET`,
-      );
-    }
-    const pkCol = useCursor ? quoteIdent(opts.cursorColumn!) : null;
-    const filterSql = getSourceTableFilterSql(opts.sourceTable);
-
-    let copied = 0;
-    let offset = 0;
-    let cursor: unknown = opts.initialCursor !== undefined ? opts.initialCursor : null;
-    // Reservoir sample (Algorithm R): unbiased k-of-n sample with one pass.
-    const samples: Record<string, unknown>[] = [];
-    let seen = 0;
-    // Loop until PGLite returns 0 rows. We can't trust expectedRows as a hard
-    // stop because catch-up's expectedRows is "new rows since dry-run" which
-    // is just an estimate — actual new rows can be a few more (race with live
-    // writes between measure and copy).
-    while (true) {
-      const result = useCursor
-        ? cursor === null
-          ? await opts.pglite.query<Record<string, unknown>>(
-              `SELECT * FROM ${quoteIdent(opts.sourceTable)}${filterSql} ORDER BY ${pkCol} LIMIT $1`,
-              [opts.batchSize],
-            )
-          : await opts.pglite.query<Record<string, unknown>>(
-              `SELECT * FROM ${quoteIdent(opts.sourceTable)}${filterSql}${filterSql ? ' AND' : ' WHERE'} ${pkCol} > $1 ORDER BY ${pkCol} LIMIT $2`,
-              [cursor, opts.batchSize],
-            )
-        : await opts.pglite.query<Record<string, unknown>>(
-            `SELECT * FROM ${quoteIdent(opts.sourceTable)}${filterSql} ORDER BY 1 LIMIT $1 OFFSET $2`,
-            [opts.batchSize, offset],
-          );
-      if (result.rows.length === 0) break;
-
-      for (const row of result.rows) {
-        if (samples.length < opts.sampleSize) {
-          samples.push(row);
-        } else {
-          const j = Math.floor(Math.random() * (seen + 1));
-          if (j < opts.sampleSize) samples[j] = row;
-        }
-        seen++;
-      }
-
-      const translatedBatch: unknown[][] = result.rows.map((row) =>
-        this.translateRow(row, insertableCols),
-      );
-
-      // Run the insert through the hot write lane. Each batch is a single
-      // BEGIN IMMEDIATE / COMMIT so we pay one fsync per batch instead of one
-      // per row. The await yields the event loop after the batch commits,
-      // and the next iteration awaits pglite.query() which yields again.
-      const coordinator = opts.sqlite.getCoordinator();
-      if (!coordinator) throw new Error('SQLiteDatabase coordinator not available');
-      await coordinator.write((db: BetterSqliteDb) => {
-        if (db === opts.sqliteHandle) {
-          insertMany(translatedBatch);
-        } else {
-          // Defensive: coordinator should always pass the same handle we
-          // prepared the statement against.
-          throw new Error('WriteCoordinator handed a different db handle');
-        }
-      });
-
-      copied += result.rows.length;
-      if (useCursor) {
-        // Advance cursor to the last PK we just read. PGLite returns the rows
-        // already ordered by pkCol, so the last row's PK is the new high-water.
-        cursor = result.rows[result.rows.length - 1][opts.cursorColumn!];
-      } else {
-        offset += result.rows.length;
-      }
-      opts.onBatchProgress(copied);
-
-      // Safety: if PGLite returned fewer rows than batchSize, we're done.
-      if (result.rows.length < opts.batchSize) break;
-    }
-
-    if (copied !== opts.expectedRows) {
-      opts.log(
-        'warn',
-        `[migrator] ${opts.sourceTable}: copied ${copied} but expected ${opts.expectedRows}`,
-      );
-    }
-    const cursorMax = useCursor && cursor !== null
-      ? (cursor as string | number)
-      : undefined;
-    return { copied, samples, cursorMax };
   }
 
   private getTargetColumns(db: BetterSqliteDb, table: string): TargetColumn[] {

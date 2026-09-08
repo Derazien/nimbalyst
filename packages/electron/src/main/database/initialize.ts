@@ -101,7 +101,8 @@ export async function getMigrationProxy(): Promise<SQLiteDatabaseProxy> {
     migrationProxy = new SQLiteDatabaseProxy({ dbDir: sqliteDir, schemaDir });
     migrationProxy.setPgliteReader({
       queryReadOnly: <T>(sql: string, params?: unknown[], timeoutMs?: number) =>
-        database.queryReadOnly<T>(sql, params as any[] | undefined, timeoutMs),
+        legacyPgliteDatabase.queryForMigration<T>(sql, params, timeoutMs),
+      assertAvailable: () => legacyPgliteDatabase.assertMigrationAvailable(),
     });
     migrationProxy.setMigrationControl(createMigrationControl({
       // A close that rejects aborts the cutover before anything is renamed.

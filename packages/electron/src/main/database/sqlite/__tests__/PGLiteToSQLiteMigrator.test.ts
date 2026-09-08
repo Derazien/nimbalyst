@@ -581,6 +581,114 @@ describe('PGLiteToSQLiteMigrator', () => {
     expect(row.content.equals(payload)).toBe(true);
   });
 
+  it('recovers a settled source timeout from the last committed message without losing or duplicating rows', async () => {
+    await seedPgliteSchema();
+    await pglite.query("INSERT INTO ai_sessions(id, provider) VALUES ('recovery', 'claude-code')");
+    for (let i = 1; i <= 7; i++) {
+      await pglite.query(
+        "INSERT INTO ai_agent_messages(session_id, source, direction, content) VALUES ('recovery', 'claude-code', 'input', $1)",
+        [`message-${i}`],
+      );
+    }
+    const attempts: unknown[][] = [];
+    const progress: number[] = [];
+    let failed = false;
+    const source: PGLiteHandle = {
+      async query<T>(sql: string, params?: unknown[]) {
+        if (sql.startsWith('SELECT * FROM "ai_agent_messages"')) {
+          attempts.push([...params!]);
+          if (params?.[0] === 2 && params.length === 2 && !failed) {
+            failed = true;
+            throw Object.assign(new Error('Migration source read exceeded its deadline'), {
+              code: 'migration_read_timeout',
+              data: { sourceSettled: true, elapsedMs: 31_000 },
+            });
+          }
+        }
+        return pglite.query<T>(sql, params as unknown[]);
+      },
+      exec: (sql) => pglite.exec(sql),
+      close: async () => {},
+    };
+    const summary = await new PGLiteToSQLiteMigrator().migrate({
+      pglite: source, sqlite, batchSize: 2,
+      onProgress: (p) => {
+        if (p.phase === 'copying' && p.currentTable === 'ai_agent_messages') progress.push(p.tableRowsCopied);
+      },
+    });
+    expect(failed).toBe(true);
+    expect(attempts.slice(0, 3)).toEqual([[2], [2, 2], [2, 1]]);
+    expect(progress.filter((n) => n === 2)).toHaveLength(1);
+    expect(sqlite.getRawHandle()!.prepare('SELECT id, content FROM ai_agent_messages ORDER BY id').all())
+      .toEqual(Array.from({ length: 7 }, (_, i) => ({ id: i + 1, content: `message-${i + 1}` })));
+    expect(summary.integrityCheck).toBe('ok');
+  });
+
+  it('keyset-pages text IDs but fully reconciles lower inserts, updates, and deletions at adoption', async () => {
+    await seedPgliteSchema();
+    for (const id of ['b', 'c', 'd']) {
+      await pglite.query("INSERT INTO ai_sessions(id, provider, title) VALUES ($1, 'claude-code', $1)", [id]);
+      await pglite.query("INSERT INTO session_files(id, session_id, workspace_id, file_path, link_type) VALUES ($1, 'b', 'ws', $1, 'read')", [id]);
+    }
+    const pages: string[] = [];
+    const source: PGLiteHandle = {
+      async query<T>(sql: string, params?: unknown[]) {
+        if (/^SELECT \* FROM "(ai_sessions|session_files)"/.test(sql)) {
+          expect(sql).not.toContain('OFFSET');
+          pages.push(sql);
+        }
+        return pglite.query<T>(sql, params as unknown[]);
+      },
+      exec: (sql) => pglite.exec(sql), close: async () => {},
+    };
+    const migrator = new PGLiteToSQLiteMigrator();
+    const summary = await migrator.migrate({ pglite: source, sqlite, batchSize: 2 });
+    for (const table of ['ai_sessions', 'session_files']) {
+      expect(summary.manifest!.perTable.find((entry) => entry.name === table)?.cursorMax).toBeUndefined();
+      expect(pages.some((sql) => sql.includes(`"${table}"`) && sql.includes('"id" > $1'))).toBe(true);
+    }
+    await pglite.query("INSERT INTO ai_sessions(id, provider, title) VALUES ('a', 'claude-code', 'new')");
+    await pglite.query("UPDATE ai_sessions SET title = 'updated' WHERE id = 'c'");
+    await pglite.query("DELETE FROM session_files WHERE id = 'd'");
+    await pglite.query("DELETE FROM ai_sessions WHERE id = 'd'");
+    await pglite.query("INSERT INTO session_files(id, session_id, workspace_id, file_path, link_type) VALUES ('a', 'a', 'ws', 'new', 'read')");
+    await pglite.query("UPDATE session_files SET file_path = 'updated' WHERE id = 'c'");
+    await migrator.catchUp({ pglite: source, sqlite, batchSize: 2, manifest: summary.manifest! });
+    expect(sqlite.getRawHandle()!.prepare('SELECT id, title FROM ai_sessions ORDER BY id').all()).toEqual([
+      { id: 'a', title: 'new' }, { id: 'b', title: 'b' }, { id: 'c', title: 'updated' },
+    ]);
+    expect(sqlite.getRawHandle()!.prepare('SELECT id, file_path FROM session_files ORDER BY id').all()).toEqual([
+      { id: 'a', file_path: 'new' }, { id: 'b', file_path: 'b' }, { id: 'c', file_path: 'updated' },
+    ]);
+  });
+
+  it.each([
+    { code: 'migration_read_timeout', settled: true, elapsedMs: 31_000, attempts: 2 },
+    { code: 'migration_read_timeout', settled: true, elapsedMs: 180_000, attempts: 1 },
+    { code: 'migration_read_timeout', settled: false, elapsedMs: 31_000, attempts: 1 },
+    { code: 'XX000', settled: true, elapsedMs: 31_000, attempts: 1 },
+  ])('bounds source retry and preserves terminal errors: $code / $settled / $elapsedMs', async ({ code, settled, elapsedMs, attempts }) => {
+    await seedPgliteSchema();
+    await pglite.query("INSERT INTO ai_sessions(id, provider) VALUES ('failure', 'claude-code')");
+    let reads = 0;
+    const error = Object.assign(new Error('source failure'), { code, data: { sourceSettled: settled, elapsedMs } });
+    const source: PGLiteHandle = {
+      async query<T>(sql: string, params?: unknown[]) {
+        if (sql.startsWith('SELECT * FROM "ai_sessions"')) { reads++; throw error; }
+        return pglite.query<T>(sql, params as unknown[]);
+      },
+      exec: (sql) => pglite.exec(sql), close: async () => {},
+    };
+    const result = new PGLiteToSQLiteMigrator().migrate({ pglite: source, sqlite, batchSize: 2 });
+    if (code === 'migration_read_timeout' && settled) {
+      await expect(result).rejects.toMatchObject({ code: 'migration_batch_timeout', cause: error });
+    } else {
+      await expect(result).rejects.toBe(error);
+    }
+    expect(reads).toBe(attempts);
+    expect(sqlite.getRawHandle()!.prepare('SELECT COUNT(*) AS n FROM ai_sessions').get()).toEqual({ n: 0 });
+  });
+
   it('caps document_history batches for initial copy and catch-up before wide rows reach the worker bridge', async () => {
     await seedPgliteSchema();
     await pglite.query(
