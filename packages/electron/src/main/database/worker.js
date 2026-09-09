@@ -1594,6 +1594,18 @@ class PGLiteWorker {
       throw error;
     }
 
+    await this.db.exec(`
+      CREATE TABLE IF NOT EXISTS tracker_creation_receipts (
+        item_id TEXT PRIMARY KEY REFERENCES tracker_items(id) ON DELETE CASCADE,
+        workspace TEXT NOT NULL,
+        request_hash TEXT NOT NULL,
+        publication_status TEXT NOT NULL,
+        error TEXT,
+        updated TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_tracker_creation_workspace ON tracker_creation_receipts(workspace, publication_status);
+    `);
+
     // Offline transaction queue. Linear's four-state model (D6):
     //   created -> queued -> executing -> persistedEnqueue.
     // Phase 3 (client engine) reads/writes this; the renderer never

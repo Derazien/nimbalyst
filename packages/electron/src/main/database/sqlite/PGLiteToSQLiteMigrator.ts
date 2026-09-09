@@ -151,6 +151,7 @@ const COPY_TABLES: readonly string[] = [
   'session_commit_backfill_meta',
   'tracker_items',
   'tracker_body_cache',
+  'tracker_creation_receipts',
   'tracker_transactions',
   'queued_prompts',
   'ai_session_wakeups',

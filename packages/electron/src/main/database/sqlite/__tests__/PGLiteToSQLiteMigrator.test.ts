@@ -257,6 +257,12 @@ describe('PGLiteToSQLiteMigrator', () => {
         PRIMARY KEY (item_id, body_version)
       );
 
+      CREATE TABLE tracker_creation_receipts (
+        item_id TEXT PRIMARY KEY REFERENCES tracker_items(id) ON DELETE CASCADE,
+        workspace TEXT NOT NULL, request_hash TEXT NOT NULL,
+        publication_status TEXT NOT NULL, error TEXT, updated TIMESTAMPTZ DEFAULT NOW()
+      );
+
       CREATE TABLE tracker_transactions (
         client_mutation_id TEXT PRIMARY KEY,
         item_id TEXT NOT NULL,
@@ -461,6 +467,11 @@ describe('PGLiteToSQLiteMigrator', () => {
       ['tr-1', 1, '# Login broken\n\nFails on Safari.'],
     );
 
+    await pglite.query(
+      'INSERT INTO tracker_creation_receipts (item_id, workspace, request_hash, publication_status, error) VALUES ($1,$2,$3,$4,$5)',
+      ['tr-1', 'ws-A', 'request-hash', 'pending', 'Acknowledgment lost'],
+    );
+
     // tracker_transactions
     await pglite.query(
       `INSERT INTO tracker_transactions(client_mutation_id, item_id, workspace_path, state, kind, payload)
@@ -546,6 +557,9 @@ describe('PGLiteToSQLiteMigrator', () => {
     expect(new Date(migratedRetry.next_attempt_at).toISOString()).toBe(
       '2026-07-15T05:00:00.000Z',
     );
+
+    expect(sqlite.getRawHandle()!.prepare('SELECT request_hash, publication_status, error FROM tracker_creation_receipts WHERE item_id = ?').get('tr-1'))
+      .toEqual({ request_hash: 'request-hash', publication_status: 'pending', error: 'Acknowledgment lost' });
 
     // Progress events fired through every phase and ended at 100%.
     const phases = new Set(progressEvents.map((p) => p.phase));

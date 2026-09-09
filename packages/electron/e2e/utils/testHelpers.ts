@@ -146,6 +146,10 @@ export const PLAYWRIGHT_TEST_SELECTORS = {
 
   // Editor
   contentEditable: '[contenteditable="true"]',
+  trackerQuickCreateTypeSearch: '[data-testid="tracker-quick-create-type-search"]',
+  trackerQuickCreateTitle: '[data-testid="tracker-quick-create-title"]',
+  trackerQuickCreateContent: '[data-testid="tracker-quick-create-description"]',
+  trackerQuickCreateImageInput: '[data-testid="tracker-quick-create-image-input"]',
 
   // History dialog
   historyDialog: '.history-dialog',
@@ -241,6 +245,7 @@ export const PLAYWRIGHT_TEST_SELECTORS = {
   trackerToolbarNewButton: '[data-testid="tracker-toolbar-new-button"]',
   trackerQuickAddInput: '[data-testid="tracker-quick-add-input"]',
   trackerItemDetail: '[data-testid="tracker-item-detail"]',
+  trackerDetailContentEditor: '[data-testid="tracker-detail-content-editor"]',
   trackerDetailTitle: '[data-testid="tracker-detail-title"]',
   trackerSourceDbBadge: '[data-testid="tracker-source-db-badge"]',
   customSelectOption: '.custom-select-option',

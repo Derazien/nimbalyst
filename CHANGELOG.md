@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Embedded file links resolve relative to the document, with `/` for workspace-root paths and compatibility for existing links.
 - Claude Agent's bundled runtime no longer self-updates out of place, and verified preserved copies are recovered automatically.
 - Coordinating agents can read sibling reports during long-running work without replaying them as extra turns, while keeping human instructions separate.
+- Content entered in the new-item popup is saved as the item's body; the popup now uses the rich editor so screenshots can be pasted or dropped while creating, keeps the draft if creation fails, and shows team publication status with a retry.
+- Items whose creation text was lost to that bug offer their saved description for copy or insertion into the body.
 
 ### Removed
 <!-- Removed features go here -->
