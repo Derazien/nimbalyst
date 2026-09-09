@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Embedded file links resolve relative to the document, with `/` for workspace-root paths and compatibility for existing links.
 - Claude Agent's bundled runtime no longer self-updates out of place, and verified preserved copies are recovered automatically.
 - Coordinating agents can read sibling reports during long-running work without replaying them as extra turns, while keeping human instructions separate.
 
