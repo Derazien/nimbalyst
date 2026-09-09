@@ -45,11 +45,26 @@ const SCANNED_EXT = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.swift', '.k
  * (`sendEvent('foo', ...)`), the second object-literal captures
  * (`capture({ event: 'foo' })`), which is how session start is emitted.
  */
-const CALL_SITE = /(?:sendEvent|sendTeamAnalyticsEvent|trackTeamAnalyticsEvent|captureImmediate|capture)\(\s*["']([a-z$][a-z0-9_$]*)["']/g;
+const CALL_SITE = /(?:sendEvent|sendTeamAnalyticsEvent|trackTeamAnalyticsEvent|captureImmediate|capture|validateSessionLaunchEvent)\(\s*["']([a-z$][a-z0-9_$]*)["']/g;
 const EVENT_KEY = /\bevent:\s*["']([a-z$][a-z0-9_$]*)["']/g;
 
 export const TEAM_SCHEMA_FILE = 'packages/electron/src/shared/analytics/teamAnalytics.ts';
 export const ALLOW_LIST_FILE = 'packages/electron/src/shared/analytics/posthogIngestAllowList.ts';
+
+/**
+ * Schema maps whose KEYS are event names. These never reach a literal emission
+ * seam -- the emitter takes the name as a generic parameter -- so scanning call
+ * sites alone silently misses every event they declare.
+ *
+ * `SEND_WALL_EVENT_SCHEMAS` is why this list is not just the team schema: four
+ * live events (`ai_message_submit_attempted`, `composer_state_reported`,
+ * `ai_send_blocked`, and `create_ai_session` via its validator) went
+ * unclassified and were dropped at ingestion while this gate reported OK.
+ */
+export const SCHEMA_MAP_FILES = [
+  [TEAM_SCHEMA_FILE, 'TEAM_ANALYTICS_EVENT_SCHEMAS'],
+  ['packages/electron/src/shared/analytics/sendOutcomes.ts', 'SEND_WALL_EVENT_SCHEMAS'],
+];
 
 function walk(dir, out = []) {
   let entries;
@@ -73,15 +88,19 @@ function walk(dir, out = []) {
   return out;
 }
 
-/** Event names declared as keys of the team analytics schema map. */
-function teamSchemaEvents() {
-  const src = readFileSync(join(repoRoot, TEAM_SCHEMA_FILE), 'utf8');
-  const start = src.indexOf('export const TEAM_ANALYTICS_EVENT_SCHEMAS');
-  if (start === -1) return new Map();
-  const body = src.slice(start, src.indexOf('\n} as const', start));
+/** Event names declared as keys of the schema maps in SCHEMA_MAP_FILES. */
+function schemaMapEvents() {
   const found = new Map();
-  for (const m of body.matchAll(/^ {2}([a-z][a-z0-9_]*):\s*\{/gm)) {
-    found.set(m[1], `${TEAM_SCHEMA_FILE} (schema key)`);
+  for (const [file, constName] of SCHEMA_MAP_FILES) {
+    const src = readFileSync(join(repoRoot, file), 'utf8');
+    const start = src.indexOf(`export const ${constName}`);
+    // A renamed or removed map must not degrade into scanning nothing, which is
+    // how a gate goes quiet without anyone noticing.
+    if (start === -1) throw new Error(`Could not find ${constName} in ${file}`);
+    const body = src.slice(start, src.indexOf('\n} as const', start));
+    for (const m of body.matchAll(/^ {2}([a-z][a-z0-9_]*):\s*\{/gm)) {
+      if (!found.has(m[1])) found.set(m[1], `${file} (schema key)`);
+    }
   }
   return found;
 }
@@ -95,7 +114,7 @@ export function parseList(src, name) {
 
 /** Every analytics event name reachable from source, mapped to where it was first seen. */
 export function collectEventNames() {
-  const found = teamSchemaEvents();
+  const found = schemaMapEvents();
   for (const root of SCAN_ROOTS) {
     for (const file of walk(join(repoRoot, root))) {
       const src = readFileSync(file, 'utf8');

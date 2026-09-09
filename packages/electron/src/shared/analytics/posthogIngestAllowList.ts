@@ -28,6 +28,11 @@
  * errors, and the mobile and collaboration surfaces.
  */
 export const INGESTED_ALWAYS = [
+  // The DAU heartbeat: one per install per local day, only when a human is
+  // present. Must never be sampled -- sampling it would make DAU a scaled
+  // estimate again, which is the thing it exists to stop being. See
+  // `main/services/analytics/dailyActiveHeartbeat.ts`.
+  'daily_active',
   'ai_message_sent',
   'user_created',
   'onboarding_completed',
@@ -122,8 +127,15 @@ export const INTENTIONALLY_DROPPED = [
   'ai_diff_rejected',
   'ai_effort_level_changed',
   'ai_message_queued',
+  // Dropped by accident rather than by choice: these four are emitted through a
+  // schema map or a validator wrapper, so the gate could not see them and
+  // nobody classified them when the allow-list was written. They have been
+  // discarded at ingestion ever since. Listed here because that IS what happens
+  // today -- promote any of them if the data is wanted.
+  'ai_message_submit_attempted',
   'ai_model_selected',
   'ai_response_received',
+  'ai_send_blocked',
   'ai_session_resumed',
   'ai_stream_content_used',
   'ai_stream_interrupted',
@@ -158,9 +170,11 @@ export const INTENTIONALLY_DROPPED = [
   'collab_server_mutation_rejected',
   'collab_share_asset_migration_completed',
   'collab_sync_attempt_completed',
+  'composer_state_reported',
   'construct',
   'content_mode_switched',
   'content_shared',
+  'create_ai_session',
   'create_document_tool',
   'database_corruption_detected',
   'database_corruption_recovery_choice',

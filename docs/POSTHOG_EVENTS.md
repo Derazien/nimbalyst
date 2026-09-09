@@ -440,6 +440,18 @@ The `known_error` event uses an `errorId` property to identify specific error co
 | `quit_confirmation_shown` | `index.ts:757` | User attempts quit with active AI session | `reason` (active_ai_session) | v0.45.25 (2025-11-14) |  |
 | `quit_confirmation_result` | `index.ts:774, 783` | User responds to quit confirmation dialog | `result` (quit_anyway/cancelled) | v0.45.25 (2025-11-14) |  |
 | `app_foregrounded` | `WindowHandlers.ts:172` | Any window gains focus (throttled to once per 30 minutes). Used for DAU tracking - counts users who actively bring Nimbalyst to the foreground, not those who leave it running in the background. | None | (pending release) |  |
+| `daily_active` | `dailyActiveHeartbeat.ts`<br/>`AnalyticsService.ts`<br/>`WindowHandlers.ts` | **The DAU metric.** At most once per install per *local* calendar day, on window focus or on a 10-minute tick while a window is focused. Deduped against a persisted local date, so a restart mid-day does not re-emit. | `nimbalyst_version`<br/>`platform`<br/>`days_since_install` (0/1/2-7/8-30/31-90/90+)<br/>`local_date`<br/>`release_channel`<br/>`build_type` | (pending release) |  |
+
+#### Counting daily active users
+
+**Count `daily_active`, not "any event".** Two things make the naive definition wrong, and both were measured on the pre-allow-list data:
+
+- **It over-counts.** Roughly a third of weekday "DAU" — and *more than half* on weekends — were installs whose only events that day came from the auto-updater polling in the background. Nobody was at the machine. `daily_active` is gated on window focus for exactly this reason.
+- **It under-counts now.** Since the ingestion allow-list landed, most events never arrive, and `nimbalyst_session_start` reaches barely half the active population because it fires on launch and people leave Nimbalyst running for days.
+
+`daily_active` is on `INGESTED_ALWAYS` and **must never be sampled** — a sampled heartbeat makes DAU a scaled estimate again, which is the thing it exists to replace. `app_foregrounded` remains a separate, throttled engagement signal and is currently dropped at ingestion; it is not a DAU source.
+
+Because the dedup key is the user's *local* date, a user far from the project timezone still emits exactly one heartbeat per day of their own; only which project-timezone bucket it lands in shifts.
 
 ### Account & Sync
 
@@ -563,6 +575,15 @@ Two further behaviours worth knowing:
 - **Transformations run before person resolution**, so they cannot read person properties such as `is_dev_user`. Any future filter on dev traffic has to put the flag on the event payload itself.
 
 If an event you expected is missing, check the transformation before you debug the client.
+
+#### The gate only sees the seams it knows about
+
+`check-analytics-allowlist.mjs` finds event names by scanning for quoted literals at known emission seams. Four live events slipped past it and were dropped at ingestion for days while the gate reported OK, because their names never appear at one of those seams:
+
+- `create_ai_session` — passed to a `validateSessionLaunchEvent(...)` wrapper
+- `ai_message_submit_attempted`, `composer_state_reported`, `ai_send_blocked` — declared as *keys* of `SEND_WALL_EVENT_SCHEMAS` in `sendOutcomes.ts`, with the emitter taking the name as a generic parameter
+
+Both seams are now scanned (`SCHEMA_MAP_FILES` in the gate). **If you add a new schema map keyed by event name, or a new wrapper that takes the name as a string literal, add it to the gate in the same commit** — otherwise the gate's failure mode is silence, not a red build. All four are currently classified `INTENTIONALLY_DROPPED` because that is what is factually happening; promote any of them if the data is wanted.
 
 ### `update_toast_shown` is currently unreachable in production
 

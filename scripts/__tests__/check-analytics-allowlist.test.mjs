@@ -47,6 +47,33 @@ test('an allow-listed name no longer emitted anywhere fails the check', () => {
   assert.match(errors[0], /no longer emitted/);
 });
 
+/**
+ * The gate's failure mode is silence, so the thing worth asserting is REACH, not
+ * behavior on a synthetic name. Four live events emitted through a schema map or
+ * a validator wrapper were invisible to the scan and dropped at ingestion while
+ * this gate reported OK. Each seam below is the only one that finds its event.
+ */
+test('the scan reaches events emitted through wrappers and schema maps', () => {
+  const found = collectEventNames();
+  for (const name of [
+    'create_ai_session', // validateSessionLaunchEvent(...) wrapper
+    'ai_message_submit_attempted', // SEND_WALL_EVENT_SCHEMAS key
+    'composer_state_reported', // SEND_WALL_EVENT_SCHEMAS key
+    'ai_send_blocked', // SEND_WALL_EVENT_SCHEMAS key
+    'daily_active', // capture({ event: '...' }) object literal
+  ]) {
+    assert.ok(found.has(name), `${name} is emitted in source but the scan missed it`);
+  }
+});
+
+test('the DAU heartbeat is never sampled', () => {
+  // Sampling it would make DAU a scaled estimate again, which is the thing it
+  // exists to stop being.
+  const { always, sampled } = readLists();
+  assert.ok(always.has('daily_active'));
+  assert.ok(!sampled.has('daily_active'));
+});
+
 test('the sampled panel is documented as a fraction that must be scaled', () => {
   // A raw count of a sampled event is wrong by 16/PANEL_BUCKETS.length. If the
   // bucket list changes, the scaling factor in POSTHOG_EVENTS.md changes too.
