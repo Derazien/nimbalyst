@@ -50,6 +50,11 @@ jobs:
 
       - name: Install dependencies
         if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        env:
+          # @vscode/ripgrep's postinstall resolves its prebuilt binary through
+          # api.github.com; unauthenticated runners share a 60 req/hr limit per
+          # egress IP and intermittently fail the whole install.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm ci
 
       # tracker-core and extension-sdk are consumed through their built `dist`,
@@ -106,6 +111,11 @@ jobs:
 
       - name: Install dependencies
         if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        env:
+          # @vscode/ripgrep's postinstall resolves its prebuilt binary through
+          # api.github.com; unauthenticated runners share a 60 req/hr limit per
+          # egress IP and intermittently fail the whole install.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm ci
 
       # Build packages consumed through their `dist` (required before typecheck
@@ -204,6 +214,11 @@ jobs:
 
       - name: Install dependencies
         if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        env:
+          # @vscode/ripgrep's postinstall resolves its prebuilt binary through
+          # api.github.com; unauthenticated runners share a 60 req/hr limit per
+          # egress IP and intermittently fail the whole install.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm ci
 
       # See the note in the Unit Tests job: a node_modules cache hit skips the
