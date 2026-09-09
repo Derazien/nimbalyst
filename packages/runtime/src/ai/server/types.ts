@@ -89,7 +89,10 @@ export type PromptProvenanceOrigin =
   | 'mobile'
   | 'automation';
 
+export type OrchestrationMessageKind = 'instruction' | 'report' | 'status' | 'question' | 'error';
+
 export interface PromptProvenance {
+  messageKind?: OrchestrationMessageKind;
   actor: PromptActor;
   origin: PromptProvenanceOrigin;
   originSessionId?: string;

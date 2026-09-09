@@ -911,7 +911,7 @@ export class PGLiteDatabaseWorker {
     }
   }
 
-  async runTransaction(statements: Array<{ sql: string; params?: any[] }>): Promise<void> {
+  async runTransaction(statements: Array<{ sql: string; params?: any[]; expectedRows?: number }>): Promise<void> {
     if (!this.initialized) {
       throw new Error('Database not initialized. Call initialize() first.');
     }
@@ -1114,7 +1114,7 @@ export interface AppDatabase {
   query<T = any>(sql: string, params?: any[]): Promise<{ rows: T[] }>;
   queryReadOnly<T = any>(sql: string, params?: any[], timeoutMs?: number): Promise<{ rows: T[] }>;
   exec(sql: string, timeoutMs?: number): Promise<void>;
-  runTransaction(statements: Array<{ sql: string; params?: any[] }>): Promise<void>;
+  runTransaction(statements: Array<{ sql: string; params?: any[]; expectedRows?: number }>): Promise<void>;
   close(): Promise<void>;
   getStats(): Promise<any>;
   getDB(): any;
@@ -1205,7 +1205,7 @@ class ActiveDatabaseFacade implements AppDatabase {
     }
   }
 
-  async runTransaction(statements: Array<{ sql: string; params?: any[] }>): Promise<void> {
+  async runTransaction(statements: Array<{ sql: string; params?: any[]; expectedRows?: number }>): Promise<void> {
     try {
       await this.active.runTransaction(statements);
     } catch (error) {

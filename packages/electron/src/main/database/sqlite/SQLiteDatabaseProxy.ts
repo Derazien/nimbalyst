@@ -259,7 +259,7 @@ export class SQLiteDatabaseProxy {
     await this.send('exec', { sql });
   }
 
-  async runTransaction(statements: Array<{ sql: string; params?: unknown[] }>): Promise<void> {
+  async runTransaction(statements: Array<{ sql: string; params?: unknown[]; expectedRows?: number }>): Promise<void> {
     await this.send('transaction', { statements });
   }
 

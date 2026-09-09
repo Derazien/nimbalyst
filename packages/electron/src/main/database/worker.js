@@ -22,6 +22,7 @@ const inspector = require('node:inspector');
 const { performance } = require('node:perf_hooks');
 const { serializeWorkerError } = require('./workerErrorSerialization');
 const { planInitFailureResponse } = require('./pgliteInitRecovery');
+const { runTransactionStatements } = require('./transactionStatements');
 
 /**
  * The install's database root, or null when the spawner did not supply one.
@@ -3400,12 +3401,7 @@ class PGLiteWorker {
     try {
       const execStart = performance.now();
       await this.db.transaction(async (tx) => {
-        for (const statement of statements) {
-          if (!statement || typeof statement.sql !== 'string') {
-            throw new Error('transaction statement sql must be a string');
-          }
-          await tx.query(statement.sql, statement.params);
-        }
+        await runTransactionStatements(tx, statements);
       });
       return {
         id: message.id,

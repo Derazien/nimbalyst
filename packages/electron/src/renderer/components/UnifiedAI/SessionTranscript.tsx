@@ -1102,40 +1102,21 @@ export const SessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscr
       // from re-rendering the entire transcript.
       const currentAttachments = store.get(sessionDraftAttachmentsAtom(sessionId)) ?? [];
 
-      // If there's already a pending queued prompt, append to it instead of
-      // creating a separate entry. This bundles multiple queued messages into
-      // one prompt, matching how Claude Code handles stacked queries.
-      const lastQueued = queuedPrompts[queuedPrompts.length - 1];
-      let combinedPrompt = message.trim();
-      let combinedAttachments = currentAttachments;
-
-      if (lastQueued) {
-        // Delete the existing queued prompt so we can replace it
-        await window.electronAPI.invoke('ai:deleteQueuedPrompt', lastQueued.id);
-        combinedPrompt = lastQueued.prompt + '\n\n' + message.trim();
-        // Merge attachments from both prompts
-        combinedAttachments = [...(lastQueued.attachments || []), ...currentAttachments];
-      }
-
+      // Keep each submission's authorship/context and stable queue position.
+      // Delete-and-recreate merging can race a claim or absorb an agent report.
       const result = await window.electronAPI.invoke(
         'ai:createQueuedPrompt',
         sessionId,
-        combinedPrompt,
-        combinedAttachments,
+        message.trim(),
+        currentAttachments,
         serializableContext
       ) as { id: string; prompt: string; timestamp: number };
 
-      setQueuedPrompts(prev => {
-        // Remove the old queued prompt (if we merged into it) and add the new combined one
-        const filtered = lastQueued ? prev.filter(p => p.id !== lastQueued.id) : prev;
-        return [...filtered, {
-          id: result.id,
-          prompt: combinedPrompt,
-          timestamp: result.timestamp,
-          documentContext: serializableContext,
-          attachments: combinedAttachments
-        }];
-      });
+      setQueuedPrompts(prev => [...prev.filter(p => p.id !== result.id), {
+        ...result,
+        documentContext: serializableContext,
+        attachments: currentAttachments
+      }]);
 
       setLastSubmitAt(Date.now());
       setDraftInput('');
@@ -1146,7 +1127,7 @@ export const SessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscr
     } finally {
       setIsQueueing(false);
     }
-  }, [sessionId, getEffectiveDocumentContext, setDraftInput, setDraftAttachments, setLastSubmitAt, isQueueing, queuedPrompts, clearAIInputHistory]);
+  }, [sessionId, getEffectiveDocumentContext, setDraftInput, setDraftAttachments, setLastSubmitAt, isQueueing, clearAIInputHistory]);
 
   // What the composer looked like when this session opened. Once per session,
   // not per render: we are trying to explain why people do not act on a screen,
