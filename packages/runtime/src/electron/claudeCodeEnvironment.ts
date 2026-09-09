@@ -3,6 +3,8 @@
 // because ~15 test files mock it by that specifier, and a rename that misses
 // one turns that mock into a silent no-op. See the testing rule in CLAUDE.md.
 import path from 'path';
+import { preservedClaudeFiles, recoverClaudeRuntime } from './claudeRuntimeRecovery';
+import { managedClaudeEnvironment } from './managedClaudeEnvironment';
 import fs from 'fs';
 import os from 'os';
 import { createRequire } from 'module';
@@ -131,45 +133,18 @@ function getPackagedNativeBinaryLocation(): { dir: string; binaryName: string } 
  */
 export const MISSING_CLAUDE_RUNTIME_MESSAGE =
   "Nimbalyst's bundled Claude runtime is missing or could not be found. " +
-  'A failed update can leave it in a broken state -- reinstall or repair Nimbalyst.';
+  'Nimbalyst could not verify a recoverable preserved copy. Update or repair Nimbalyst.';
 
-/**
- * List orphaned `claude(.exe).old.<ts>` files left in the unpacked native
- * package dir by an interrupted CLI self-update (rename-then-download that
- * never finished). Their presence is the fingerprint of the NIM-1573 breakage.
- * We deliberately do NOT restore them -- a truncated/partial download must not
- * be resurrected as a runnable binary; we only detect them to report honestly.
- */
 export function findOrphanedClaudeUpdateFiles(): string[] {
   const location = getPackagedNativeBinaryLocation();
-  if (!location) return [];
-  try {
-    if (!fs.existsSync(location.dir)) return [];
-    const prefix = `${location.binaryName}.old.`;
-    return fs
-      .readdirSync(location.dir)
-      .filter((name) => name.startsWith(prefix))
-      .map((name) => path.join(location.dir, name));
-  } catch {
-    return [];
-  }
+  return location ? preservedClaudeFiles(location.dir, location.binaryName) : [];
 }
 
-/**
- * Honest, user-facing message for a missing bundled runtime. Appends an
- * explicit note when the interrupted-self-update fingerprint (orphaned `.old`
- * files) is detected, so main.log and the UI name the actual cause.
- */
 export function describeMissingClaudeRuntime(): string {
   const orphans = findOrphanedClaudeUpdateFiles();
-  if (orphans.length > 0) {
-    return (
-      `${MISSING_CLAUDE_RUNTIME_MESSAGE} ` +
-      `(An interrupted Claude CLI self-update left ${orphans.length} orphaned file(s) ` +
-      `and no runnable binary.)`
-    );
-  }
-  return MISSING_CLAUDE_RUNTIME_MESSAGE;
+  return MISSING_CLAUDE_RUNTIME_MESSAGE + (orphans.length
+    ? ` (${orphans.length} preserved self-update file(s) could not be verified.)`
+    : '');
 }
 
 /**
@@ -200,6 +175,16 @@ export function resolveNativeBinaryPath(): string | undefined {
   const location = getPackagedNativeBinaryLocation()!;
   const appPath = getHostEnvironment().getAppPath();
   const binaryPath = path.join(location.dir, binaryName);
+  const relocatedPath = path.join(path.dirname(appPath), 'claude-runtime', `${platform}-${arch}`, binaryName);
+  if (fs.existsSync(relocatedPath)) return relocatedPath;
+  recoverClaudeRuntime({
+    legacyDir: location.dir,
+    destination: relocatedPath,
+    manifestPath: path.join(location.dir, '..', 'claude-agent-sdk', 'manifest.json'),
+    platformKey: `${platform}-${arch}`,
+    binaryName,
+  });
+  if (fs.existsSync(relocatedPath)) return relocatedPath;
 
   if (fs.existsSync(binaryPath)) {
     return binaryPath;
@@ -321,20 +306,13 @@ export function setupClaudeCodeEnvironment(): NodeJS.ProcessEnv {
   const isPackaged = getHostEnvironment().isPackaged();
   const env = { ...process.env };
 
-  // NIM-1573: Pin the bundled CLI's self-updater OFF for the login/check-login
-  // spawns too, so they never mutate the in-place binary out from under the run
-  // path. Default only -- a user-set value wins. See sdkOptionsBuilder for the
-  // full rationale (the self-update rename that orphans claude.exe).
-  if (env.DISABLE_AUTOUPDATER == null) env.DISABLE_AUTOUPDATER = '1';
-  if (env.DISABLE_UPDATES == null) env.DISABLE_UPDATES = '1';
-
   const nodePaths = getCandidateNodePaths(isPackaged);
   if (nodePaths.length > 0) {
     env.NODE_PATH = nodePaths.join(path.delimiter);
   }
 
   if (!isPackaged) {
-    return env;
+    return managedClaudeEnvironment(env);
   }
 
   // Packaged mode - set up enhanced environment
@@ -396,5 +374,5 @@ export function setupClaudeCodeEnvironment(): NodeJS.ProcessEnv {
     throw new Error(error);
   }
 
-  return env;
+  return managedClaudeEnvironment(env);
 }

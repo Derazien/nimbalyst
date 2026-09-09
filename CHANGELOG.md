@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Claude Agent's bundled runtime no longer self-updates out of place, and verified preserved copies are recovered automatically.
 
 ### Removed
 <!-- Removed features go here -->

@@ -1,3 +1,4 @@
+import { managedClaudeEnvironment } from '../../../../electron/managedClaudeEnvironment';
 /**
  * Builds the SDK options object for a Claude Code query() call.
  *
@@ -375,7 +376,7 @@ export async function buildSdkOptions(
   const { ANTHROPIC_API_KEY: _settingsAnthropicKey, OPENAI_API_KEY: _settingsOpenaiKey, ...sanitizedSettingsEnv } = settingsEnv;
 
   const enableAgentTeams = sanitizedSettingsEnv.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS === '1';
-  const env: any = {
+  const env: any = managedClaudeEnvironment({
     ...sanitizedProcessEnv,
     ...sanitizedShellEnv,
     ...sanitizedSettingsEnv,
@@ -423,24 +424,6 @@ export async function buildSdkOptions(
       sanitizedSettingsEnv.CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT == null && {
         CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT: '0',
       }),
-    // NIM-1573: Pin the bundled native CLI's self-updater OFF. We ship a
-    // version-pinned binary and spawn it in place from app.asar.unpacked; the
-    // CLI's AutoUpdater does a non-atomic in-place `rename claude.exe ->
-    // claude.exe.old.<ts>` + re-download on version drift, and an interrupted
-    // update leaves an orphan with no `claude.exe`, permanently breaking Claude
-    // Code (surfacing a misleading libc/musl ReferenceError). The updater's gate
-    // honors DISABLE_UPDATES / DISABLE_AUTOUPDATER. Default only -- a user-set
-    // value (settings/shell/process env) still wins.
-    ...(sanitizedProcessEnv.DISABLE_AUTOUPDATER == null &&
-      sanitizedShellEnv.DISABLE_AUTOUPDATER == null &&
-      sanitizedSettingsEnv.DISABLE_AUTOUPDATER == null && {
-        DISABLE_AUTOUPDATER: '1',
-      }),
-    ...(sanitizedProcessEnv.DISABLE_UPDATES == null &&
-      sanitizedShellEnv.DISABLE_UPDATES == null &&
-      sanitizedSettingsEnv.DISABLE_UPDATES == null && {
-        DISABLE_UPDATES: '1',
-      }),
     // #1177: Suppress the CLI's own "git status at the start of the
     // conversation" block. That block is rebuilt from the LIVE working tree by
     // every CLI process and injected at the head of the conversation, and it is
@@ -461,7 +444,7 @@ export async function buildSdkOptions(
       sanitizedSettingsEnv.CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS == null && {
         CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS: '1',
       }),
-  };
+  });
 
   // NIM-376: Overlay enhanced PATH so the Claude Code SDK can find stdio MCP
   // subprocess binaries (`npx`, `uvx`, `docker`, ...) when Nimbalyst is launched
