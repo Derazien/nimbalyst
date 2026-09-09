@@ -129,6 +129,15 @@ type SyncStatusListener = (status: { connected: boolean; syncing: boolean; error
 const statusListeners = new Set<SyncStatusListener>();
 
 /**
+ * The provider's personal-sync write gate, mirrored into `state.error` so a
+ * device whose key cannot read the index says so instead of showing "Synced".
+ * Kept separately because a reconnect clears transport errors but must never
+ * clear this one (GitHub #1117).
+ */
+let personalSyncGateMessage: string | null = null;
+let personalSyncGateUnsubscribe: (() => void) | null = null;
+
+/**
  * Subscribe to sync status changes.
  * Returns an unsubscribe function.
  */
@@ -607,6 +616,25 @@ export async function initializeSync(baseStore: SessionStore): Promise<SessionSt
     state.config = config;
     state.messageSyncHandler = messageSyncHandler;
 
+    // Surface the personal-sync write gate. Decryption failures never reach the
+    // fetch error paths below on the broadcast side, so the gate is the one
+    // signal that covers every way a wrong key shows up (GitHub #1117).
+    personalSyncGateUnsubscribe?.();
+    personalSyncGateMessage = null;
+    personalSyncGateUnsubscribe = provider.onPersonalSyncWriteGateChange?.((gate) => {
+      const message = syncModule.describePersonalSyncWriteGate(gate);
+      if (message) {
+        personalSyncGateMessage = message;
+        logger.main.warn('[SyncManager] Personal-sync writes paused on this device:', gate);
+        updateSyncStatus({ error: message });
+      } else if (personalSyncGateMessage !== null) {
+        const clearing = state.error === personalSyncGateMessage;
+        personalSyncGateMessage = null;
+        logger.main.info('[SyncManager] Personal-sync writes resumed: the index decrypted in full under this device\'s key');
+        if (clearing) updateSyncStatus({ error: null });
+      }
+    }) ?? null;
+
     // Wrap store with sync capabilities
     const syncedStore = createSyncedSessionStore(baseStore, provider, {
       autoConnect: true,
@@ -637,6 +665,13 @@ export async function initializeSync(baseStore: SessionStore): Promise<SessionSt
           const fetchTime = performance.now() - fetchStart;
           // logger.main.info(`[SyncManager] Server has ${serverIndex.sessions.length} sessions (fetch took ${fetchTime.toFixed(1)}ms)`);
         } catch (fetchError) {
+          if (syncModule.isIndexEntryDecryptionError(fetchError)) {
+            // Not a transport problem: this device's key cannot read the
+            // index. Reconciliation would republish everything it cannot see,
+            // so it is skipped; the write gate has already paused publishing.
+            logger.main.warn('[SyncManager] Server index could not be decrypted with this device\'s sync key; skipping reconciliation:', fetchError);
+            return;
+          }
           // Don't fall back to full sync - that would load ALL messages for ALL sessions into memory
           // and cause OOM crashes. Instead, skip sync and wait for connection to be restored.
           logger.main.warn('[SyncManager] Failed to fetch server index, skipping sync until connection restored:', fetchError);
@@ -990,6 +1025,9 @@ export function shutdownSync(): void {
 
   if (state.provider) {
     logger.main.info('[SyncManager] Shutting down session sync...');
+    personalSyncGateUnsubscribe?.();
+    personalSyncGateUnsubscribe = null;
+    personalSyncGateMessage = null;
     state.provider.disconnectAll();
     state.provider = null;
     state.config = null;
@@ -1051,6 +1089,12 @@ export async function triggerIncrementalSync(): Promise<void> {
       const fetchTime = performance.now() - fetchStart;
       // logger.main.info(`[SyncManager] Triggered sync: server has ${serverIndex.sessions.length} sessions (fetch took ${fetchTime.toFixed(1)}ms)`);
     } catch (fetchError) {
+      if (syncModule.isIndexEntryDecryptionError(fetchError)) {
+        // A key mismatch, not a dead socket: reconnecting would only re-read
+        // the same rows and fail the same way (GitHub #1117).
+        logger.main.warn('[SyncManager] Server index could not be decrypted with this device\'s sync key; skipping incremental sync:', fetchError);
+        return;
+      }
       // Don't fall back to full sync - that would load ALL messages for ALL sessions into memory
       // and cause OOM crashes. Instead, attempt to reconnect and skip this sync cycle.
       logger.main.warn('[SyncManager] Failed to fetch server index, skipping incremental sync:', fetchError);
@@ -1552,7 +1596,9 @@ export async function attemptReconnect(): Promise<void> {
       return;
     }
 
-    updateSyncStatus({ connected: true, error: null });
+    // A live socket clears transport errors, never a key mismatch: the gate
+    // message stays until the index decrypts in full (GitHub #1117).
+    updateSyncStatus({ connected: true, error: personalSyncGateMessage });
     logger.main.info('[SyncManager] Successfully reconnected after network change');
 
     // 3. Fan out: all other sync providers get an immediate reconnect now that

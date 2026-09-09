@@ -770,3 +770,157 @@ describe('CollabV3 v2 index replication client', () => {
     provider.disconnectAll();
   });
 });
+
+/**
+ * GitHub #1117: a desktop whose sync key cannot read the shared index used to
+ * delete every unreadable row from the server and then republish its own copies
+ * under the failing key. The personal seed is per-install, so "re-sync with the
+ * correct key" never happened -- the other devices' index just vanished.
+ *
+ * The legacy full-index path now fails closed like the v2 page path, and a
+ * provider-owned write gate keeps a device that cannot read the index from
+ * publishing replacement ciphertext until a complete read succeeds.
+ */
+describe('CollabV3 personal index safety on the legacy full-index path', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(10000);
+    FakeWebSocket.instances = [];
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  const generateKey = () => crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+
+  async function sealWith(key: CryptoKey, plaintext: string) {
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const sealed = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(plaintext));
+    const b64 = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes));
+    return { value: b64(new Uint8Array(sealed)), iv: b64(iv) };
+  }
+
+  /** A row this device can read in full. */
+  async function readableRow(key: CryptoKey, sessionId: string, title: string) {
+    const sealedTitle = await sealWith(key, title);
+    const sealedProject = await sealWith(key, '/project');
+    return sessionEntry(sessionId, {
+      encryptedTitle: sealedTitle.value,
+      titleIv: sealedTitle.iv,
+      encryptedProjectId: sealedProject.value,
+      projectIdIv: sealedProject.iv,
+    });
+  }
+
+  const localSession = (id = 'local-1') => ({
+    id,
+    title: 'Local session',
+    provider: 'claude-code',
+    mode: 'agent',
+    workspaceId: '/workspace',
+    messageCount: 0,
+    updatedAt: 1_000,
+    createdAt: 1_000,
+  });
+
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 60));
+
+  /** Drives one legacy full-index round trip and answers it with `sessions`. */
+  async function legacyFetch(provider: ReturnType<typeof createCollabV3Sync>, indexSocket: FakeWebSocket, sessions: unknown[]) {
+    // Once the capability is latched to legacy, the request goes out
+    // synchronously inside fetchIndex, so count before calling it.
+    const before = sentOfType(indexSocket, 'indexSyncRequest').length;
+    const fetching = provider.fetchIndex!();
+    if (before === 0 && sentOfType(indexSocket, 'indexPageRequest').length === 0) {
+      const req = await pageRequest(indexSocket, 0);
+      indexSocket.receive({ type: 'error', code: 'unknown_message_type', message: 'indexPageRequest', requestId: req.requestId });
+    }
+    await vi.waitFor(() => expect(sentOfType(indexSocket, 'indexSyncRequest')).toHaveLength(before + 1));
+    indexSocket.receive({ type: 'indexSyncResponse', sessions, projects: [] });
+    return fetching;
+  }
+
+  it('fails the fetch on an undecryptable row, sends no indexDelete, and keeps the last good cache', async () => {
+    const mine = await generateKey();
+    const theirs = await generateKey();
+    const { provider, indexSocket } = await createConnectedProvider(mine);
+
+    const readable = await readableRow(mine, 'mine-1', 'Readable');
+    await legacyFetch(provider, indexSocket, [readable]);
+    expect(provider.getCachedIndexEntry?.('mine-1')?.title).toBe('Readable');
+
+    // Another device's row, written under a key this install never had.
+    const foreign = await readableRow(theirs, 'theirs-1', 'Another device');
+    await expect(legacyFetch(provider, indexSocket, [readable, foreign])).rejects.toThrow(/decrypt/i);
+
+    expect(sentOfType(indexSocket, 'indexDelete')).toHaveLength(0);
+    expect(provider.getCachedIndexEntry?.('mine-1')?.title).toBe('Readable');
+    expect(provider.getCachedIndexEntry?.('theirs-1')).toBeUndefined();
+    provider.disconnectAll();
+  });
+
+  it('withholds personal-sync writes until a complete read succeeds and after a wrong-key read', async () => {
+    const mine = await generateKey();
+    const theirs = await generateKey();
+    const { provider, indexSocket } = await createConnectedProvider(mine);
+    const gate = () => provider.getPersonalSyncWriteGate!();
+
+    // Nothing has proven this key yet, so nothing is published.
+    expect(gate().state).toBe('unverified');
+    provider.syncSessionsToIndex?.([localSession()]);
+    await settle();
+    expect(sentOfType(indexSocket, 'indexUpdate')).toHaveLength(0);
+
+    const foreign = await readableRow(theirs, 'theirs-1', 'Another device');
+    await expect(legacyFetch(provider, indexSocket, [foreign])).rejects.toThrow();
+    expect(gate()).toMatchObject({ state: 'blocked', reason: 'decryption-failed' });
+    provider.syncSessionsToIndex?.([localSession()]);
+    await settle();
+    expect(sentOfType(indexSocket, 'indexUpdate')).toHaveLength(0);
+
+    // A clean, complete read under this key is the only thing that opens the gate.
+    await legacyFetch(provider, indexSocket, [await readableRow(mine, 'mine-1', 'Readable')]);
+    expect(gate().state).toBe('verified');
+    provider.syncSessionsToIndex?.([localSession()]);
+    await vi.waitFor(() => expect(sentOfType(indexSocket, 'indexUpdate')).toHaveLength(1));
+    provider.disconnectAll();
+  });
+
+  it('ignores an undecryptable index broadcast, preserves the cached row, and blocks writes', async () => {
+    const mine = await generateKey();
+    const theirs = await generateKey();
+    const { provider, indexSocket } = await createConnectedProvider(mine);
+    await legacyFetch(provider, indexSocket, [await readableRow(mine, 'mine-1', 'Readable')]);
+
+    const seen = vi.fn();
+    provider.onIndexChange?.(seen);
+    const overwrite = await readableRow(theirs, 'mine-1', 'Overwritten elsewhere');
+    indexSocket.receive({ type: 'indexBroadcast', session: overwrite, fromConnectionId: 'other-device' });
+    await settle();
+
+    expect(provider.getCachedIndexEntry?.('mine-1')?.title).toBe('Readable');
+    expect(seen).not.toHaveBeenCalled();
+    expect(provider.getPersonalSyncWriteGate!()).toMatchObject({ state: 'blocked', reason: 'decryption-failed' });
+    provider.disconnectAll();
+  });
+
+  it('stops writing when the server requires an update, and a clean read does not lift that', async () => {
+    const mine = await generateKey();
+    const { provider, indexSocket } = await createConnectedProvider(mine);
+    await legacyFetch(provider, indexSocket, [await readableRow(mine, 'mine-1', 'Readable')]);
+    expect(provider.getPersonalSyncWriteGate!().state).toBe('verified');
+
+    indexSocket.receive({ type: 'error', code: 'update_required', message: 'Nimbalyst 9.9.9 or newer is required for session sync' });
+    expect(provider.getPersonalSyncWriteGate!()).toMatchObject({ state: 'blocked', reason: 'update-required' });
+    provider.syncSessionsToIndex?.([localSession()]);
+    await settle();
+    expect(sentOfType(indexSocket, 'indexUpdate')).toHaveLength(0);
+
+    await legacyFetch(provider, indexSocket, [await readableRow(mine, 'mine-1', 'Readable')]);
+    expect(provider.getPersonalSyncWriteGate!().state).toBe('blocked');
+    provider.disconnectAll();
+  });
+});

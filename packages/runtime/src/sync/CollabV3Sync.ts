@@ -38,6 +38,8 @@ import {
 } from './indexReplicationClient';
 import { deriveTrackerPersonalStateKey } from './trackerPersonalStateKey';
 import { hasPublishableConfig } from './projectConfig';
+import { IndexEntryDecryptionError } from './indexEntryDecryptionError';
+import { createPersonalSyncWriteGate, type PersonalSyncWriteGateSnapshot } from './personalSyncWriteGate';
 import type {
   SyncConfig,
   SyncStatus,
@@ -898,27 +900,17 @@ async function decryptProjectId(
  * entry handed to callers of `fetchIndex`, and the cache row the rest of the
  * provider reads.
  *
- * Two failure policies, because the two callers have different consequences:
+ * ANY decryption failure throws `IndexEntryDecryptionError`, on every path. A
+ * v2 page is the unit that advances the replication cursor, so silently
+ * dropping a field -- or a whole row -- would mark coverage complete over data
+ * we never read. The legacy full response and live broadcasts are held to the
+ * same rule because the alternative was GitHub #1117: the legacy path used to
+ * treat an unreadable row as something to delete from the server and republish
+ * under this device's key, which wiped every other device's index. A row this
+ * key cannot read is a key problem on this device, never server state to fix.
  *
- * - Legacy (`strict: false`): returns `null` when projectId or title cannot be
- *   decrypted, and the caller deletes that row server-side so it re-syncs under
- *   the current key. Metadata and queued prompts are supplementary there; a
- *   failure is logged and skipped.
- * - v2 pages (`strict: true`): ANY decryption failure throws. A page is the
- *   unit that advances the replication cursor, so silently dropping a field --
- *   or a whole row -- would mark coverage complete over data we never read.
- *   The page fails, the mirror and cursor stay where they were, and the fetch
- *   reports failure. Nothing is deleted server-side from a page: wrong-key rows
- *   are a key problem, not a deletion.
- *
- * Shared by both paths so they cannot drift in what they carry off the wire.
+ * Shared by all paths so they cannot drift in what they carry off the wire.
  */
-class IndexEntryDecryptionError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'IndexEntryDecryptionError';
-  }
-}
 
 /**
  * Contract check for one row of a v2 page, run BEFORE any decryption.
@@ -986,19 +978,13 @@ function assertValidIndexChange(change: IndexChangeWire): void {
 async function decryptSessionIndexEntry(
   entry: SessionIndexEntry,
   key: CryptoKey | undefined,
-  options: { strict?: boolean } = {},
-): Promise<{ decrypted: DecryptedSessionIndexEntry; cacheEntry: CachedSessionIndex } | null> {
-  const strict = options.strict === true;
+): Promise<{ decrypted: DecryptedSessionIndexEntry; cacheEntry: CachedSessionIndex }> {
   let projectId: string;
   if (entry.encryptedProjectId && entry.projectIdIv && key) {
     try {
       projectId = await decryptProjectId(entry.encryptedProjectId, entry.projectIdIv, key);
-    } catch (err) {
-      if (strict) {
-        throw new IndexEntryDecryptionError(`Cannot decrypt projectId for session ${entry.sessionId}`);
-      }
-      console.warn(`[CollabV3] Cannot decrypt session ${entry.sessionId} (wrong encryption key, likely from before personal member id migration). Deleting from server index so it re-syncs with correct key.`);
-      return null;
+    } catch {
+      throw new IndexEntryDecryptionError(`Cannot decrypt projectId for session ${entry.sessionId}`);
     }
   } else {
     projectId = 'unknown';
@@ -1008,12 +994,8 @@ async function decryptSessionIndexEntry(
   if (entry.encryptedTitle && entry.titleIv && key) {
     try {
       title = await decryptTitle(entry.encryptedTitle, entry.titleIv, key);
-    } catch (err) {
-      if (strict) {
-        throw new IndexEntryDecryptionError(`Cannot decrypt title for session ${entry.sessionId}`);
-      }
-      console.warn(`[CollabV3] Cannot decrypt session ${entry.sessionId} title (wrong encryption key). Deleting from server index so it re-syncs with correct key.`);
-      return null;
+    } catch {
+      throw new IndexEntryDecryptionError(`Cannot decrypt title for session ${entry.sessionId}`);
     }
   } else {
     title = 'Untitled';
@@ -1023,11 +1005,8 @@ async function decryptSessionIndexEntry(
   if (entry.encryptedQueuedPrompts && entry.encryptedQueuedPrompts.length > 0 && key) {
     try {
       queuedPrompts = await decryptQueuedPrompts(entry.encryptedQueuedPrompts, key);
-    } catch (err) {
-      if (strict) {
-        throw new IndexEntryDecryptionError(`Cannot decrypt queued prompts for session ${entry.sessionId}`);
-      }
-      console.warn(`[CollabV3] Failed to decrypt queued prompts for session ${entry.sessionId}, skipping`);
+    } catch {
+      throw new IndexEntryDecryptionError(`Cannot decrypt queued prompts for session ${entry.sessionId}`);
     }
   } else if (entry.queuedPromptCount === 0 || Array.isArray(entry.encryptedQueuedPrompts)) {
     queuedPrompts = [];
@@ -1047,14 +1026,13 @@ async function decryptSessionIndexEntry(
       hasPendingPrompt = clientMeta.hasPendingPrompt;
       phase = clientMeta.phase;
       tags = clientMeta.tags;
-      draftInput = clientMeta.draftInput || undefined;
+      // An empty string is a real value: it is how "clear draft" reaches the
+      // renderer from another device.
+      draftInput = clientMeta.draftInput;
       draftUpdatedAt = clientMeta.draftUpdatedAt;
       hasBeenNamed = clientMeta.hasBeenNamed;
-    } catch (err) {
-      if (strict) {
-        throw new IndexEntryDecryptionError(`Cannot decrypt client metadata for session ${entry.sessionId}`);
-      }
-      console.warn(`[CollabV3] Failed to decrypt client metadata for session ${entry.sessionId}, skipping`);
+    } catch {
+      throw new IndexEntryDecryptionError(`Cannot decrypt client metadata for session ${entry.sessionId}`);
     }
   }
 
@@ -1112,26 +1090,21 @@ interface DecryptedProjectIndexEntry {
 }
 
 /**
- * Decrypt a wire `ProjectIndexEntry`. Returns `null` when the projectId was
- * written under a different key; the name falls back to the path tail when only
- * the name fails, since the id alone still identifies the project.
+ * Decrypt a wire `ProjectIndexEntry`. Throws `IndexEntryDecryptionError` when
+ * the projectId was written under a different key; the name falls back to the
+ * path tail when only the name fails, since the id alone still identifies the
+ * project.
  */
 async function decryptProjectIndexEntry(
   proj: ServerProjectEntry,
   key: CryptoKey | undefined,
-  options: { strict?: boolean } = {},
-): Promise<DecryptedProjectIndexEntry | null> {
+): Promise<DecryptedProjectIndexEntry> {
   let projectId: string;
   if (proj.encryptedProjectId && proj.projectIdIv && key) {
     try {
       projectId = await decryptProjectId(proj.encryptedProjectId, proj.projectIdIv, key);
-    } catch (err) {
-      if (options.strict === true) {
-        throw new IndexEntryDecryptionError(`Cannot decrypt projectId for a project index entry`);
-      }
-      // Encrypted with a different key - skip this entry entirely. The
-      // underlying sessions are handled by the session decryption path.
-      return null;
+    } catch {
+      throw new IndexEntryDecryptionError('Cannot decrypt projectId for a project index entry');
     }
   } else {
     projectId = 'unknown';
@@ -1156,6 +1129,39 @@ async function decryptProjectIndexEntry(
     syncEnabled: proj.syncEnabled,
     gitRemoteHash: proj.gitRemoteHash,
   };
+}
+
+/** One fully decrypted legacy row: the fetch result and the cache row. */
+type DecryptedLegacyIndexRow = { decrypted: DecryptedSessionIndexEntry; cacheEntry: CachedSessionIndex };
+
+/**
+ * Decrypt a legacy full-index response in its entirety before any of it is
+ * committed. Rows are decrypted independently so the failure carries counts
+ * instead of stopping at the first unreadable row, and there is deliberately
+ * no per-row logging: the #1117 reporter saw hundreds of lines a minute.
+ */
+async function decodeLegacyIndexSnapshot(
+  sessions: SessionIndexEntry[],
+  projects: ServerProjectEntry[],
+  key: CryptoKey | undefined,
+): Promise<{ rows: DecryptedLegacyIndexRow[]; projects: DecryptedProjectIndexEntry[] }> {
+  const unreadable = (err: unknown): null => {
+    if (err instanceof IndexEntryDecryptionError) return null;
+    throw err;
+  };
+  const rowResults = await Promise.all(sessions.map((entry) => decryptSessionIndexEntry(entry, key).catch(unreadable)));
+  const projectResults = await Promise.all(projects.map((proj) => decryptProjectIndexEntry(proj, key).catch(unreadable)));
+
+  const rows = rowResults.filter((row): row is DecryptedLegacyIndexRow => row !== null);
+  const decryptedProjects = projectResults.filter((proj): proj is DecryptedProjectIndexEntry => proj !== null);
+  const unreadableSessions = sessions.length - rows.length;
+  const unreadableProjects = projects.length - decryptedProjects.length;
+  if (unreadableSessions > 0 || unreadableProjects > 0) {
+    throw new IndexEntryDecryptionError(
+      `Legacy index snapshot cannot be decrypted with this device's sync key: ${unreadableSessions} of ${sessions.length} session rows and ${unreadableProjects} of ${projects.length} project rows were written under a different key`,
+    );
+  }
+  return { rows, projects: decryptedProjects };
 }
 
 /**
@@ -1418,6 +1424,26 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
    * `indexPublication.ts`.
    */
   const indexPublicationGate = createIndexPublicationGate();
+  /**
+   * Whether this device may publish personal-sync ciphertext at all. Opens
+   * only after a complete index read decrypts under this key; closes on any
+   * row this key cannot read, or when the server refuses this client build.
+   * See `personalSyncWriteGate.ts` and GitHub #1117.
+   */
+  const personalSyncWriteGate = createPersonalSyncWriteGate();
+  const loggedWithheldWrites = new Set<string>();
+  personalSyncWriteGate.onChange(() => loggedWithheldWrites.clear());
+  /** True when a personal-sync write must be withheld. Logs once per kind per gate state. */
+  function withholdPersonalSyncWrite(kind: string): boolean {
+    if (personalSyncWriteGate.canWrite()) return false;
+    const snapshot = personalSyncWriteGate.snapshot();
+    if (!loggedWithheldWrites.has(kind)) {
+      loggedWithheldWrites.add(kind);
+      const why = snapshot.reason ? `${snapshot.state} (${snapshot.reason})` : snapshot.state;
+      console.warn(`[CollabV3] Withholding ${kind}: personal-sync writes are ${why}.${snapshot.detail ? ` ${snapshot.detail}` : ''}`);
+    }
+    return true;
+  }
   /** Serializes index publications per session so gate check + send stay atomic. */
   // Negative acknowledgments are versioned by content activity, never by UI
   // edits. Bound this connection-local optimization; the server still enforces TTL.
@@ -1744,6 +1770,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
       console.error('[CollabV3] Cannot send session update: index socket or encryption key missing');
       return;
     }
+    if (withholdPersonalSyncWrite('index update')) return;
     // Capture the socket and connection generation BEFORE the encryption
     // awaits. `indexWs` is module state: by the time we come back it may be a
     // different socket (reconnect), and publishing this payload on it would
@@ -1823,6 +1850,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
       console.error('[CollabV3] Cannot send index metadata patch: index socket or encryption key missing');
       return;
     }
+    if (withholdPersonalSyncWrite('index metadata patch')) return;
     // See doSendIndexUpdate: socket and generation are captured before the
     // encryption await so a reconnect cannot be published onto.
     const socket = indexWs;
@@ -2159,17 +2187,11 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
             // be skipped. The mirror, the cursor and the local cache are all
             // left alone; the fetch reports failure and the caller skips
             // reconciliation for this cycle.
-            const row = await decryptSessionIndexEntry(change.session!, config.encryptionKey, { strict: true });
-            if (!row) {
-              throw new IndexEntryDecryptionError(`Session ${change.id} could not be decrypted`);
-            }
+            const row = await decryptSessionIndexEntry(change.session!, config.encryptionKey);
             cacheEntries.set(`${change.id}:${change.revision}`, row.cacheEntry);
             changes.push({ ...base, session: row.decrypted });
           } else if (change.entity === 'project') {
-            const project = await decryptProjectIndexEntry(change.project!, config.encryptionKey, { strict: true });
-            if (!project) {
-              throw new IndexEntryDecryptionError(`Project ${change.id} could not be decrypted`);
-            }
+            const project = await decryptProjectIndexEntry(change.project!, config.encryptionKey);
             changes.push({ ...base, project });
           } else {
             // File payloads stay opaque to this client (document sync owns the
@@ -2381,6 +2403,9 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
       })
       .catch(err => {
         hintDrainScheduled = false;
+        if (err instanceof IndexEntryDecryptionError) {
+          personalSyncWriteGate.markBlocked('decryption-failed', err.message);
+        }
         console.warn('[CollabV3] Index delta poll failed:', err?.message || err);
       });
   }
@@ -2980,168 +3005,63 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
               // console.log(`[CollabV3] Received indexSyncResponse: ${message.sessions.length} sessions (server total: ${totalCount ?? 'unknown'})`);
             }
             if (pendingIndexFetch) {
-              // Track sessions that fail decryption so we can delete them from the
-              // server index. The next sync cycle will re-push them from the local
-              // PGLite database with the correct encryption key.
-              const decryptionFailedSessionIds: string[] = [];
-
-              // Decrypt sensitive fields before returning
-              const decryptedSessions: DecryptedSessionIndexEntry[] = (await Promise.all(
-                message.sessions.map(async (entry): Promise<DecryptedSessionIndexEntry | null> => {
-                  const row = await decryptSessionIndexEntry(entry, config.encryptionKey);
-                  if (!row) {
-                    decryptionFailedSessionIds.push(entry.sessionId);
-                    return null;
-                  }
-                  sessionIndexCache.set(entry.sessionId, row.cacheEntry);
+              const pending = pendingIndexFetch;
+              pendingIndexFetch = null;
+              try {
+                const snapshot = await decodeLegacyIndexSnapshot(message.sessions, message.projects, config.encryptionKey);
+                // Commit only once every row decrypted. A partial commit would
+                // hand reconciliation a view the server never held, and
+                // reconciliation republishes whatever it believes is missing.
+                for (const row of snapshot.rows) {
+                  sessionIndexCache.set(row.decrypted.sessionId, row.cacheEntry);
                   // The server just told us what it holds; that is the value a
                   // subsequent patch has to differ from to be worth sending.
-                  indexPublicationGate.recordPublished(entry.sessionId, indexPatchSignatureForEntry(row.cacheEntry));
-                  return row.decrypted;
-                })
-              )).filter((s): s is DecryptedSessionIndexEntry => s !== null);
-
-              // Delete server-side index entries that couldn't be decrypted.
-              // They were encrypted with a different key (e.g., before personal member id migration).
-              // The next sync cycle will re-push them from the local PGLite database
-              // with the correct encryption key.
-              if (decryptionFailedSessionIds.length > 0 && indexWs && indexWs.readyState === WS_OPEN) {
-                console.log(`[CollabV3] Deleting ${decryptionFailedSessionIds.length} undecryptable index entries from server (will re-sync with correct key)`);
-                for (const badSessionId of decryptionFailedSessionIds) {
-                  sessionIndexCache.delete(badSessionId);
-                  indexPublicationGate.invalidate(badSessionId);
-                  const deleteMsg: ClientMessage = { type: 'indexDelete', sessionId: badSessionId };
-                  indexWs.send(JSON.stringify(deleteMsg));
+                  indexPublicationGate.recordPublished(row.decrypted.sessionId, indexPatchSignatureForEntry(row.cacheEntry));
                 }
+                personalSyncWriteGate.markVerified();
+                pending.resolve({
+                  // The legacy response IS the complete snapshot -- that has
+                  // always been its meaning, and absence-based reconciliation has
+                  // always relied on it. It carries no tombstones, so the caller
+                  // cannot distinguish a remote delete from a never-published row
+                  // on this path; that is why v2 exists.
+                  complete: true,
+                  indexProtocolVersion: 1,
+                  sessions: snapshot.rows.map((row) => row.decrypted),
+                  projects: snapshot.projects,
+                });
+              } catch (err) {
+                if (err instanceof IndexEntryDecryptionError) {
+                  // #1117: a row this key cannot read is a key problem on this
+                  // device, not server state to clean up. Nothing is deleted,
+                  // nothing is cached, and publication stays closed until a
+                  // complete read succeeds.
+                  personalSyncWriteGate.markBlocked('decryption-failed', err.message);
+                  console.warn(`[CollabV3] ${err.message}. The server index is left untouched and personal-sync writes are paused on this device.`);
+                }
+                pending.reject(err instanceof Error ? err : new Error(String(err)));
               }
-
-              // Decrypt project entries (skip entries encrypted with the wrong key)
-              const decryptedProjectsRaw = await Promise.all(
-                message.projects.map((proj) => decryptProjectIndexEntry(proj, config.encryptionKey))
-              );
-              const decryptedProjects = decryptedProjectsRaw.filter((p): p is NonNullable<typeof p> => p !== null);
-              if (decryptedProjectsRaw.length !== decryptedProjects.length) {
-                // console.log(`[CollabV3] Filtered out ${decryptedProjectsRaw.length - decryptedProjects.length} undecryptable project entries (will be cleaned up by server TTL)`);
-              }
-
-              pendingIndexFetch.resolve({
-                // The legacy response IS the complete snapshot -- that has
-                // always been its meaning, and absence-based reconciliation has
-                // always relied on it. It carries no tombstones, so the caller
-                // cannot distinguish a remote delete from a never-published row
-                // on this path; that is why v2 exists.
-                complete: true,
-                indexProtocolVersion: 1,
-                sessions: decryptedSessions,
-                projects: decryptedProjects,
-              });
-              pendingIndexFetch = null;
             }
             break;
           }
 
           case 'indexBroadcast': {
-            // Another device updated a session - decrypt sensitive fields first
+            // Another device updated a session. The row is decrypted in full
+            // before anything local changes: a broadcast this key cannot read
+            // keeps the last good cached row and closes publication (#1117),
+            // instead of writing 'unknown' / 'Untitled' placeholders into the
+            // cache and out to the renderer.
             const entry = message.session;
-            // console.log('[CollabV3] DEBUG indexBroadcast received for session:', entry.sessionId, 'hasClientMeta:', !!entry.encryptedClientMetadata, 'fromConnectionId:', message.fromConnectionId);
-
-            // Decrypt projectId - encrypted projectId is required
-            let projectId: string;
-            if (entry.encryptedProjectId && entry.projectIdIv && config.encryptionKey) {
-              try {
-                projectId = await decryptProjectId(entry.encryptedProjectId, entry.projectIdIv, config.encryptionKey);
-              } catch (err) {
-                console.error('[CollabV3] Failed to decrypt index entry projectId:', err);
-                projectId = 'unknown';
-              }
-            } else {
-              projectId = 'unknown';
+            let row: DecryptedLegacyIndexRow;
+            try {
+              row = await decryptSessionIndexEntry(entry, config.encryptionKey);
+            } catch (err) {
+              if (!(err instanceof IndexEntryDecryptionError)) throw err;
+              personalSyncWriteGate.markBlocked('decryption-failed', err.message);
+              console.warn(`[CollabV3] Ignoring index broadcast for session ${entry.sessionId}: ${err.message}. The cached row is preserved and personal-sync writes are paused on this device.`);
+              break;
             }
-
-            const decryptedEntry: CachedSessionIndex = {
-              sessionId: entry.sessionId,
-              projectId: projectId,
-              title: 'Untitled', // Will be overwritten if encrypted title present
-              provider: entry.provider,
-              model: entry.model,
-              mode: entry.mode,
-              sessionType: entry.sessionType,
-              parentSessionId: entry.parentSessionId,
-              worktreeId: entry.worktreeId,
-              hostDeviceId: entry.hostDeviceId,
-              // Carry the meta-agent grouping fields off the wire so an
-              // incremental broadcast keeps the local cache groupable (parity
-              // with the indexResponse decrypt path above).
-              agentRole: entry.agentRole,
-              createdBySessionId: entry.createdBySessionId,
-              isArchived: entry.isArchived,
-              isPinned: entry.isPinned,
-              branchedFromSessionId: entry.branchedFromSessionId,
-              branchPointMessageId: entry.branchPointMessageId,
-              branchedAt: entry.branchedAt,
-              messageCount: entry.messageCount ?? 0,
-              lastMessageAt: entry.lastMessageAt,
-              createdAt: entry.createdAt,
-              updatedAt: entry.updatedAt,
-              pendingExecution: entry.pendingExecution,
-              isExecuting: entry.isExecuting,
-              queuedPromptCount: entry.queuedPromptCount,
-              hasPendingPrompt: entry.hasPendingPrompt,
-              lastReadAt: entry.lastReadAt,
-            };
-
-            // Decrypt client metadata (context usage, pending prompt state, draft, etc.)
-            if (entry.encryptedClientMetadata && entry.clientMetadataIv && config.encryptionKey) {
-              try {
-                const clientMeta = await decryptClientMetadata(entry.encryptedClientMetadata, entry.clientMetadataIv, config.encryptionKey);
-                decryptedEntry.currentContext = clientMeta.currentContext;
-                if (clientMeta.hasPendingPrompt !== undefined) {
-                  decryptedEntry.hasPendingPrompt = clientMeta.hasPendingPrompt;
-                }
-                if (clientMeta.phase) decryptedEntry.phase = clientMeta.phase;
-                if (clientMeta.tags) decryptedEntry.tags = clientMeta.tags;
-                // Allow empty string through so "clear draft" propagates to renderer
-                if (clientMeta.draftInput !== undefined) decryptedEntry.draftInput = clientMeta.draftInput;
-                if (clientMeta.draftUpdatedAt !== undefined) decryptedEntry.draftUpdatedAt = clientMeta.draftUpdatedAt;
-                if (clientMeta.hasBeenNamed !== undefined) decryptedEntry.hasBeenNamed = clientMeta.hasBeenNamed;
-              } catch (err) {
-                console.error('[CollabV3] Failed to decrypt client metadata:', err);
-              }
-            }
-
-            // Decrypt title - encrypted titles are required
-            if (entry.encryptedTitle && entry.titleIv && config.encryptionKey) {
-              try {
-                decryptedEntry.title = await decryptTitle(entry.encryptedTitle, entry.titleIv, config.encryptionKey);
-              } catch (err) {
-                console.error('[CollabV3] Failed to decrypt index entry title:', err);
-                decryptedEntry.title = 'Untitled';
-              }
-            }
-            // If no encrypted title, keep as 'Untitled'
-
-            // Decrypt queued prompts - encrypted prompts are required
-            if (entry.encryptedQueuedPrompts && entry.encryptedQueuedPrompts.length > 0 && config.encryptionKey) {
-              try {
-                console.log('[CollabV3] DEBUG decrypting queued prompts:', entry.encryptedQueuedPrompts.length);
-                decryptedEntry.queuedPrompts = await decryptQueuedPrompts(entry.encryptedQueuedPrompts, config.encryptionKey);
-                console.log('[CollabV3] DEBUG decrypted:', decryptedEntry.queuedPrompts?.length, 'prompts');
-              } catch (err) {
-                console.error('[CollabV3] Failed to decrypt index entry queued prompts:', err);
-              }
-            } else if (
-              entry.queuedPromptCount === 0 ||
-              Array.isArray(entry.encryptedQueuedPrompts)
-            ) {
-              decryptedEntry.queuedPrompts = [];
-            } else {
-              // console.log('[CollabV3] DEBUG no encrypted prompts to decrypt:', {
-              //   hasEncryptedPrompts: !!entry.encryptedQueuedPrompts,
-              //   length: entry.encryptedQueuedPrompts?.length ?? 0,
-              //   hasEncryptionKey: !!config.encryptionKey,
-              // });
-            }
-            // If no encrypted prompts, queuedPrompts stays undefined
+            const decryptedEntry = row.cacheEntry;
 
             // Cache the decrypted entry
             sessionIndexCache.set(entry.sessionId, decryptedEntry);
@@ -3562,6 +3482,11 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
 
           case 'error':
             console.error('[CollabV3] Index error:', message.code, message.message);
+            if (message.code === 'update_required') {
+              // The server refuses personal-sync writes from this build. Only a
+              // newer build clears this; reads and presence continue.
+              personalSyncWriteGate.markBlocked('update-required', message.message);
+            }
             if (pendingPersonalStatePage
               && (message.requestId === undefined || message.requestId === pendingPersonalStatePage.requestId)) {
               const pending = pendingPersonalStatePage;
@@ -3634,6 +3559,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
       console.error('[CollabV3] Cannot sync messages - no encryption key');
       return;
     }
+    if (withholdPersonalSyncWrite('transcript upload')) return;
 
     // console.log('[CollabV3] syncSessionMessages() - CREATING TEMP WebSocket for session', sessionId, 'with', messages.length, 'messages');
 
@@ -3849,6 +3775,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
       console.error('[CollabV3] doSyncSessionsToIndex called but not connected!');
       return;
     }
+    if (withholdPersonalSyncWrite('bulk index publish')) return;
 
     sessionsData = sessionsData.filter(session => isRetainedSession(session.updatedAt) && !wasIndexActivityRejected(session.id, session.updatedAt));
     if (!sessionsData.length) return;
@@ -4405,8 +4332,9 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
           break;
       }
 
-      // Send to session room (if connected and we have a message to send)
-      if (clientMessage && sessionConnected) {
+      // Send to session room (if connected, we have a message to send, and
+      // this device is allowed to publish personal-sync ciphertext at all)
+      if (clientMessage && sessionConnected && !withholdPersonalSyncWrite('session room write')) {
         try {
           const json = JSON.stringify(clientMessage);
           // console.log('[CollabV3] Sending message, length:', json.length);
@@ -4427,7 +4355,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
       }
 
       // Handle index updates based on change type
-      if (indexWs && indexConnected) {
+      if (indexWs && indexConnected && !withholdPersonalSyncWrite('index change')) {
         if (change.type === 'session_deleted') {
           // Delete from index and cache
           sessionIndexCache.delete(sessionId);
@@ -4649,6 +4577,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
         console.error('[CollabV3] Cannot sync project config: no encryption key');
         return;
       }
+      if (withholdPersonalSyncWrite('project config publish')) return;
 
       // Encrypt project ID (deterministic)
       const { encryptedProjectId, projectIdIv } = await encryptProjectId(projectId, config.encryptionKey);
@@ -4706,6 +4635,8 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
           // from this result as "the server is missing it, republish", so a
           // partial mirror must fail the fetch instead of being returned.
           const { sessions, projects } = indexMirror.snapshot();
+          // Every row in a complete mirror decrypted under this key.
+          personalSyncWriteGate.markVerified();
           return {
             complete: true,
             indexProtocolVersion: 2,
@@ -4717,6 +4648,9 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
             projects,
           };
         } catch (err) {
+          if (err instanceof IndexEntryDecryptionError) {
+            personalSyncWriteGate.markBlocked('decryption-failed', err.message);
+          }
           if (!(err instanceof IndexProtocolUnsupportedError)) {
             // A real failure (transport, timeout, partial bootstrap) is NOT a
             // reason to fall back: the legacy path would answer with a complete
@@ -5438,6 +5372,15 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
      */
     isIndexReady(): boolean {
       return indexReady;
+    },
+
+    /** Whether this device may publish personal-sync ciphertext. See GitHub #1117. */
+    getPersonalSyncWriteGate(): PersonalSyncWriteGateSnapshot {
+      return personalSyncWriteGate.snapshot();
+    },
+
+    onPersonalSyncWriteGateChange(callback: (snapshot: PersonalSyncWriteGateSnapshot) => void): () => void {
+      return personalSyncWriteGate.onChange(callback);
     },
 
     /**

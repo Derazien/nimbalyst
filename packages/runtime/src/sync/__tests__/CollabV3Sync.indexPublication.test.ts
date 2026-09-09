@@ -37,6 +37,23 @@ class FakeWebSocket {
     this.readyState = FakeWebSocket.OPEN;
     this.onopen?.(new Event('open'));
   }
+
+  receive(message: unknown): void {
+    this.onmessage?.({ data: JSON.stringify(message) } as MessageEvent);
+  }
+}
+
+/**
+ * Answer the provider's first bootstrap page with an empty, complete index.
+ * The personal-sync write gate opens only after a complete read decrypts under
+ * this key (GitHub #1117); every real consumer reads before it publishes.
+ */
+async function establishIndexCoverage(provider: ReturnType<typeof createCollabV3Sync>, indexSocket: FakeWebSocket): Promise<void> {
+  const fetching = provider.fetchIndex!();
+  await vi.waitFor(() => expect(indexSocket.send.mock.calls.some(([p]) => JSON.parse(p as string).type === 'indexPageRequest')).toBe(true));
+  const req = indexSocket.send.mock.calls.map(([p]) => JSON.parse(p as string)).find((m) => m.type === 'indexPageRequest');
+  indexSocket.receive({ type: 'indexPageResponse', protocolVersion: 2, requestId: req.requestId, mode: 'bootstrap', entries: [], complete: true, cursor: 0 });
+  await fetching;
 }
 
 function jwtFor(subject: string): string {
@@ -78,6 +95,7 @@ async function createConnectedProvider() {
   await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
   const indexSocket = FakeWebSocket.instances[0];
   indexSocket.open();
+  await establishIndexCoverage(provider, indexSocket);
   return { provider, indexSocket };
 }
 

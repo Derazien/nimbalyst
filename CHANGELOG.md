@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 <!-- Bug fixes go here -->
 - iOS no longer asks you to re-pair a working device because of partial sync failures or local database errors.
+- A desktop whose sync key cannot read the shared session index no longer deletes those entries from the server; it pauses its own session sync writes and reports the key mismatch in the sync status instead.
 
 ### Removed
 <!-- Removed features go here -->

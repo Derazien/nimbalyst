@@ -10,6 +10,7 @@ import type { FleetActivitySnapshot, PushRejectionCause, SkipReason } from '@nim
 import type { AgentMessage } from '../ai/server/types';
 import type { PersonalJwt, PersonalMemberId } from '../auth/jwtScopes';
 import type { SyncedReadReceipt } from '../readReceipts/readReceipts';
+import type { PersonalSyncWriteGateSnapshot } from './personalSyncWriteGate';
 
 /** Caller-side knobs for {@link SyncProvider.requestMobilePush}. */
 export interface MobilePushOptions {
@@ -417,6 +418,17 @@ export interface SyncProvider {
    * the reconnect cascade to gate other providers on a verified-healthy index.
    */
   waitForIndexReady?(timeoutMs?: number): Promise<void>;
+
+  /**
+   * Whether this device may publish personal-sync ciphertext. Closed until a
+   * complete index read decrypts under this key, and after any row that does
+   * not, so a device holding the wrong key never rewrites the shared index
+   * (GitHub #1117). See `personalSyncWriteGate.ts`.
+   */
+  getPersonalSyncWriteGate?(): PersonalSyncWriteGateSnapshot;
+
+  /** Fires when the personal-sync write gate changes state. */
+  onPersonalSyncWriteGateChange?(callback: (snapshot: PersonalSyncWriteGateSnapshot) => void): () => void;
 
   /** Push a file index entry to the IndexRoom (for mobile markdown sync) */
   syncFileToIndex?(file: FileIndexData): void;
