@@ -714,7 +714,13 @@ public final class AppState: ObservableObject {
     /// row rather than navigate to a session the views can't yet resolve.
     @MainActor
     private func navigateWhenSessionAvailable(_ sessionId: String) async {
+        guard let requestedDatabase = databaseManager else {
+            voiceNavigationRequest = sessionId
+            return
+        }
+        syncManager?.requestSessionIndexLookup(sessionId: sessionId)
         for _ in 0..<25 { // ~5s max (25 * 200ms)
+            guard !Task.isCancelled, databaseManager === requestedDatabase else { return }
             if let db = databaseManager, (try? db.session(byId: sessionId)) != nil {
                 voiceNavigationRequest = sessionId
                 return
@@ -732,7 +738,8 @@ public final class AppState: ObservableObject {
     /// Create an AppState configured for screenshot capture.
     /// Uses an in-memory database with realistic demo data, bypasses auth/pairing.
     public static func forScreenshots() -> AppState {
-        let db = try! ScreenshotDataProvider.createPopulatedDatabase()
+        let historyCount = CommandLine.arguments.contains("--retained-history-fixture") ? 10_000 : 0
+        let db = try! ScreenshotDataProvider.createPopulatedDatabase(historyCount: historyCount)
         let state = AppState(databaseManager: db)
         state.isConnected = true
         state.screenshotMode = true

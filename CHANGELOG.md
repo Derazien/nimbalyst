@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 <!-- Changes to existing functionality go here -->
+- iOS syncs the session index in bounded pages into a persistent cache and lists sessions from an indexed projection, reducing stalls on accounts with large unarchived histories.
 
 ### Fixed
 <!-- Bug fixes go here -->

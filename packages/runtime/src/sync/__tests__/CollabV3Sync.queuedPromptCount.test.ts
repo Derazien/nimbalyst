@@ -48,11 +48,14 @@ function indexUpdates(socket: FakeWebSocket): Array<Record<string, any>> {
 
 describe('CollabV3 queued prompt clearing', () => {
   beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(10000);
     FakeWebSocket.instances = [];
     vi.stubGlobal('WebSocket', FakeWebSocket);
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 

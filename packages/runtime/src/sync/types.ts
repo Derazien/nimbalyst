@@ -176,6 +176,11 @@ export interface SyncProvider {
 
   /** Fetch the current server index to compare with local state */
   fetchIndex?(): Promise<{
+    /** Absent on older providers. Partial coverage never permits absence-based reconciliation. */
+    complete?: boolean;
+    indexProtocolVersion?: 1 | 2;
+    /** Explicit server tombstones, including those retained across a full bootstrap. */
+    deletedSessionIds?: string[];
     sessions: Array<{
       sessionId: string;
       projectId: string;
@@ -468,6 +473,8 @@ export interface SessionIndexData {
   workspaceId?: string;
   workspacePath?: string;
   messageCount: number;
+  /** False when a metadata-only query intentionally did not count messages. */
+  messageCountKnown?: boolean;
   updatedAt: number;
   createdAt: number;
   /** Raw metadata from PGLite - CollabV3Sync extracts what it needs for encrypted client metadata */

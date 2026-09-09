@@ -1,3 +1,4 @@
+import { isRetainedSession } from '@nimbalyst/collab-protocol';
 import Store from '../utils/privateSettingsStore';
 import { getProviderCredentials, subscribeProviderCredentialChanges } from './credentials/providerCredentials';
 /**
@@ -39,6 +40,7 @@ import {
 } from './sync/projectConfigComposer';
 import type { ActionPrompt } from './ActionPromptParser';
 import { resolveProjectPath } from '../utils/workspaceDetection';
+import { decideMissingSession } from './sync/missingSessionPolicy';
 import { createHash } from 'crypto';
 import { setSleepPreventionMode, setSyncConnected, shutdownSleepPrevention, type PreventSleepMode } from './PowerSaveService';
 import { reconnectAllTrackerSyncs } from './TrackerSyncManager';
@@ -102,10 +104,25 @@ let incrementalSyncInFlight = false;
 let lastIncrementalSyncAt = 0;
 const MIN_INCREMENTAL_SYNC_INTERVAL = 5000; // 5 seconds minimum between syncs
 
-// Must match SERVER_TTL (IndexRoom.ts SESSION_TTL_MS = 30 days).
-// Sessions older than this that are missing from the server were TTL-expired;
-// re-uploading them is wasteful because they'll just be expired again.
-const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+/**
+ * Predicate handed to `getAllSessionsForSync` so reconciliation never loads
+ * sessions from projects the user did not enable. An empty enabled list means
+ * "sync nothing", which is what the per-session filter this replaced already
+ * did.
+ *
+ * Sessions running in a git worktree may have a workspaceId of
+ * ".../<project>_worktrees/<name>" rather than the parent project path the user
+ * enabled in Settings > Sync. Claude sessions normally adopt the parent path via
+ * adoptWorktreeForSession(), but the Codex provider currently does not, so a
+ * Codex worktree session keeps the raw worktree path. Accept either form.
+ * `resolveProjectPath` touches the disk, so this runs once per distinct
+ * workspace path rather than once per session.
+ */
+function createEnabledProjectFilter(): (workspaceId: string) => boolean {
+  const enabledProjectIds = new Set(store.get('sessionSync')?.enabledProjects ?? []);
+  return (workspaceId: string) =>
+    enabledProjectIds.has(workspaceId) || enabledProjectIds.has(resolveProjectPath(workspaceId));
+}
 
 // Event emitter for sync status changes
 type SyncStatusListener = (status: { connected: boolean; syncing: boolean; error: string | null }) => void;
@@ -626,6 +643,16 @@ export async function initializeSync(baseStore: SessionStore): Promise<SessionSt
           return;
         }
 
+        // Absence from the index is what drives republishing, so it only means
+        // anything when the provider proved complete coverage. A partial mirror
+        // would look like "the server lost almost everything" and trigger a
+        // mass upload. (The CollabV3 provider throws instead of returning a
+        // partial result; this is the belt-and-braces check.)
+        if (serverIndex.complete === false) {
+          logger.main.warn('[SyncManager] Server index coverage is incomplete; skipping reconciliation this cycle');
+          return;
+        }
+        const tombstonedSessionIds = new Set(serverIndex.deletedSessionIds ?? []);
         // Build a map of server sessions for quick lookup
         const serverSessionMap = new Map(
           serverIndex.sessions.map(s => [s.sessionId, s])
@@ -636,18 +663,12 @@ export async function initializeSync(baseStore: SessionStore): Promise<SessionSt
         const { getAllSessionsForSync } = await import('./PGLiteSessionStore');
         const allLocalSessions = await timeStartupPhase(
           'SyncManager.getAllSessionsForSync',
-          () => getAllSessionsForSync(false), // No messages yet
+          // No messages yet, and only the projects the user enabled -- the
+          // filter is applied in SQL rather than over every row in the database.
+          () => getAllSessionsForSync(false, { isProjectEnabled: createEnabledProjectFilter() }),
         );
         const localTime = performance.now() - localStart;
         // logger.main.info(`[SyncManager] Local has ${allLocalSessions.length} sessions (query took ${localTime.toFixed(1)}ms)`);
-
-        // Get enabled projects filter (if configured)
-        const syncSettings = store.get('sessionSync');
-        const enabledProjects = syncSettings?.enabledProjects ?? [];
-        // logger.main.info(`[SyncManager] Enabled projects filter: ${JSON.stringify(enabledProjects)}`);
-
-        // Build enabled projects set - only sync explicitly selected projects
-        const enabledProjectIds = new Set(enabledProjects);
 
         // Step 4: Find sessions that need syncing using timestamp comparison
         // Compare local updatedAt vs server updatedAt - if local is newer, we have changes to sync
@@ -655,44 +676,29 @@ export async function initializeSync(baseStore: SessionStore): Promise<SessionSt
         const sessionsNeedingMessageSync: string[] = [];
 
         for (const localSession of allLocalSessions) {
+          if (!isRetainedSession(localSession.updatedAt)) continue;
           // Skip sessions without a workspace - they shouldn't exist but just in case
           if (!localSession.workspaceId) {
             logger.main.warn(`[SyncManager] Skipping session ${localSession.id.slice(0, 8)} - no workspaceId`);
             continue;
           }
 
-          // Skip sessions from disabled projects (if project filtering is enabled).
-          // Sessions running in a git worktree may have a workspaceId of
-          // ".../<project>_worktrees/<name>" rather than the parent project path
-          // the user enabled in Settings > Sync. Claude sessions normally adopt
-          // the parent path via adoptWorktreeForSession(), but the Codex
-          // provider currently does not, so a Codex worktree session keeps the
-          // raw worktree path and is silently filtered out here. Resolve to the
-          // parent project path and accept either form against the enabled set.
-          if (enabledProjectIds) {
-            const projectPath = resolveProjectPath(localSession.workspaceId);
-            if (!enabledProjectIds.has(localSession.workspaceId) && !enabledProjectIds.has(projectPath)) {
-              continue;
-            }
-          }
-
           const serverSession = serverSessionMap.get(localSession.id);
 
           if (!serverSession) {
-            // Session missing from server. Check if it's older than the server TTL --
-            // if so, the server already expired it and re-uploading is wasteful.
-            const localUpdatedAt = localSession.updatedAt || 0;
-            const ttlCutoff = Date.now() - SESSION_TTL_MS;
-            const ttlExpired = localUpdatedAt < ttlCutoff;
-            if (ttlExpired && !localSession.isArchived) {
-              continue; // Expired and not archived: nothing the other devices need.
-            }
-            // Push index entry. For TTL-expired but locally archived sessions,
-            // we push without messages so iOS can see the archived flag and stop
-            // showing the session even though its message body is long gone from
-            // the server.
+            // Missing from the server: deleted elsewhere, never published, or
+            // expired by the server TTL. See missingSessionPolicy.ts.
+            const decision = decideMissingSession({
+              sessionId: localSession.id,
+              updatedAt: localSession.updatedAt,
+              isArchived: localSession.isArchived,
+              tombstonedSessionIds,
+              indexProtocolVersion: serverIndex.indexProtocolVersion,
+              now: Date.now(),
+            });
+            if (!decision.publishIndex) continue;
             sessionsNeedingIndexUpdate.push(localSession);
-            if (!ttlExpired) {
+            if (decision.syncMessages) {
               sessionsNeedingMessageSync.push(localSession.id);
             }
           } else {
@@ -742,8 +748,8 @@ export async function initializeSync(baseStore: SessionStore): Promise<SessionSt
           const server = serverSessionMap.get(s.id);
           return server && Boolean(s.isArchived) !== Boolean(server.isArchived);
         }).length;
-        const ttlExpiredArchives = sessionsNeedingIndexUpdate.filter(s => !serverSessionMap.has(s.id) && s.isArchived).length;
-        logger.main.info(`[SyncManager] startup sync: ${sessionsNeedingIndexUpdate.length} need index update (${archiveMismatches} archive mismatches, ${ttlExpiredArchives} ttl-expired archives), ${sessionsNeedingMessageSync.length} need message sync, local=${allLocalSessions.length}, server=${serverIndex.sessions.length}`);
+        const missingFromServer = sessionsNeedingIndexUpdate.filter(s => !serverSessionMap.has(s.id)).length;
+        logger.main.info(`[SyncManager] startup sync: ${sessionsNeedingIndexUpdate.length} need index update (${archiveMismatches} archive mismatches, ${missingFromServer} missing from server), ${sessionsNeedingMessageSync.length} need message sync, local=${allLocalSessions.length}, server=${serverIndex.sessions.length}, protocol=v${serverIndex.indexProtocolVersion ?? 1}, tombstones=${tombstonedSessionIds.size}`);
 
         // Sync sessions that need it
         if (sessionsNeedingIndexUpdate.length === 0 && sessionsNeedingMessageSync.length === 0) {
@@ -1057,6 +1063,12 @@ export async function triggerIncrementalSync(): Promise<void> {
       return;
     }
 
+    // See the startup path: absence only means "republish" over proven coverage.
+    if (serverIndex.complete === false) {
+      logger.main.warn('[SyncManager] Server index coverage is incomplete; skipping incremental sync this cycle');
+      return;
+    }
+    const tombstonedSessionIds = new Set(serverIndex.deletedSessionIds ?? []);
     // Build a map of server sessions for quick lookup
     const serverSessionMap = new Map(
       serverIndex.sessions.map(s => [s.sessionId, s])
@@ -1065,52 +1077,38 @@ export async function triggerIncrementalSync(): Promise<void> {
     // Get local sessions
     const localStart = performance.now();
     const { getAllSessionsForSync } = await import('./PGLiteSessionStore');
-    const allLocalSessions = await getAllSessionsForSync(false);
+    const allLocalSessions = await getAllSessionsForSync(false, {
+      isProjectEnabled: createEnabledProjectFilter(),
+    });
     const localTime = performance.now() - localStart;
     // logger.main.info(`[SyncManager] Triggered sync: local has ${allLocalSessions.length} sessions (query took ${localTime.toFixed(1)}ms)`);
-
-    // Get enabled projects filter
-    const syncSettings = store.get('sessionSync');
-    const enabledProjects = syncSettings?.enabledProjects ?? [];
-    // logger.main.info(`[SyncManager] Triggered sync: enabled projects: ${JSON.stringify(enabledProjects)}`);
-
-    // Only sync explicitly selected projects
-    const enabledProjectIds = new Set(enabledProjects);
 
     // Find sessions that need syncing using timestamp comparison
     const sessionsNeedingIndexUpdate: typeof allLocalSessions = [];
     const sessionsNeedingMessageSync: string[] = [];
 
     for (const localSession of allLocalSessions) {
+          if (!isRetainedSession(localSession.updatedAt)) continue;
       if (!localSession.workspaceId) {
         continue;
-      }
-
-      // Skip sessions from disabled projects. Resolve worktree paths to their
-      // parent project path so Codex worktree sessions (which do not adopt the
-      // parent path the way Claude sessions do) match the user's enabled set.
-      if (enabledProjectIds) {
-        const projectPath = resolveProjectPath(localSession.workspaceId);
-        if (!enabledProjectIds.has(localSession.workspaceId) && !enabledProjectIds.has(projectPath)) {
-          continue;
-        }
       }
 
       const serverSession = serverSessionMap.get(localSession.id);
 
       if (!serverSession) {
-        // Session missing from server. Check if it's older than the server TTL --
-        // if so, the server already expired it and re-uploading is wasteful.
-        const localUpdatedAt = localSession.updatedAt || 0;
-        const ttlCutoff = Date.now() - SESSION_TTL_MS;
-        const ttlExpired = localUpdatedAt < ttlCutoff;
-        if (ttlExpired && !localSession.isArchived) {
-          continue; // Expired and not archived: nothing other devices need.
-        }
-        // For TTL-expired but locally archived sessions, push the index entry
-        // without messages so iOS can see the archived flag and hide the row.
+        // See missingSessionPolicy.ts: tombstoned rows are never republished,
+        // and retained history uploads normally once the server stops expiring.
+        const decision = decideMissingSession({
+          sessionId: localSession.id,
+          updatedAt: localSession.updatedAt,
+          isArchived: localSession.isArchived,
+          tombstonedSessionIds,
+          indexProtocolVersion: serverIndex.indexProtocolVersion,
+          now: Date.now(),
+        });
+        if (!decision.publishIndex) continue;
         sessionsNeedingIndexUpdate.push(localSession);
-        if (!ttlExpired) {
+        if (decision.syncMessages) {
           sessionsNeedingMessageSync.push(localSession.id);
         }
       } else {
