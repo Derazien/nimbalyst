@@ -846,7 +846,10 @@ export class MCPConfigService {
       return serverConfig;
     }
 
-    const args = buildMcpRemoteArgs(remoteConfig);
+    // -y answers npx's "Ok to proceed?" install prompt. The spec is pinned, so
+    // the first run after a bump is an install, and an MCP stdio child has no
+    // terminal to answer with.
+    const args = ['-y', ...buildMcpRemoteArgs(remoteConfig)];
 
     // Convert HTTP config to stdio with mcp-remote
     // Using bundled mcp-remote from node_modules (managed as a package.json dependency)

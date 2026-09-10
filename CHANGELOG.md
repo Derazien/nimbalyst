@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 <!-- Bug fixes go here -->
+- MCP servers that sign in through mcp-remote no longer ask you to log in again each time a new mcp-remote release comes out, and no longer hang when npx wants to install it first.
 
 ### Removed
 <!-- Removed features go here -->
