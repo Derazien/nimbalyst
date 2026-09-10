@@ -58,6 +58,22 @@ export class LayoutEngine {
   }
 
   /**
+   * Register an element placed after addElements (e.g. earlier in the same
+   * batch) so later placements avoid it.
+   */
+  addNode(id: string, x: number, y: number, width: number, height: number) {
+    this.nodes.set(id, {
+      id,
+      element: { id, type: 'rectangle', x, y, width, height } as unknown as ExcalidrawElement,
+      width,
+      height,
+      x,
+      y,
+      connections: [],
+    });
+  }
+
+  /**
    * Calculate optimal position for a new element near an existing one
    */
   calculateNearPosition(

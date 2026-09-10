@@ -34,6 +34,155 @@ function noEditorError(context: { activeFilePath?: string }): { success: false; 
 }
 import { LayoutEngine } from './layout/LayoutEngine';
 import { createFrame } from './utils/elementFactory';
+import {
+  ARROW_LABEL_FONT_SIZE,
+  boundTextPosition,
+  ensureFontsReady,
+  fitLabel,
+  measureUnwrappedText,
+  measureWrappedText,
+  type FittedLabel,
+  type LabelStyle,
+} from './utils/textFit';
+import { arrowLabelLineWidth, fitBoard, withUpdates } from './utils/fitBoard';
+import {
+  arrowLabelAnchor,
+  encloses,
+  isLayoutElement,
+  labelRectAt,
+  placeArrows,
+  rectsOverlap,
+  routeArrow,
+  type ArrowPlan,
+  type ArrowRoute,
+  type Rect,
+  type Shape,
+} from './layout/boardFit';
+
+const FONT_NOT_READY_WARNING =
+  'The drawing font had not finished loading, so text was measured with a fallback font and may not fit once it loads. Run fit_to_text on this file.';
+
+const OVERLAP_HINT =
+  'Some boxes grew to fit their text and now overlap other elements. Call fit_to_text once (after adding arrows) to push them apart.';
+
+interface BoxSpec {
+  label: string;
+  x: number;
+  y: number;
+  fit: FittedLabel;
+  backgroundColor: string;
+  strokeColor: string;
+  rounded: boolean;
+}
+
+interface CreatedBox {
+  id: string;
+  label: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Create labeled rectangles through Excalidraw, then apply our fit: the label
+ * wrapped inside real padding and the box at the fitted size, with the text
+ * placed where Excalidraw itself would place it.
+ */
+function createLabeledBoxes(specs: BoxSpec[]): { elements: any[]; boxes: CreatedBox[] } {
+  const skeletons = specs.map((spec) => ({
+    type: 'rectangle',
+    x: spec.x,
+    y: spec.y,
+    width: spec.fit.width,
+    height: spec.fit.height,
+    backgroundColor: spec.backgroundColor,
+    strokeColor: spec.strokeColor,
+    roundness: spec.rounded ? { type: 3 } : null,
+    label: { text: spec.label },
+  }));
+  const converted = convertToExcalidrawElements(skeletons as any[]) as any[];
+  const rects = converted.filter((el) => el.type === 'rectangle');
+  const boxes: CreatedBox[] = [];
+  rects.forEach((rect, index) => {
+    const spec = specs[index];
+    if (!spec) return;
+    rect.width = spec.fit.width;
+    rect.height = spec.fit.height;
+    const text = converted.find((el) => el.type === 'text' && el.containerId === rect.id);
+    if (text) {
+      const measured = spec.fit.text;
+      text.text = measured.text;
+      text.originalText = spec.label;
+      text.width = measured.width;
+      text.height = measured.height;
+      text.lineHeight = measured.lineHeight;
+      const pos = boundTextPosition(rect, { width: measured.width, height: measured.height, textAlign: text.textAlign, verticalAlign: text.verticalAlign });
+      text.x = pos.x;
+      text.y = pos.y;
+    }
+    boxes.push({ id: rect.id, label: spec.label, x: rect.x, y: rect.y, width: rect.width, height: rect.height });
+  });
+  return { elements: converted, boxes };
+}
+
+/** A short name for an element in tool results: its label, else its id. */
+function describeRef(el: any, elements: readonly any[]): string {
+  const bound = (el.boundElements || []).find((b: any) => b.type === 'text');
+  const text = bound ? elements.find((e) => e.id === bound.id) : null;
+  const label = text?.originalText || text?.text || el.name || (el.type === 'text' ? el.originalText || el.text : '');
+  return label ? normalizeLabelText(String(label)).slice(0, 40) : el.id;
+}
+
+/**
+ * Pairs of boxes that overlap, where at least one of them is in `ids`. A box
+ * drawn inside another (a grouping background) is not an overlap.
+ */
+function findOverlaps(elements: readonly any[], ids: readonly string[]): string[] {
+  const wanted = new Set(ids);
+  const shapes = elements.filter((el) => isLayoutElement(el) && el.type !== 'frame' && el.type !== 'magicframe');
+  const labelOf = (el: any): Rect | null => {
+    const ref = (el.boundElements || []).find((b: any) => b.type === 'text');
+    return (ref && elements.find((e) => e.id === ref.id)) || null;
+  };
+  const out: string[] = [];
+  for (let i = 0; i < shapes.length; i++) {
+    for (let j = i + 1; j < shapes.length; j++) {
+      const a = shapes[i];
+      const b = shapes[j];
+      if (!wanted.has(a.id) && !wanted.has(b.id)) continue;
+      if (!rectsOverlap(a, b)) continue;
+      if (encloses(a, b, labelOf(a)) || encloses(b, a, labelOf(b))) continue;
+      out.push(`${describeRef(a, elements)} / ${describeRef(b, elements)}`);
+    }
+  }
+  return out;
+}
+
+function layoutReport(elements: readonly any[], ids: readonly string[], fontsReady: boolean): Record<string, unknown> {
+  const report: Record<string, unknown> = {};
+  const overlaps = findOverlaps(elements, ids);
+  if (overlaps.length > 0) {
+    report.overlaps = overlaps.slice(0, 20);
+    report.hint = OVERLAP_HINT;
+  }
+  if (!fontsReady) report.warning = FONT_NOT_READY_WARNING;
+  return report;
+}
+
+function textStyleOf(text: any): LabelStyle {
+  return {
+    fontSize: text.fontSize,
+    fontFamily: text.fontFamily,
+    lineHeight: text.lineHeight,
+    textAlign: text.textAlign,
+    verticalAlign: text.verticalAlign,
+  };
+}
+
+function shapeOf(el: any): Shape {
+  return { type: el.type, x: el.x, y: el.y, width: el.width || 0, height: el.height || 0 };
+}
 
 // Helper to normalize color names to Excalidraw palette
 function normalizeColor(color?: string): string | undefined {
@@ -166,38 +315,50 @@ function getElementByLabel(elements: readonly ExcalidrawElement[], ref: string):
  * properly measured text element bound to the arrow; the skeleton's explicit
  * `points` are preserved by the conversion. Bindings to the pre-existing
  * containers are patched on afterwards because the conversion can only bind
- * to elements passed in the same call.
+ * to elements passed in the same call. `route` (from placeArrows) can carry a
+ * middle point that keeps the label clear of other labels.
  */
 function createBoundArrow(
   fromContainer: ExcalidrawElement,
   toContainer: ExcalidrawElement,
-  label?: string
+  label?: string,
+  route?: ArrowRoute
 ): { arrow: any; labelElements: any[] } {
   const gap = 8;
-  const fromCenterX = fromContainer.x + (fromContainer.width || 0) / 2;
-  const fromCenterY = fromContainer.y + (fromContainer.height || 0) / 2;
-  const toCenterX = toContainer.x + (toContainer.width || 0) / 2;
-  const toCenterY = toContainer.y + (toContainer.height || 0) / 2;
-
-  const fromEdge = calculateEdgePoint(fromContainer, toCenterX, toCenterY, gap);
-  const toEdge = calculateEdgePoint(toContainer, fromCenterX, fromCenterY, gap);
+  let path = route;
+  if (!path) {
+    const fromCenterX = fromContainer.x + (fromContainer.width || 0) / 2;
+    const fromCenterY = fromContainer.y + (fromContainer.height || 0) / 2;
+    const toCenterX = toContainer.x + (toContainer.width || 0) / 2;
+    const toCenterY = toContainer.y + (toContainer.height || 0) / 2;
+    const fromEdge = calculateEdgePoint(fromContainer, toCenterX, toCenterY, gap);
+    const toEdge = calculateEdgePoint(toContainer, fromCenterX, fromCenterY, gap);
+    path = {
+      x: fromEdge.x,
+      y: fromEdge.y,
+      width: toEdge.x - fromEdge.x,
+      height: toEdge.y - fromEdge.y,
+      points: [
+        [0, 0],
+        [toEdge.x - fromEdge.x, toEdge.y - fromEdge.y],
+      ],
+    };
+  }
+  const last = path.points[path.points.length - 1];
 
   const skeleton: any = {
     type: 'arrow',
-    x: fromEdge.x,
-    y: fromEdge.y,
-    width: toEdge.x - fromEdge.x,
-    height: toEdge.y - fromEdge.y,
-    points: [
-      [0, 0],
-      [toEdge.x - fromEdge.x, toEdge.y - fromEdge.y],
-    ],
+    x: path.x,
+    y: path.y,
+    width: last[0],
+    height: last[1],
+    points: path.points.map((p) => [p[0], p[1]]),
     strokeColor: '#1e1e1e',
     strokeWidth: 2,
     endArrowhead: 'arrow',
   };
   if (label) {
-    skeleton.label = { text: label, fontSize: 16 };
+    skeleton.label = { text: label, fontSize: ARROW_LABEL_FONT_SIZE };
   }
 
   const converted = convertToExcalidrawElements([skeleton]);
@@ -210,6 +371,112 @@ function createBoundArrow(
     endBinding: { elementId: toContainer.id, focus: 0, gap },
   };
   return { arrow, labelElements };
+}
+
+/** The bound container an arrow endpoint reference resolves to. */
+function resolveArrowEnd(elements: readonly ExcalidrawElement[], ref: string): ExcalidrawElement | undefined {
+  const el = getElementByLabel(elements, ref);
+  if (!el) return undefined;
+  if ('containerId' in el && el.containerId) {
+    return elements.find((candidate) => candidate.id === el.containerId) || el;
+  }
+  return el;
+}
+
+/**
+ * Add arrows between existing elements. Labels are measured in the loaded
+ * font and routed so they do not land on labels already on the board, or on
+ * each other: arrows joining the same two boxes are spread side by side.
+ */
+async function addArrowsToScene(
+  api: ExcalidrawImperativeAPI,
+  defs: Array<{ from: string; to: string; label?: string }>
+): Promise<{ ids: string[]; errors: string[]; fontsReady: boolean }> {
+  const currentElements = api.getSceneElements() as readonly any[];
+  const byId = new Map(currentElements.map((el) => [el.id, el]));
+  const fontsReady = await ensureFontsReady(
+    defs.filter((d) => d.label).map((d) => ({ text: d.label as string }))
+  );
+
+  const errors: string[] = [];
+  const resolved: Array<{ index: number; from: any; to: any; label?: string }> = [];
+  defs.forEach((def, index) => {
+    const from = resolveArrowEnd(currentElements, def.from);
+    const to = resolveArrowEnd(currentElements, def.to);
+    if (!from || !to) {
+      errors.push(`Could not find elements: ${!from ? def.from : ''} ${!to ? def.to : ''}`);
+      return;
+    }
+    resolved.push({ index, from, to, label: def.label });
+  });
+
+  // Arrows already on the board keep their route; their labels are obstacles.
+  const plans: ArrowPlan[] = [];
+  for (const el of currentElements) {
+    if (el.type !== 'arrow' || el.isDeleted) continue;
+    const labelRef = (el.boundElements || []).find((b: any) => b.type === 'text');
+    const labelEl = labelRef ? byId.get(labelRef.id) : undefined;
+    const startEl = el.startBinding?.elementId ? byId.get(el.startBinding.elementId) : undefined;
+    const endEl = el.endBinding?.elementId ? byId.get(el.endBinding.elementId) : undefined;
+    const pointShape = { type: 'rectangle', x: el.x, y: el.y, width: 0, height: 0 };
+    plans.push({
+      id: el.id,
+      fixed: true,
+      route: { x: el.x, y: el.y, width: el.width, height: el.height, points: el.points ?? [] },
+      start: startEl ? shapeOf(startEl) : pointShape,
+      end: endEl ? shapeOf(endEl) : pointShape,
+      startId: startEl ? startEl.id : `${el.id}:start`,
+      endId: endEl ? endEl.id : `${el.id}:end`,
+      label: labelEl ? { width: labelEl.width, height: labelEl.height } : undefined,
+    });
+  }
+  for (const r of resolved) {
+    let label: { width: number; height: number } | undefined;
+    if (r.label) {
+      const straight = routeArrow(shapeOf(r.from), shapeOf(r.to));
+      const measured = measureWrappedText(r.label, arrowLabelLineWidth(straight.width), { fontSize: ARROW_LABEL_FONT_SIZE });
+      label = { width: measured.width, height: measured.height };
+    }
+    plans.push({
+      id: `new:${r.index}`,
+      start: shapeOf(r.from),
+      end: shapeOf(r.to),
+      startId: r.from.id,
+      endId: r.to.id,
+      gap: 8,
+      label,
+    });
+  }
+
+  const obstacles = new Map<string, Rect>();
+  for (const el of currentElements) {
+    if (!isLayoutElement(el) || el.type === 'frame' || el.type === 'magicframe') continue;
+    obstacles.set(el.id, shapeOf(el));
+  }
+  const placements = placeArrows(plans, obstacles);
+
+  const newArrows: any[] = [];
+  const elementUpdates = new Map<string, any>();
+  const ids: string[] = [];
+  for (const r of resolved) {
+    const placement = placements.get(`new:${r.index}`);
+    const { arrow, labelElements } = createBoundArrow(r.from, r.to, r.label, placement?.route);
+    newArrows.push(arrow, ...labelElements);
+    ids.push(arrow.id);
+    for (const containerId of [r.from.id, r.to.id]) {
+      if (!elementUpdates.has(containerId)) {
+        const el = byId.get(containerId);
+        if (el) {
+          elementUpdates.set(containerId, { ...el, boundElements: [...(el.boundElements || [])] });
+        }
+      }
+      elementUpdates.get(containerId)?.boundElements.push({ id: arrow.id, type: 'arrow' });
+    }
+  }
+
+  const updatedElements = currentElements.map((el) => (elementUpdates.has(el.id) ? elementUpdates.get(el.id) : el));
+  api.updateScene({ elements: [...updatedElements, ...newArrows] });
+  return { ids, errors, fontsReady };
 }
 
 /**
@@ -261,7 +528,7 @@ export const aiTools = [
     name: 'add_rectangle',
     scope: 'global' as const,
     access: { kind: 'editor-write' } as const,
-    description: 'Add a labeled rectangle to the diagram. Rectangles are rounded by default. Use x,y for explicit positioning, or nearElement for relative placement. The target file must already exist but does not need to be open; Nimbalyst mounts it in a hidden editor from filePath. Do not call extension_test_open_file first.',
+    description: 'Add a labeled rectangle to the diagram. Rectangles are rounded by default. Use x,y for explicit positioning, or nearElement for relative placement. The label wraps inside the box with padding; the box keeps its width and grows taller (never shorter) until the label fits, and the result returns the final width and height. The target file must already exist but does not need to be open; Nimbalyst mounts it in a hidden editor from filePath. Do not call extension_test_open_file first.',
     parameters: {
       type: 'object' as const,
       properties: {
@@ -283,7 +550,7 @@ export const aiTools = [
         },
         height: {
           type: 'number' as const,
-          description: 'Height of the rectangle (default: 80)',
+          description: 'Minimum height of the rectangle (default: 80). It grows taller if its label needs more room.',
         },
         nearElement: {
           type: 'string' as const,
@@ -326,11 +593,12 @@ export const aiTools = [
       const { label, nearElement, color, strokeColor, rounded = true } = params;
       const currentElements = api.getSceneElements() || [];
 
+      // Measure in the real font, then size the box around the padded label.
+      const fontsReady = await ensureFontsReady([{ text: label }]);
+      const fit = fitLabel('rectangle', { width: params.width || 150, height: params.height || 80 }, label);
+
       const engine = new LayoutEngine();
       engine.addElements(currentElements);
-
-      const width = params.width || 150;
-      const height = params.height || 80;
 
       let position: { x: number; y: number };
 
@@ -340,39 +608,41 @@ export const aiTools = [
       } else if (nearElement) {
         const nearEl = getElementByLabel(currentElements, nearElement);
         if (nearEl) {
-          position = engine.calculateNearPosition(nearEl.id, width, height);
+          position = engine.calculateNearPosition(nearEl.id, fit.width, fit.height);
         } else {
-          position = engine.calculateDefaultPosition(width, height);
+          position = engine.calculateDefaultPosition(fit.width, fit.height);
         }
       } else {
-        position = engine.calculateDefaultPosition(width, height);
+        position = engine.calculateDefaultPosition(fit.width, fit.height);
       }
 
-      // Use skeleton format with convertToExcalidrawElements for proper text binding
-      const rectSkeleton: any = {
-        type: 'rectangle',
-        x: position.x,
-        y: position.y,
-        width,
-        height,
-        backgroundColor: normalizeColor(color) || 'transparent',
-        strokeColor: normalizeColor(strokeColor) || '#1e1e1e',
-        roundness: rounded ? { type: 3 } : null,
-        label: {
-          text: label,
+      const { elements: newElements, boxes } = createLabeledBoxes([
+        {
+          label,
+          x: position.x,
+          y: position.y,
+          fit,
+          backgroundColor: normalizeColor(color) || 'transparent',
+          strokeColor: normalizeColor(strokeColor) || '#1e1e1e',
+          rounded,
+        },
+      ]);
+
+      const nextElements = [...currentElements, ...newElements];
+      api.updateScene({ elements: nextElements });
+
+      const box = boxes[0];
+      return {
+        success: true,
+        data: {
+          id: box?.id,
+          x: position.x,
+          y: position.y,
+          width: box?.width,
+          height: box?.height,
+          ...layoutReport(nextElements, box ? [box.id] : [], fontsReady),
         },
       };
-
-      const newElements = convertToExcalidrawElements([rectSkeleton]);
-
-      // Update scene with new elements
-      api.updateScene({
-        elements: [...currentElements, ...newElements],
-      });
-
-      // Find the rectangle element (not the text)
-      const rectElement = newElements.find(el => el.type === 'rectangle');
-      return { success: true, data: { id: rectElement?.id, x: position.x, y: position.y } };
     },
   },
 
@@ -412,51 +682,16 @@ export const aiTools = [
         return noEditorError(context);
       }
 
-      const currentElements = api.getSceneElements();
-      const fromEl = getElementByLabel(currentElements, params.from);
-      const toEl = getElementByLabel(currentElements, params.to);
-
-      if (!fromEl || !toEl) {
-        return {
-          success: false,
-          error: `Could not find elements: ${!fromEl ? params.from : ''} ${!toEl ? params.to : ''}`,
-        };
+      const { ids, errors, fontsReady } = await addArrowsToScene(api, [
+        { from: params.from, to: params.to, label: params.label },
+      ]);
+      if (ids.length === 0) {
+        return { success: false, error: errors[0] ?? 'Could not add the arrow' };
       }
-
-      // Get the container element if this is a text element bound to a rectangle
-      let fromContainerId = fromEl.id;
-      let toContainerId = toEl.id;
-
-      if ('containerId' in fromEl && fromEl.containerId) {
-        fromContainerId = fromEl.containerId as string;
-      }
-      if ('containerId' in toEl && toEl.containerId) {
-        toContainerId = toEl.containerId as string;
-      }
-
-      // Get the actual container elements
-      const fromContainer = currentElements.find(el => el.id === fromContainerId) || fromEl;
-      const toContainer = currentElements.find(el => el.id === toContainerId) || toEl;
-
-      const { arrow, labelElements } = createBoundArrow(fromContainer, toContainer, params.label);
-
-      // Update the source and target elements to include arrow in boundElements
-      const updatedElements = currentElements.map(el => {
-        if (el.id === fromContainerId || el.id === toContainerId) {
-          const existingBound = (el as any).boundElements || [];
-          return {
-            ...el,
-            boundElements: [...existingBound, { id: arrow.id, type: 'arrow' }],
-          };
-        }
-        return el;
-      });
-
-      api.updateScene({
-        elements: [...updatedElements, arrow, ...labelElements],
-      });
-
-      return { success: true, data: { id: arrow.id } };
+      return {
+        success: true,
+        data: { id: ids[0], ...(fontsReady ? {} : { warning: FONT_NOT_READY_WARNING }) },
+      };
     },
   },
 
@@ -464,7 +699,7 @@ export const aiTools = [
     name: 'update_element',
     scope: 'global' as const,
     access: { kind: 'editor-write' } as const,
-    description: 'Update text, color, or style of existing element. Can look up by ID or label. The target file must already exist but does not need to be open; Nimbalyst mounts it in a hidden editor from filePath. Do not call extension_test_open_file first.',
+    description: 'Update text, color, or style of existing element. Can look up by ID or label. A new label is re-wrapped with padding and its box grows taller if it needs to. The target file must already exist but does not need to be open; Nimbalyst mounts it in a hidden editor from filePath. Do not call extension_test_open_file first.',
     parameters: {
       type: 'object' as const,
       properties: {
@@ -539,20 +774,58 @@ export const aiTools = [
         return colorMap[color.toLowerCase()] || color;
       };
 
+      // A container reference edits the label bound to it.
+      if (!('text' in textElement)) {
+        const boundRef = ((textElement as any).boundElements || []).find((b: any) => b.type === 'text');
+        const bound = boundRef ? currentElements.find((el) => el.id === boundRef.id) : undefined;
+        if (bound) textElement = bound;
+      }
+      const target = textElement as any;
+
       // Find the container (rectangle) if this is a text element bound to one
-      let containerElement: ExcalidrawElement | undefined;
-      if ('containerId' in textElement && textElement.containerId) {
-        containerElement = currentElements.find(el => el.id === textElement.containerId);
+      let containerElement: any;
+      if (target.containerId) {
+        containerElement = currentElements.find(el => el.id === target.containerId);
       }
 
-      // Prepare updates for text element
-      const textUpdates: any = {};
-      if (params.newLabel && 'text' in textElement) {
-        textUpdates.text = params.newLabel;
+      const textUpdates: Record<string, unknown> = {};
+      const containerUpdates: Record<string, unknown> = {};
+      let fontsReady = true;
+      if (params.newLabel !== undefined && target.type === 'text') {
+        // Re-wrap the new label in the real font and let its box grow to hold it.
+        const newLabel = params.newLabel;
+        fontsReady = await ensureFontsReady([{ text: newLabel, fontFamily: target.fontFamily }]);
+        const style = textStyleOf(target);
+        let measured;
+        let box = containerElement;
+        if (containerElement && containerElement.type !== 'arrow' && containerElement.type !== 'line') {
+          const fit = fitLabel(containerElement.type, { width: containerElement.width, height: containerElement.height }, newLabel, style);
+          measured = fit.text;
+          if (fit.width !== containerElement.width) containerUpdates.width = fit.width;
+          if (fit.height !== containerElement.height) containerUpdates.height = fit.height;
+          box = { ...containerElement, ...containerUpdates };
+          const pos = boundTextPosition(box, { width: measured.width, height: measured.height, textAlign: target.textAlign, verticalAlign: target.verticalAlign });
+          Object.assign(textUpdates, { x: pos.x, y: pos.y });
+        } else if (containerElement) {
+          measured = measureWrappedText(newLabel, arrowLabelLineWidth(containerElement.width, target.fontSize), style);
+          const rect = labelRectAt(arrowLabelAnchor(containerElement), measured);
+          Object.assign(textUpdates, { x: rect.x, y: rect.y });
+        } else {
+          measured = target.autoResize === false
+            ? measureWrappedText(newLabel, target.width, style)
+            : measureUnwrappedText(newLabel, style);
+        }
+        Object.assign(textUpdates, {
+          text: measured.text,
+          originalText: newLabel,
+          width: target.autoResize === false && !containerElement ? target.width : measured.width,
+          height: measured.height,
+          lineHeight: measured.lineHeight,
+        });
       }
 
       // Prepare updates for container (for color changes)
-      const containerUpdates: any = {};
+      const colorTarget = containerElement ?? (target.type === 'text' ? undefined : target);
       if (params.color !== undefined) {
         containerUpdates.backgroundColor = normalizeColor(params.color);
       }
@@ -560,20 +833,26 @@ export const aiTools = [
         containerUpdates.strokeColor = normalizeColor(params.strokeColor);
       }
 
-      // Apply updates
+      // Apply updates. Versions are bumped so a hidden editor saves the edit.
       const updatedElements = currentElements.map((el) => {
-        if (el.id === textElement.id && Object.keys(textUpdates).length > 0) {
-          return { ...el, ...textUpdates };
+        if (el.id === target.id && Object.keys(textUpdates).length > 0) {
+          return withUpdates(el as any, textUpdates);
         }
-        if (containerElement && el.id === containerElement.id && Object.keys(containerUpdates).length > 0) {
-          return { ...el, ...containerUpdates };
+        if (colorTarget && el.id === colorTarget.id && Object.keys(containerUpdates).length > 0) {
+          return withUpdates(el as any, containerUpdates);
         }
         return el;
       });
 
       api.updateScene({ elements: updatedElements });
 
-      return { success: true };
+      const grown = containerUpdates.height !== undefined || containerUpdates.width !== undefined;
+      return {
+        success: true,
+        ...(grown || !fontsReady
+          ? { data: layoutReport(updatedElements, colorTarget ? [colorTarget.id] : [], fontsReady) }
+          : {}),
+      };
     },
   },
 
@@ -760,7 +1039,7 @@ export const aiTools = [
         // data lives in `files`; updateScene does not accept files, so without
         // addFiles the fileId resolves to nothing and the element renders as a
         // broken thumbnail (#428). Natively-converted diagrams return
-        // `files: undefined` — Object.values(undefined) throws.
+        // `files: undefined` ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Object.values(undefined) throws.
         // mermaid-to-excalidraw ships types for a newer excalidraw than the
         // 0.17.6 this extension pins, so cast at the boundary.
         const importedFiles = files ? (Object.values(files) as BinaryFileData[]) : [];
@@ -783,7 +1062,7 @@ export const aiTools = [
           success: true,
           message: isImageFallback
             ? `Imported Mermaid diagram as a non-editable image (this diagram type is not supported for native shape conversion): ${importedFiles.length} image file(s) embedded`
-            : `Imported Mermaid diagram: ${elements.length} skeleton → ${excalidrawElements.length} elements`
+            : `Imported Mermaid diagram: ${elements.length} skeleton ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ ${excalidrawElements.length} elements`
         };
       } catch (error) {
         console.error('[import_mermaid] failed:', error);
@@ -905,7 +1184,7 @@ export const aiTools = [
     name: 'add_row',
     scope: 'global' as const,
     access: { kind: 'editor-write' } as const,
-    description: 'Add multiple labeled rectangles arranged horizontally in a row. Great for creating groups of related items side by side. The target file must already exist but does not need to be open; Nimbalyst mounts it in a hidden editor from filePath. Do not call extension_test_open_file first.',
+    description: 'Add multiple labeled rectangles arranged horizontally in a row. Great for creating groups of related items side by side. Every box in the row gets the height of the tallest label once wrapped. The target file must already exist but does not need to be open; Nimbalyst mounts it in a hidden editor from filePath. Do not call extension_test_open_file first.',
     parameters: {
       type: 'object' as const,
       properties: {
@@ -936,7 +1215,7 @@ export const aiTools = [
         },
         height: {
           type: 'number' as const,
-          description: 'Height of each rectangle (default: 60)',
+          description: 'Minimum height of each rectangle (default: 60). Boxes grow taller if their labels need more room.',
         },
       },
       required: ['labels'],
@@ -966,40 +1245,53 @@ export const aiTools = [
       const height = params.height || 60;
       const spacing = params.spacing || 20;
 
+      // Every box in a row shares the height of the tallest fitted label.
+      const fontsReady = await ensureFontsReady(params.labels.map((text) => ({ text })));
+      const fits = params.labels.map((label) => fitLabel('rectangle', { width, height }, label));
+      const rowHeight = Math.max(height, ...fits.map((f) => f.height));
+      const widths = fits.map((f) => f.width);
+
       // Calculate starting position
       let startX = params.x;
       let startY = params.y;
 
       if (startX === undefined || startY === undefined) {
-        const totalWidth = params.labels.length * width + (params.labels.length - 1) * spacing;
-        const pos = engine.calculateDefaultPosition(totalWidth, height);
+        const totalWidth = widths.reduce((sum, w) => sum + w, 0) + (params.labels.length - 1) * spacing;
+        const pos = engine.calculateDefaultPosition(totalWidth, rowHeight);
         startX = startX ?? pos.x;
         startY = startY ?? pos.y;
       }
 
-      // Create skeleton array for all rectangles
-      const skeletons: any[] = params.labels.map((label, index) => ({
-        type: 'rectangle',
-        x: startX! + index * (width + spacing),
-        y: startY!,
-        width,
-        height,
-        backgroundColor: normalizeColor(params.color) || 'transparent',
-        strokeColor: '#1e1e1e',
-        roundness: { type: 3 },
-        label: {
-          text: label,
-        },
-      }));
-
-      const newElements = convertToExcalidrawElements(skeletons);
-      const ids = newElements.filter(el => el.type === 'rectangle').map(el => el.id);
-
-      api.updateScene({
-        elements: [...currentElements, ...newElements],
+      let cursorX = startX!;
+      const specs: BoxSpec[] = params.labels.map((label, index) => {
+        const spec: BoxSpec = {
+          label,
+          x: cursorX,
+          y: startY!,
+          fit: { ...fits[index], height: rowHeight },
+          backgroundColor: normalizeColor(params.color) || 'transparent',
+          strokeColor: '#1e1e1e',
+          rounded: true,
+        };
+        cursorX += widths[index] + spacing;
+        return spec;
       });
 
-      return { success: true, data: { ids, count: params.labels.length } };
+      const { elements: newElements, boxes } = createLabeledBoxes(specs);
+      const nextElements = [...currentElements, ...newElements];
+      api.updateScene({ elements: nextElements });
+
+      const ids = boxes.map((b) => b.id);
+      return {
+        success: true,
+        data: {
+          ids,
+          count: params.labels.length,
+          width: widths[0],
+          height: rowHeight,
+          ...layoutReport(nextElements, ids, fontsReady),
+        },
+      };
     },
   },
 
@@ -1007,7 +1299,7 @@ export const aiTools = [
     name: 'add_column',
     scope: 'global' as const,
     access: { kind: 'editor-write' } as const,
-    description: 'Add multiple labeled rectangles arranged vertically in a column. Great for creating stacked items or lists. The target file must already exist but does not need to be open; Nimbalyst mounts it in a hidden editor from filePath. Do not call extension_test_open_file first.',
+    description: 'Add multiple labeled rectangles arranged vertically in a column. Great for creating stacked items or lists. Boxes grow to fit their labels and stack by their real heights. The target file must already exist but does not need to be open; Nimbalyst mounts it in a hidden editor from filePath. Do not call extension_test_open_file first.',
     parameters: {
       type: 'object' as const,
       properties: {
@@ -1038,7 +1330,7 @@ export const aiTools = [
         },
         height: {
           type: 'number' as const,
-          description: 'Height of each rectangle (default: 60)',
+          description: 'Minimum height of each rectangle (default: 60). Boxes grow taller if their labels need more room.',
         },
       },
       required: ['labels'],
@@ -1068,40 +1360,52 @@ export const aiTools = [
       const height = params.height || 60;
       const spacing = params.spacing || 20;
 
+      // Each box is stacked below the real (grown) height of the one above it.
+      const fontsReady = await ensureFontsReady(params.labels.map((text) => ({ text })));
+      const fits = params.labels.map((label) => fitLabel('rectangle', { width, height }, label));
+      const columnWidth = Math.max(width, ...fits.map((f) => f.width));
+      const heights = fits.map((f) => f.height);
+
       // Calculate starting position
       let startX = params.x;
       let startY = params.y;
 
       if (startX === undefined || startY === undefined) {
-        const totalHeight = params.labels.length * height + (params.labels.length - 1) * spacing;
-        const pos = engine.calculateDefaultPosition(width, totalHeight);
+        const totalHeight = heights.reduce((sum, h) => sum + h, 0) + (params.labels.length - 1) * spacing;
+        const pos = engine.calculateDefaultPosition(columnWidth, totalHeight);
         startX = startX ?? pos.x;
         startY = startY ?? pos.y;
       }
 
-      // Create skeleton array for all rectangles
-      const skeletons: any[] = params.labels.map((label, index) => ({
-        type: 'rectangle',
-        x: startX!,
-        y: startY! + index * (height + spacing),
-        width,
-        height,
-        backgroundColor: normalizeColor(params.color) || 'transparent',
-        strokeColor: '#1e1e1e',
-        roundness: { type: 3 },
-        label: {
-          text: label,
-        },
-      }));
-
-      const newElements = convertToExcalidrawElements(skeletons);
-      const ids = newElements.filter(el => el.type === 'rectangle').map(el => el.id);
-
-      api.updateScene({
-        elements: [...currentElements, ...newElements],
+      let cursorY = startY!;
+      const specs: BoxSpec[] = params.labels.map((label, index) => {
+        const spec: BoxSpec = {
+          label,
+          x: startX!,
+          y: cursorY,
+          fit: { ...fits[index], width: columnWidth },
+          backgroundColor: normalizeColor(params.color) || 'transparent',
+          strokeColor: '#1e1e1e',
+          rounded: true,
+        };
+        cursorY += heights[index] + spacing;
+        return spec;
       });
 
-      return { success: true, data: { ids, count: params.labels.length } };
+      const { elements: newElements, boxes } = createLabeledBoxes(specs);
+      const nextElements = [...currentElements, ...newElements];
+      api.updateScene({ elements: nextElements });
+
+      const ids = boxes.map((b) => b.id);
+      return {
+        success: true,
+        data: {
+          ids,
+          count: params.labels.length,
+          elements: boxes.map((b) => ({ id: b.id, label: b.label, y: b.y, height: b.height })),
+          ...layoutReport(nextElements, ids, fontsReady),
+        },
+      };
     },
   },
 
@@ -1732,74 +2036,15 @@ export const aiTools = [
         return noEditorError(context);
       }
 
-      const currentElements = api.getSceneElements();
-      const newArrows: any[] = [];
-      const elementUpdates = new Map<string, any>();
-      const createdIds: string[] = [];
-      const errors: string[] = [];
-
-      // Process each arrow
-      for (const arrowDef of params.arrows) {
-        const fromEl = getElementByLabel(currentElements, arrowDef.from);
-        const toEl = getElementByLabel(currentElements, arrowDef.to);
-
-        if (!fromEl || !toEl) {
-          errors.push(`Could not find elements: ${!fromEl ? arrowDef.from : ''} ${!toEl ? arrowDef.to : ''}`);
-          continue;
-        }
-
-        // Get container elements if bound to text
-        let fromContainerId = fromEl.id;
-        let toContainerId = toEl.id;
-
-        if ('containerId' in fromEl && fromEl.containerId) {
-          fromContainerId = fromEl.containerId as string;
-        }
-        if ('containerId' in toEl && toEl.containerId) {
-          toContainerId = toEl.containerId as string;
-        }
-
-        const fromContainer = currentElements.find(el => el.id === fromContainerId) || fromEl;
-        const toContainer = currentElements.find(el => el.id === toContainerId) || toEl;
-
-        const { arrow, labelElements } = createBoundArrow(fromContainer, toContainer, arrowDef.label);
-
-        newArrows.push(arrow, ...labelElements);
-        createdIds.push(arrow.id);
-
-        // Track bound element updates
-        for (const containerId of [fromContainerId, toContainerId]) {
-          if (!elementUpdates.has(containerId)) {
-            const el = currentElements.find(e => e.id === containerId);
-            if (el) {
-              elementUpdates.set(containerId, {
-                ...el,
-                boundElements: [...((el as any).boundElements || [])],
-              });
-            }
-          }
-          const updated = elementUpdates.get(containerId);
-          if (updated) {
-            updated.boundElements.push({ id: arrow.id, type: 'arrow' });
-          }
-        }
-      }
-
-      // Apply all updates in a single scene update
-      const updatedElements = currentElements.map(el =>
-        elementUpdates.has(el.id) ? elementUpdates.get(el.id) : el
-      );
-
-      api.updateScene({
-        elements: [...updatedElements, ...newArrows],
-      });
+      const { ids, errors, fontsReady } = await addArrowsToScene(api, params.arrows);
 
       return {
         success: true,
         data: {
-          created: createdIds.length,
-          ids: createdIds,
+          created: ids.length,
+          ids,
           errors: errors.length > 0 ? errors : undefined,
+          ...(fontsReady ? {} : { warning: FONT_NOT_READY_WARNING }),
         },
       };
     },
@@ -1809,7 +2054,7 @@ export const aiTools = [
     name: 'add_elements',
     scope: 'global' as const,
     access: { kind: 'editor-write' } as const,
-    description: 'Add multiple rectangles in a single batch operation. Much more efficient than calling add_rectangle repeatedly when creating diagrams with many elements. The target file must already exist but does not need to be open; Nimbalyst mounts it in a hidden editor from filePath. Do not call extension_test_open_file first.',
+    description: 'Add multiple rectangles in a single batch operation. Much more efficient than calling add_rectangle repeatedly when creating diagrams with many elements. Labels wrap inside each box with padding and boxes grow taller to fit them; the result lists the final size of every box and any overlaps that growth caused (call fit_to_text once to push them apart). The target file must already exist but does not need to be open; Nimbalyst mounts it in a hidden editor from filePath. Do not call extension_test_open_file first.',
     parameters: {
       type: 'object' as const,
       properties: {
@@ -1836,7 +2081,7 @@ export const aiTools = [
               },
               height: {
                 type: 'number' as const,
-                description: 'Height of the rectangle (default: 80)',
+                description: 'Minimum height of the rectangle (default: 80). It grows taller if its label needs more room.',
               },
               color: {
                 type: 'string' as const,
@@ -1882,51 +2127,74 @@ export const aiTools = [
       const engine = new LayoutEngine();
       engine.addElements(currentElements);
 
-      const skeletons: any[] = [];
+      const fontsReady = await ensureFontsReady(params.elements.map((d) => ({ text: d.label })));
 
-      // Create all rectangles
-      for (const elemDef of params.elements) {
-        const width = elemDef.width || 150;
-        const height = elemDef.height || 80;
-        const rounded = elemDef.rounded !== undefined ? elemDef.rounded : true;
-
+      const specs: BoxSpec[] = [];
+      params.elements.forEach((elemDef, index) => {
+        const fit = fitLabel('rectangle', { width: elemDef.width || 150, height: elemDef.height || 80 }, elemDef.label);
         let position: { x: number; y: number };
-
         if (elemDef.x !== undefined && elemDef.y !== undefined) {
           position = { x: elemDef.x, y: elemDef.y };
         } else {
-          position = engine.calculateDefaultPosition(width, height);
+          position = engine.calculateDefaultPosition(fit.width, fit.height);
         }
-
-        const rectSkeleton: any = {
-          type: 'rectangle',
+        // Later boxes in this batch must see this one, or they land on top of it.
+        engine.addNode(`batch-${index}`, position.x, position.y, fit.width, fit.height);
+        specs.push({
+          label: elemDef.label,
           x: position.x,
           y: position.y,
-          width,
-          height,
+          fit,
           backgroundColor: normalizeColor(elemDef.color) || 'transparent',
           strokeColor: normalizeColor(elemDef.strokeColor) || '#1e1e1e',
-          roundness: rounded ? { type: 3 } : null,
-          label: {
-            text: elemDef.label,
-          },
-        };
-
-        skeletons.push(rectSkeleton);
-      }
-
-      const newElements = convertToExcalidrawElements(skeletons);
-      const rectangleIds = newElements.filter(el => el.type === 'rectangle').map(el => el.id);
-
-      api.updateScene({
-        elements: [...currentElements, ...newElements],
+          rounded: elemDef.rounded !== undefined ? elemDef.rounded : true,
+        });
       });
+
+      const { elements: newElements, boxes } = createLabeledBoxes(specs);
+      const nextElements = [...currentElements, ...newElements];
+      api.updateScene({ elements: nextElements });
 
       return {
         success: true,
         data: {
-          created: rectangleIds.length,
-          ids: rectangleIds,
+          created: boxes.length,
+          ids: boxes.map((b) => b.id),
+          elements: boxes.map((b) => ({ id: b.id, label: b.label, x: b.x, y: b.y, width: b.width, height: b.height })),
+          ...layoutReport(nextElements, boxes.map((b) => b.id), fontsReady),
+        },
+      };
+    },
+  },
+
+  {
+    name: 'fit_to_text',
+    scope: 'global' as const,
+    access: { kind: 'editor-write' } as const,
+    description: 'Make every label on the board fit its box, in one call. Waits for the drawing font, re-wraps each label inside real padding, grows each box taller (never shorter, width kept) until its text fits, pushes overlapping boxes down (x positions, columns and existing gaps are kept), grows frames around their content, re-aims arrows, and moves arrow labels off each other. Call it once after building a diagram, or on any existing board that looks cramped. The target file must already exist but does not need to be open; Nimbalyst mounts it in a hidden editor from filePath. Do not call extension_test_open_file first.',
+    parameters: {
+      type: 'object' as const,
+      properties: {},
+    },
+    handler: async (
+      _params: Record<string, never>,
+      context: { activeFilePath?: string; editorAPI?: unknown }
+    ) => {
+      const api = getEditorAPI(context);
+      if (!api) {
+        return noEditorError(context);
+      }
+
+      const result = await fitBoard(api.getSceneElements());
+      api.updateScene({ elements: result.elements });
+
+      return {
+        success: true,
+        data: {
+          resized: result.resized,
+          moved: result.moved,
+          rerouted: result.rerouted,
+          ...(result.fontsReady ? {} : { warning: FONT_NOT_READY_WARNING }),
         },
       };
     },
