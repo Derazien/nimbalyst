@@ -467,7 +467,7 @@ async function addArrowsToScene(
       if (!elementUpdates.has(containerId)) {
         const el = byId.get(containerId);
         if (el) {
-          elementUpdates.set(containerId, { ...el, boundElements: [...(el.boundElements || [])] });
+          elementUpdates.set(containerId, withUpdates(el, { boundElements: [...(el.boundElements || [])] }));
         }
       }
       elementUpdates.get(containerId)?.boundElements.push({ id: arrow.id, type: 'arrow' });
@@ -1542,15 +1542,14 @@ export const aiTools = [
         }
       }
 
-      // Apply updates
+      // Apply updates. Versions are bumped so a hidden editor saves the edit.
       const updatedElements = currentElements.map((el) => {
         const update = updates.get(el.id);
         if (update) {
-          return {
-            ...el,
+          return withUpdates(el as any, {
             ...(update.x !== undefined ? { x: update.x } : {}),
             ...(update.y !== undefined ? { y: update.y } : {}),
-          };
+          });
         }
         return el;
       });
@@ -1702,15 +1701,14 @@ export const aiTools = [
         }
       }
 
-      // Apply updates
+      // Apply updates. Versions are bumped so a hidden editor saves the edit.
       const updatedElements = currentElements.map((el) => {
         const update = updates.get(el.id);
         if (update) {
-          return {
-            ...el,
+          return withUpdates(el as any, {
             ...(update.x !== undefined ? { x: update.x } : {}),
             ...(update.y !== undefined ? { y: update.y } : {}),
-          };
+          });
         }
         return el;
       });
@@ -1814,14 +1812,10 @@ export const aiTools = [
         }
       }
 
-      // Apply updates
+      // Apply updates. Versions are bumped so a hidden editor saves the edit.
       const updatedElements = currentElements.map((el) => {
         if (idsToMove.has(el.id)) {
-          return {
-            ...el,
-            x: el.x + dx,
-            y: el.y + dy,
-          };
+          return withUpdates(el as any, { x: el.x + dx, y: el.y + dy });
         }
         return el;
       });
@@ -1894,10 +1888,7 @@ export const aiTools = [
       const updatedElements = currentElements.map((el) => {
         if (idsToGroup.has(el.id)) {
           const existingGroups = (el as any).groupIds || [];
-          return {
-            ...el,
-            groupIds: [...existingGroups, groupId],
-          };
+          return withUpdates(el as any, { groupIds: [...existingGroups, groupId] });
         }
         return el;
       });
@@ -1978,10 +1969,7 @@ export const aiTools = [
       // Set frameId on all elements
       const updatedElements = currentElements.map((el) => {
         if (idsToAddToFrame.has(el.id)) {
-          return {
-            ...el,
-            frameId: frame.id,
-          };
+          return withUpdates(el as any, { frameId: frame.id });
         }
         return el;
       });

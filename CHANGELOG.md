@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Repository-provided MCP servers no longer start for Grok Build or Cursor Agent in a workspace you have not trusted.
 - The macOS menu bar strip and the panel below it now agree on their status colors: running sessions are green, unread ones blue.
 - Excalidraw diagrams drawn by the AI no longer clip or cram their labels: text wraps inside each box with padding, boxes grow to fit, and a cramped board can be repaired in one step.
+- Moves, alignments, grouping and other AI edits to an Excalidraw diagram that is not open are saved instead of silently lost.
 
 ### Removed
 <!-- Removed features go here -->
