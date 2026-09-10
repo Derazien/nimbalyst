@@ -1242,11 +1242,14 @@ export class PrivilegedExtensionHost extends EventEmitter {
             : msg.level === 'debug'
             ? logger.main.debug
             : logger.main.info;
-        fn.call(
-          logger.main,
-          `[ext:${ctx.extensionId}/${ctx.moduleId}] ${msg.message}`,
-          msg.data
-        );
+        const line = `[ext:${ctx.extensionId}/${ctx.moduleId}] ${msg.message}`;
+        // A one-argument log from the module arrives with `data: undefined`;
+        // forwarding it prints a literal " undefined" after the line.
+        if (msg.data === undefined) {
+          fn.call(logger.main, line);
+        } else {
+          fn.call(logger.main, line, msg.data);
+        }
         break;
       }
       case 'broker-request': {
