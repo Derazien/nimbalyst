@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 <!-- New features go here -->
 - Run sessions in your own Cloudflare sandbox with machine navigation, the shared composer, attachments and Actions, and profile/account selections remembered per project.
+- A setting to keep Nimbalyst running in the tray when you close the last window on Windows and Linux, so running sessions keep going; click the tray icon to bring the app back.
 
 ### Changed
 <!-- Changes to existing functionality go here -->

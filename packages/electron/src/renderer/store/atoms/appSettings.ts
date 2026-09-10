@@ -448,6 +448,9 @@ export interface AdvancedSettings {
   spellcheckEnabled: boolean;
   // Reveal direct chat providers in settings and initial model selection.
   showDirectChatProviders: boolean;
+  // Closing the last window leaves the app in the tray instead of quitting.
+  // Windows and Linux only; macOS already stays running either way.
+  keepRunningInTray: boolean;
   // Document history settings
   historyMaxAgeDays: number; // Max age in days before snapshots are cleaned up (default: 30)
   historyMaxSnapshots: number; // Max snapshots per file (default: 250)
@@ -474,6 +477,7 @@ const defaultAdvancedSettings: AdvancedSettings = {
   enableAllBetaFeatures: false,
   spellcheckEnabled: true,
   showDirectChatProviders: false,
+  keepRunningInTray: false,
   customPathDirs: '',
   historyMaxAgeDays: 30,
   historyMaxSnapshots: 250,
@@ -567,6 +571,9 @@ function scheduleAdvancedPersist(
           break;
         case 'showDirectChatProviders':
           await window.electronAPI.invoke('app-settings:set', 'showDirectChatProviders', settingsToPersist.showDirectChatProviders);
+          break;
+        case 'keepRunningInTray':
+          await window.electronAPI.invoke('app-settings:set', 'keepRunningInTray', settingsToPersist.keepRunningInTray);
           break;
         // walkthroughsViewedCount and walkthroughsTotalCount are read-only from main process
       }
@@ -735,7 +742,7 @@ export async function initAdvancedSettings(): Promise<AdvancedSettings> {
   }
 
   try {
-    const [channel, analyticsEnabled, extensionDevToolsEnabled, walkthroughState, maxHeapSizeMB, alphaFeatures, betaFeatures, enableAllBetaFeatures, customPathDirs, spellcheckEnabled, showDirectChatProviders, historyMaxAgeDays, historyMaxSnapshots, preferredTerminalShell] =
+    const [channel, analyticsEnabled, extensionDevToolsEnabled, walkthroughState, maxHeapSizeMB, alphaFeatures, betaFeatures, enableAllBetaFeatures, customPathDirs, spellcheckEnabled, showDirectChatProviders, keepRunningInTray, historyMaxAgeDays, historyMaxSnapshots, preferredTerminalShell] =
       await Promise.all([
         window.electronAPI.invoke('release-channel:get'),
         window.electronAPI.invoke('analytics:is-enabled'),
@@ -748,6 +755,7 @@ export async function initAdvancedSettings(): Promise<AdvancedSettings> {
         window.electronAPI.invoke('app-settings:get', 'customPathDirs'),
         window.electronAPI.invoke('app-settings:get', 'spellcheckEnabled'),
         window.electronAPI.invoke('app-settings:get', 'showDirectChatProviders'),
+        window.electronAPI.invoke('app-settings:get', 'keepRunningInTray'),
         window.electronAPI.invoke('app-settings:get', 'historyMaxAgeDays'),
         window.electronAPI.invoke('app-settings:get', 'historyMaxSnapshots'),
         window.electronAPI.invoke('app-settings:get', 'preferredTerminalShell'),
@@ -771,6 +779,7 @@ export async function initAdvancedSettings(): Promise<AdvancedSettings> {
       enableAllBetaFeatures: enableAllBetaFeatures ?? false,
       spellcheckEnabled: spellcheckEnabled ?? true,
       showDirectChatProviders: showDirectChatProviders ?? false,
+      keepRunningInTray: keepRunningInTray ?? false,
       customPathDirs: customPathDirs ?? '',
       historyMaxAgeDays: historyMaxAgeDays ?? 30,
       historyMaxSnapshots: historyMaxSnapshots ?? 250,
