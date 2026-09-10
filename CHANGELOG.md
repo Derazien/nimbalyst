@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Deleting or archiving a Claude Code CLI session now stops its CLI process instead of leaving it running invisibly in the background.
 
 ### Removed
 <!-- Removed features go here -->
