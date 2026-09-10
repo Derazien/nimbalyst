@@ -292,15 +292,26 @@ export function reflowBoard(input: ReflowInput): ReflowResult {
     childrenOf.set(unit.parent, list);
   }
 
-  /** Labels of the arrows that join these two siblings (of `parentId`). */
+  // Labels of the arrows joining each pair of siblings, per parent, computed
+  // once so the passes below look pairs up instead of rescanning every arrow.
+  const pairKey = (p: string, q: string) => (p < q ? `${p}|${q}` : `${q}|${p}`);
+  const labelsByParent = new Map<string | null, Map<string, Array<{ width: number; height: number } | null>>>();
   const labelsBetween = (parentId: string | null, p: Unit, q: Unit) => {
-    const found: Array<{ width: number; height: number } | null> = [];
-    for (const c of connections) {
-      const ua = ancestorUnder(units, c.a, parentId);
-      const ub = ancestorUnder(units, c.b, parentId);
-      if ((ua === p.id && ub === q.id) || (ua === q.id && ub === p.id)) found.push(c.label);
+    let byPair = labelsByParent.get(parentId);
+    if (!byPair) {
+      byPair = new Map();
+      for (const c of connections) {
+        const ua = ancestorUnder(units, c.a, parentId);
+        const ub = ancestorUnder(units, c.b, parentId);
+        if (!ua || !ub || ua === ub) continue;
+        const key = pairKey(ua, ub);
+        const list = byPair.get(key) ?? [];
+        list.push(c.label);
+        byPair.set(key, list);
+      }
+      labelsByParent.set(parentId, byPair);
     }
-    return found;
+    return byPair.get(pairKey(p.id, q.id)) ?? [];
   };
 
   const verticalGap = (parentId: string | null, upper: Unit, lower: Unit): number => {
