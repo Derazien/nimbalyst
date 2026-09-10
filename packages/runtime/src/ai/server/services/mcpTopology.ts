@@ -152,11 +152,14 @@ export const HOST_TOOLS: readonly string[] = [
   'list_recent_sessions',
   'schedule_wakeup',
   'update_session_board',
-  // Child-session orchestration (was nimbalyst-meta-agent)
+  // Child-session orchestration (was nimbalyst-meta-agent). A tool missing from
+  // this list is dropped from every endpoint's ListTools, so a new meta-agent
+  // tool is invisible until it is named here (metaAgentServer.topology.test.ts).
   'create_session',
   'spawn_session',
   'send_prompt',
   'list_queued_prompts',
+  'consume_session_inbox',
   'notify_user',
   'respond_to_prompt',
   'get_session_status',

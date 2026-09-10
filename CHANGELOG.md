@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Sessions coordinating siblings can now read their report inbox mid-turn; the inbox tool was never listed, so no agent could call it.
 
 ### Removed
 <!-- Removed features go here -->
