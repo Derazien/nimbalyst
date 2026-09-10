@@ -220,24 +220,19 @@ export function clearCollabAssetRegistry(): void {
 }
 
 /**
- * Register the `collab-asset` scheme as standard/secure with Chromium. Must
- * be called BEFORE `app.whenReady` resolves -- per Electron docs, schemes
- * must be registered as privileged before the app is ready.
+ * The `collab-asset` scheme's privileges (standard/secure). Registered with
+ * every other custom scheme in one call, see `privilegedSchemes.ts`.
  */
-export function registerCollabAssetSchemeAsPrivileged(): void {
-  protocol.registerSchemesAsPrivileged([
-    {
-      scheme: COLLAB_ASSET_SCHEME,
-      privileges: {
-        standard: true,
-        secure: true,
-        supportFetchAPI: true,
-        bypassCSP: false,
-        corsEnabled: true,
-      },
-    },
-  ]);
-}
+export const COLLAB_ASSET_PRIVILEGED_SCHEME: Electron.CustomScheme = {
+  scheme: COLLAB_ASSET_SCHEME,
+  privileges: {
+    standard: true,
+    secure: true,
+    supportFetchAPI: true,
+    bypassCSP: false,
+    corsEnabled: true,
+  },
+};
 
 // ----------------------------------------------------------------------------
 // Handler

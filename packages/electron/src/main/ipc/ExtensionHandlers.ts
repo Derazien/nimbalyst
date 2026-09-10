@@ -32,6 +32,7 @@ import {
   getReleaseChannel,
 } from '../utils/store';
 import { registerFileExtension, clearRegisteredExtensions } from '../extensions/RegisteredFileTypes';
+import { clearExtensionAssetRoots, setExtensionAssetRoot } from '../protocols/nimExtensionAssetProtocol';
 import { getBuiltinExtensionsDirectory } from '../extensions/builtinExtensionsDirectory';
 import {
   detectStaleBuiltinExtensionBundle,
@@ -148,6 +149,7 @@ export async function initializeExtensionFileTypes(): Promise<void> {
   try {
     logger.main.info('[ExtensionHandlers] Initializing extension file types...');
     clearRegisteredExtensions();
+    clearExtensionAssetRoots();
 
     const extensionDirs = await getAllExtensionDirectories();
     const currentChannel = getReleaseChannel();
@@ -189,6 +191,9 @@ export async function initializeExtensionFileTypes(): Promise<void> {
             logger.main.debug(`[ExtensionHandlers] Skipping extension ${manifest.id} (requires ${manifest.requiredReleaseChannel} channel)`);
             continue;
           }
+
+          // Serve the fonts and images this extension ships over nim-extension://.
+          setExtensionAssetRoot(manifest.id || subdir.name, extensionPath);
 
           // Register file patterns from customEditors
           if (manifest.contributions?.customEditors) {

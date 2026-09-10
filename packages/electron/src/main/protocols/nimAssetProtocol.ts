@@ -219,27 +219,22 @@ export function parseRangeHeader(
 }
 
 /**
- * Register the `nim-asset` scheme as standard/secure with Chromium. Must be
- * called BEFORE `app.whenReady` resolves -- per Electron docs, schemes must
- * be registered as privileged before the app is ready.
+ * The `nim-asset` scheme's privileges (standard/secure). Registered with every
+ * other custom scheme in one call, see `privilegedSchemes.ts`.
  */
-export function registerNimAssetSchemeAsPrivileged(): void {
-  protocol.registerSchemesAsPrivileged([
-    {
-      scheme: NIM_ASSET_SCHEME,
-      privileges: {
-        standard: true,
-        secure: true,
-        supportFetchAPI: true,
-        bypassCSP: false,
-        // Avoid the default same-origin restriction: the scheme is treated
-        // as standard/secure, which is enough for `<img src=>` to load it
-        // from any origin in the renderer.
-        corsEnabled: true,
-      },
-    },
-  ]);
-}
+export const NIM_ASSET_PRIVILEGED_SCHEME: Electron.CustomScheme = {
+  scheme: NIM_ASSET_SCHEME,
+  privileges: {
+    standard: true,
+    secure: true,
+    supportFetchAPI: true,
+    bypassCSP: false,
+    // Avoid the default same-origin restriction: the scheme is treated
+    // as standard/secure, which is enough for `<img src=>` to load it
+    // from any origin in the renderer.
+    corsEnabled: true,
+  },
+};
 
 /**
  * Stream a media file, honoring `Range`. `net.fetch` on a `file://` URL does

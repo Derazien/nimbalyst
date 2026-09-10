@@ -36,11 +36,27 @@ export type {
   LayoutOptions,
 } from './types';
 
+declare global {
+  interface Window {
+    /** Base URL Excalidraw loads its font files from; esm.sh when unset. */
+    EXCALIDRAW_ASSET_PATH?: string | string[];
+  }
+}
+
 /**
  * Extension activation
  * Called when the extension is loaded
  */
 export async function activate(context: ExtensionContext) {
+  // Load Excalidraw's fonts from the copies this extension ships in
+  // dist/fonts instead of the esm.sh CDN, so boards render and the AI tools
+  // measure in the real faces offline too. Excalidraw reads the path once, when
+  // its font registry first builds, which happens after activation. A path the
+  // host already set wins.
+  if (context.assetBaseUrl && !window.EXCALIDRAW_ASSET_PATH) {
+    window.EXCALIDRAW_ASSET_PATH = new URL('dist/', context.assetBaseUrl).toString();
+  }
+
   context.services.collab.registerContentAdapter(ExcalidrawCollabContentAdapter);
   console.log('[Excalidraw] Extension activated');
 

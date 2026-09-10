@@ -172,22 +172,19 @@ import {
 // unified httpServer instead. Nothing to start/shutdown from here.
 import { generateMcpAuthToken, getMcpAuthToken } from './mcp/mcpAuth';
 import {
-  registerNimAssetSchemeAsPrivileged,
   registerNimAssetProtocolHandler,
   addNimAssetRoot,
   removeNimAssetRoot,
 } from './protocols/nimAssetProtocol';
 import {
-  registerNimPreviewSchemeAsPrivileged,
   registerNimPreviewProtocolHandler,
   addNimPreviewWorkspaceRoot,
 } from './protocols/nimPreviewProtocol';
+import { registerNimExtensionAssetProtocolHandler } from './protocols/nimExtensionAssetProtocol';
+import { registerPrivilegedSchemes } from './protocols/privilegedSchemes';
 import { registerBrowserSessionHandlers } from './ipc/BrowserSessionHandlers';
 import { BrowserSessionService } from './services/BrowserSessionService';
-import {
-  registerCollabAssetSchemeAsPrivileged,
-  installCollabAssetProtocolHandler,
-} from './protocols/collabAssetProtocol';
+import { installCollabAssetProtocolHandler } from './protocols/collabAssetProtocol';
 import { SessionNamingService } from './services/SessionNamingService';
 import { SessionWakeupScheduler } from './services/SessionWakeupScheduler';
 import { getSessionWakeupsStore, repositoryManager } from './services/RepositoryManager';
@@ -373,13 +370,12 @@ if (process.platform === 'win32') {
   app.setAppUserModelId('com.nimbalyst.electron');
 }
 
-// Issue #146: register the `nim-asset://` scheme as standard/secure BEFORE
-// `app.whenReady` resolves. Per Electron docs, schemes must be marked as
-// privileged before the app is ready or the renderer treats them as opaque
-// origins. The actual request handler is wired up after whenReady.
-registerNimAssetSchemeAsPrivileged();
-registerNimPreviewSchemeAsPrivileged();
-registerCollabAssetSchemeAsPrivileged();
+// Issue #146: register the custom schemes (`nim-asset://` and the rest) as
+// standard/secure BEFORE `app.whenReady` resolves. Per Electron docs, schemes
+// must be marked as privileged before the app is ready or the renderer treats
+// them as opaque origins. All of them go in one call; see privilegedSchemes.ts.
+// The actual request handlers are wired up after whenReady.
+registerPrivilegedSchemes();
 
 // NIM-1487: no window may be spawned by an unhandled window.open — relative
 // file links that slip past the renderer's link routing used to open blank
@@ -1790,6 +1786,10 @@ app.whenReady().then(async () => {
     // BrowserSessionService's WebContentsView. Workspaces are added to the
     // allowlist alongside nim-asset below.
     registerNimPreviewProtocolHandler();
+
+    // `nim-extension://` serves the fonts and images an extension ships. Its
+    // registry is filled by the extension scan (initializeExtensionFileTypes).
+    registerNimExtensionAssetProtocolHandler();
 
     // Browser session IPC handlers + state-changed event broadcast. The
     // service itself owns the WebContentsView pool.
