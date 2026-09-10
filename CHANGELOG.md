@@ -276,6 +276,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A local wiki created outside the app now shows up in Pages mode without reloading the project.
 - The local wiki browser view now says when its server has stopped.
 - Moving a local wiki to a team now also brings editor pages and the images they link to.
+- A local wiki created outside the desktop app, for example with `nim wiki init` or the nimbalyst-wiki plugin, now shows up in Pages mode without reloading the project.
+- nimbalyst-wiki plugin: the local wiki browser view now says when its server has stopped, for example after the agent session that opened it ends, instead of looking live while edits go unsaved. Agents no longer ask local-wiki users to sign in to the team wiki when they have not asked for it.
+- Moving a local wiki to a team (`/nimbalyst-wiki:team` or `nim wiki move-to-team`) now also moves drawings, mind maps, spreadsheets and the other editor pages, plus the images and attachments pages link to, when `@nimbalyst/wiki-web` is installed. Before, they stayed in the local wiki and links to them broke.
+- Excalidraw diagrams drawn by the AI no longer clip or cram their labels: text wraps inside each box with padding, boxes grow to fit, and a cramped board can be repaired in one step.
 
 ### Removed
 <!-- Removed features go here -->
