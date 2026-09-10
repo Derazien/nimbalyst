@@ -65,6 +65,23 @@ function sameNumber(a: number, b: number): boolean {
   return Math.abs(a - b) < 0.01;
 }
 
+/**
+ * A three-point arrow whose middle point sits on the line between its ends is
+ * one this tool drew (a parallel offset or a slid label), not a bend a person
+ * made, so it is planned again like any straight arrow.
+ */
+function isStraight(points: number[][]): boolean {
+  if (points.length !== 3) return false;
+  const [a, m, b] = points;
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const length = Math.hypot(dx, dy);
+  if (length === 0) return false;
+  const offLine = Math.abs(dx * (m[1] - a[1]) - dy * (m[0] - a[0])) / length;
+  const along = ((m[0] - a[0]) * dx + (m[1] - a[1]) * dy) / (length * length);
+  return offLine < 1 && along > 0 && along < 1;
+}
+
 export interface FitBoardResult {
   elements: ExcalidrawElement[];
   /** Boxes that grew to hold their text. */
@@ -202,7 +219,8 @@ export async function fitBoard(sceneElements: readonly ExcalidrawElement[]): Pro
     const endId = arrow.endBinding?.elementId as string | undefined;
     const start = shapeOf(startId);
     const end = shapeOf(endId);
-    if (!start || !end || !startId || !endId) continue;
+    // A loop back to the same box has no straight route; leave it as drawn.
+    if (!start || !end || !startId || !endId || startId === endId) continue;
 
     const label = arrowLabels.get(arrow.id);
     let labelSize: { width: number; height: number } | undefined;
@@ -213,7 +231,7 @@ export async function fitBoard(sceneElements: readonly ExcalidrawElement[]): Pro
     }
 
     const points = (arrow.points ?? []) as number[][];
-    if (points.length > 2) {
+    if (points.length > 2 && !isStraight(points)) {
       // A bend someone made: keep it (moved with its shapes) and only re-aim the ends.
       const a = offsets.get(startId) ?? { dx: 0, dy: 0 };
       const b = offsets.get(endId) ?? { dx: 0, dy: 0 };
@@ -264,6 +282,13 @@ export async function fitBoard(sceneElements: readonly ExcalidrawElement[]): Pro
     if (!label) continue;
     const measured = measureWrappedText(originalTextOf(label), arrowLabelLineWidth(route.width, label.fontSize), styleOf(label));
     const rect = labelRectAt(arrowLabelAnchor(route), measured);
+    const labelUnchanged =
+      measured.text === label.text &&
+      sameNumber(measured.width, label.width) &&
+      sameNumber(measured.height, label.height) &&
+      sameNumber(rect.x, label.x) &&
+      sameNumber(rect.y, label.y);
+    if (labelUnchanged) continue;
     updated.set(
       label.id,
       withUpdates(label, {
