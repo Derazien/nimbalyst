@@ -301,5 +301,9 @@ describe('fit_to_text', () => {
     // Changed elements carry a new version, or a hidden editor would not save them.
     const grown = shapes.find((s) => boundTextOf(s).originalText === LONG);
     expect(grown.version).toBeGreaterThan(before.get(grown.id)!);
+
+    // One call is enough: a second pass over a fitted board changes nothing.
+    const again = await tool('fit_to_text')({});
+    expect(again.data).toMatchObject({ resized: 0, moved: 0, rerouted: 0 });
   });
 });
