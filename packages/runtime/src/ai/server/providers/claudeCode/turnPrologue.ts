@@ -22,7 +22,7 @@
 import os from 'os';
 import path from 'path';
 
-import type { DocumentContext } from '../../types';
+import type { AgentRole, DocumentContext } from '../../types';
 import type { MetaAgentWorkflowPreset } from '../../../prompt';
 import { describeUnusableWorkspacePath } from '../workspacePreconditions';
 import { findAttachmentDenyRule } from '../../attachments/attachmentDenyMatcher';
@@ -181,8 +181,8 @@ export async function prepareTurnAttachments(params: {
  * function` on a path that only some turns take.
  */
 export interface TurnQueryHost {
-  /** 'meta-agent' selects the restricted tool set and prompt. */
-  getAgentRole(sessionId?: string): Promise<'standard' | 'meta-agent'>;
+  /** 'meta-agent' selects the restricted tool set and prompt; every other role runs as standard. */
+  getAgentRole(sessionId?: string): Promise<AgentRole>;
   getWorkflowPreset(sessionId?: string): Promise<MetaAgentWorkflowPreset>;
   /** Resolves and freezes the git snapshot; must be awaited before buildSystemPrompt (#1177). */
   ensureGitContext(workspacePath?: string): Promise<void>;
