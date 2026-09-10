@@ -189,7 +189,23 @@ export function extractMcpRemoteConfig(
   };
 }
 
-export function buildMcpRemoteArgs(descriptor: MCPRemoteConfigDescriptor, packageName = 'mcp-remote'): string[] {
+/**
+ * The mcp-remote release the wrapper runs. Pinned on purpose.
+ *
+ * mcp-remote keyed its token store by its own version
+ * (~/.mcp-auth/mcp-remote-<version>/), so an unpinned `npx mcp-remote` upgraded
+ * itself whenever a release shipped, found an empty store and forced a fresh
+ * OAuth login. Measured on one machine: 15 store folders in five weeks, with a
+ * single server re-authorized into ten of them. 0.8.x stores under a
+ * version-independent `mcp-remote-v1`, so the pin also holds every session on
+ * that stable store. Bump it deliberately.
+ */
+export const MCP_REMOTE_PACKAGE_SPEC = 'mcp-remote@0.8.1';
+
+export function buildMcpRemoteArgs(
+  descriptor: MCPRemoteConfigDescriptor,
+  packageName = MCP_REMOTE_PACKAGE_SPEC,
+): string[] {
   const args = [packageName, descriptor.serverUrl];
 
   if (descriptor.callbackPort) {

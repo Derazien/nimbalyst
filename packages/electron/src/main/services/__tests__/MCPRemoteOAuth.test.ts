@@ -5,6 +5,7 @@ import * as os from 'os';
 import * as path from 'path';
 import {
   buildMcpRemoteArgs,
+  MCP_REMOTE_PACKAGE_SPEC,
   checkMcpRemoteAuthStatus,
   classifyMcpRemoteOAuthFailure,
   discoverMcpRemoteOAuthRequirement,
@@ -204,7 +205,7 @@ describe('MCPRemoteOAuth', () => {
 
     expect(descriptor).toBeTruthy();
     expect(buildMcpRemoteArgs(descriptor!)).toEqual([
-      'mcp-remote',
+      MCP_REMOTE_PACKAGE_SPEC,
       'https://mcp.slack.com/mcp',
       '3118',
       '--static-oauth-client-info',
@@ -346,5 +347,33 @@ describe('MCPRemoteOAuth', () => {
 
     expect(status.authorized).toBe(true);
     await fs.rm(tempDir, { recursive: true, force: true });
+  });
+});
+
+describe('mcp-remote version pin', () => {
+  // mcp-remote keyed its token store by its own version
+  // (~/.mcp-auth/mcp-remote-<version>/), so an unpinned `npx mcp-remote`
+  // silently upgraded itself, landed in an empty store and forced a fresh OAuth
+  // login. Measured on one machine: 15 store folders in five weeks, one server
+  // re-authorized into ten of them.
+  it('pins the version so a new release cannot move the token store', () => {
+    const descriptor = extractMcpRemoteConfig({
+      type: 'http',
+      url: 'https://mcp.example/mcp',
+      oauth: {},
+    });
+
+    expect(descriptor).toBeTruthy();
+    expect(buildMcpRemoteArgs(descriptor!)[0]).toMatch(/^mcp-remote@\d+\.\d+\.\d+$/);
+  });
+
+  it('still lets a caller name the package explicitly', () => {
+    const descriptor = extractMcpRemoteConfig({
+      type: 'http',
+      url: 'https://mcp.example/mcp',
+      oauth: {},
+    });
+
+    expect(buildMcpRemoteArgs(descriptor!, 'mcp-remote')[0]).toBe('mcp-remote');
   });
 });
