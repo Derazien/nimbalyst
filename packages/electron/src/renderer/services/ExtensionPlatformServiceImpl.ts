@@ -70,6 +70,7 @@ import { MonacoEditor, MonacoCodeEditor } from '@nimbalyst/runtime/editors';
 import { NimbalystMarkdownEditor } from '../components/editors/NimbalystMarkdownEditor';
 
 import { buildExtensionFileWriteInvocation } from './extensionFileWriteInvocation';
+import { extensionAssetBaseUrl } from '../../shared/extensionAssetUrl';
 
 // Declare importShim global from es-module-shims
 declare global {
@@ -539,6 +540,14 @@ CHECK:
       : relativePath.replace(/\\/g, '/');
 
     return `${extensionPath}${separator}${normalizedRelative}`;
+  }
+
+  /**
+   * Base URL of an extension's own directory, served by the main process's
+   * `nim-extension://` handler (fonts and images only).
+   */
+  getExtensionAssetBaseUrl(extensionId: string): string {
+    return extensionAssetBaseUrl(extensionId);
   }
 
   /**

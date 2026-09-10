@@ -1,6 +1,8 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-import { resolve } from 'path';
+import { copyFileSync, existsSync, mkdirSync, readdirSync } from 'fs';
+import { createRequire } from 'module';
+import { dirname, join, resolve } from 'path';
 
 const PROCESS_SHIM_BANNER = `
 if (typeof process === 'undefined') {
@@ -46,6 +48,36 @@ function patchMermaidToExcalidrawSubgraphLookup() {
   };
 }
 
+// Excalidraw's font loader fetches every face by URL from
+// window.EXCALIDRAW_ASSET_PATH (set in activate) before falling back to the
+// esm.sh CDN, so the faces ship as files beside the bundle, in
+// dist/fonts/<Family>/. A family ships only when its license sits in
+// fonts/<Family>/LICENSE.txt, which is copied beside it. See fonts/README.md.
+function copyExcalidrawFonts() {
+  return {
+    name: 'copy-excalidraw-fonts',
+    closeBundle() {
+      const requireFromHere = createRequire(resolve(__dirname, 'package.json'));
+      const sourceRoot = join(dirname(requireFromHere.resolve('@excalidraw/excalidraw')), 'fonts');
+      const licenseRoot = resolve(__dirname, 'fonts');
+      for (const family of readdirSync(licenseRoot, { withFileTypes: true })) {
+        if (!family.isDirectory()) continue;
+        const source = join(sourceRoot, family.name);
+        const faces = existsSync(source)
+          ? readdirSync(source).filter((file) => file.endsWith('.woff2'))
+          : [];
+        if (faces.length === 0) {
+          throw new Error(`copy-excalidraw-fonts: @excalidraw/excalidraw ships no ${family.name} faces in ${source}`);
+        }
+        const target = resolve(__dirname, 'dist', 'fonts', family.name);
+        mkdirSync(target, { recursive: true });
+        for (const face of faces) copyFileSync(join(source, face), join(target, face));
+        copyFileSync(join(licenseRoot, family.name, 'LICENSE.txt'), join(target, 'LICENSE.txt'));
+      }
+    },
+  };
+}
+
 export default defineConfig({
   plugins: [
     react({
@@ -53,6 +85,7 @@ export default defineConfig({
       jsxImportSource: 'react',
     }),
     patchMermaidToExcalidrawSubgraphLookup(),
+    copyExcalidrawFonts(),
   ],
   define: {
     'process.env.NODE_ENV': JSON.stringify('production'),
@@ -99,12 +132,13 @@ export default defineConfig({
       ],
     },
     // Excalidraw 0.18 ships fonts as external .woff2 files referenced by
-    // relative url() in its CSS (and via bundled font-loading code). The host
-    // injects extension CSS as an inline <style> and loads index.js via a
-    // module loader, so emitted asset files with relative URLs would not
-    // resolve at runtime. Inline every asset as a base64 data URI instead
-    // (0.17.6 already shipped its fonts pre-inlined, so this preserves the
-    // prior single-bundle behavior). `true` forces inlining regardless of size.
+    // relative url() in its CSS. The host injects extension CSS as an inline
+    // <style> and loads index.js via a module loader, so emitted asset files
+    // with relative URLs would not resolve at runtime. Inline every asset as a
+    // base64 data URI instead (0.17.6 already shipped its fonts pre-inlined, so
+    // this preserves the prior single-bundle behavior). `true` forces inlining
+    // regardless of size. The drawing faces its font-loading code fetches by
+    // URL are not assets of the bundle; copyExcalidrawFonts ships those.
     assetsInlineLimit: () => true,
     outDir: 'dist',
     emptyOutDir: true,

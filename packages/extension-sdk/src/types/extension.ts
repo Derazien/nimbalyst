@@ -1080,6 +1080,14 @@ export interface ExtensionContext {
   /** Absolute path to the extension's installation directory */
   extensionPath: string;
 
+  /**
+   * URL of the extension's installation directory, with a trailing slash, for
+   * loading the fonts and images it ships by URL, e.g.
+   * `new URL('dist/fonts/', context.assetBaseUrl)`. Undefined when the host
+   * cannot serve extension files by URL.
+   */
+  assetBaseUrl?: string;
+
   /** Services available to the extension */
   services: ExtensionServices;
 
