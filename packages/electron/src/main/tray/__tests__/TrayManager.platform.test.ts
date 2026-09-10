@@ -20,6 +20,8 @@ const {
   syncPushChange,
   syncProvider,
   setShowTrayIconMock,
+  isKeepRunningInTrayMock,
+  setKeepRunningInTrayMock,
   isShowTrayIconMock,
   isShowTrayStripMock,
   getTrayStripStyleMock,
@@ -52,6 +54,8 @@ const {
   syncPushChange: vi.fn(),
   syncProvider: { pushChange: vi.fn() },
   setShowTrayIconMock: vi.fn(),
+  isKeepRunningInTrayMock: vi.fn(() => false),
+  setKeepRunningInTrayMock: vi.fn(),
   // Off by default so `refreshMenuBar` skips creating a real Tray; the tests
   // that need one assign `internals.tray` directly or opt in.
   isShowTrayIconMock: vi.fn(() => false),
@@ -121,6 +125,8 @@ vi.mock('../../utils/appPaths', () => ({
 vi.mock('../../utils/store', () => ({
   isShowTrayIcon: isShowTrayIconMock,
   setShowTrayIcon: setShowTrayIconMock,
+  isKeepRunningInTray: isKeepRunningInTrayMock,
+  setKeepRunningInTray: setKeepRunningInTrayMock,
   isShowTrayStrip: isShowTrayStripMock,
   // Fed back into the getter: `setStripVisible` reads its own write back to
   // decide which surface the menu bar gets, so a setter that goes nowhere makes
@@ -709,5 +715,53 @@ describe('menu bar island render style', () => {
 
     isShowTrayIconMock.mockReturnValue(false);
     internals.teardownStrip();
+  });
+});
+
+/**
+ * Hiding the tray icon while the app is set to survive the last window close
+ * would leave it with no window, no icon and no menu: only Task Manager gets it
+ * back. The two settings are therefore written together.
+ */
+describe('hiding the tray icon cannot strand the app', () => {
+  let restorePlatform: () => void = () => {};
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetSingleton();
+    isShowTrayIconMock.mockReturnValue(false);
+    isKeepRunningInTrayMock.mockReturnValue(false);
+    restorePlatform = stubPlatform('win32');
+  });
+
+  afterEach(() => {
+    restorePlatform();
+  });
+
+  it('turns keep-running-in-tray off when the icon is hidden', () => {
+    isKeepRunningInTrayMock.mockReturnValue(true);
+
+    TrayManager.getInstance().setVisible(false);
+
+    expect(setShowTrayIconMock).toHaveBeenCalledWith(false);
+    expect(setKeepRunningInTrayMock).toHaveBeenCalledWith(false);
+  });
+
+  it('leaves keep-running-in-tray alone when the icon is shown', () => {
+    isKeepRunningInTrayMock.mockReturnValue(true);
+
+    TrayManager.getInstance().setVisible(true);
+
+    expect(setShowTrayIconMock).toHaveBeenCalledWith(true);
+    expect(setKeepRunningInTrayMock).not.toHaveBeenCalled();
+  });
+
+  it('does not write the setting when hiding an icon and it is already off', () => {
+    isKeepRunningInTrayMock.mockReturnValue(false);
+
+    TrayManager.getInstance().setVisible(false);
+
+    expect(setShowTrayIconMock).toHaveBeenCalledWith(false);
+    expect(setKeepRunningInTrayMock).not.toHaveBeenCalled();
   });
 });

@@ -289,6 +289,11 @@ interface AppStoreSchema {
   // primary display, which is also the fallback when this names a monitor that
   // is no longer connected.
   islandDisplay?: IslandDisplayPreference;
+  // Closing the last window leaves the app running in the tray instead of
+  // quitting. Off by default, because "I closed the window" means "I am done"
+  // for most people; on, the tray icon is the only way back and clicking it
+  // reopens the WorkspaceManager. macOS already stays running either way.
+  keepRunningInTray?: boolean;
   // Advanced: V8 heap memory limit in MB (default: 4096 = 4GB)
   // Increase if you experience OOM crashes with large sessions
   maxHeapSizeMB?: number;
@@ -1860,6 +1865,20 @@ export function getIslandDisplay(): IslandDisplayPreference | null {
 
 export function setIslandDisplay(preference: IslandDisplayPreference): void {
   getAppStore().set('islandDisplay', preference);
+}
+
+/**
+ * Whether closing the last window leaves the app running in the tray.
+ *
+ * Default false so an install that never touches this setting behaves exactly
+ * as it did before: on Windows and Linux the last close quits.
+ */
+export function isKeepRunningInTray(): boolean {
+  return getAppStore().get('keepRunningInTray', false);
+}
+
+export function setKeepRunningInTray(enabled: boolean): void {
+  getAppStore().set('keepRunningInTray', enabled);
 }
 
 // Completion Sound Settings

@@ -27,6 +27,8 @@ import {
   setSessionSyncConfig,
   isOSNotificationsEnabled,
   setOSNotificationsEnabled,
+  isKeepRunningInTray,
+  setKeepRunningInTray,
 } from '../utils/store';
 import { logger } from '../utils/logger';
 import { isPreventingSleep, getSleepPreventionMode } from '../services/PowerSaveService';
@@ -241,6 +243,7 @@ export class TrayManager {
   private menuRebuildTimer: NodeJS.Timeout | null = null;
   private lingerTimers: Map<string, NodeJS.Timeout> = new Map();
   private database: DatabaseWorker | null = null;
+  private openWorkspaceManager: (() => void) | null = null;
   private themeListener: (() => void) | null = null;
 
   // ─── Menu bar strip ───────────────────────────────────────────────────
@@ -303,6 +306,18 @@ export class TrayManager {
    */
   setDatabase(database: DatabaseWorker): void {
     this.database = database;
+  }
+
+  /**
+   * How to open the WorkspaceManager when the tray is all that is left.
+   *
+   * Injected rather than imported because the WorkspaceManager module reaches
+   * back into `index.ts`, and `index.ts` imports this one: a static import here
+   * closes that cycle and drags the whole window and menu graph into the tray's
+   * import surface. `index.ts` already owns both sides, so it supplies the call.
+   */
+  setWorkspaceManagerOpener(open: () => void): void {
+    this.openWorkspaceManager = open;
   }
 
   /**
@@ -370,9 +385,19 @@ export class TrayManager {
    * Only the *icon*. The island is the other menu bar surface and answers to
    * `showTrayStrip` plus the style; conflating the two is how the app ended up
    * drawing both at once.
+   *
+   * Hiding the icon also turns "keep running in the tray" off, in the same
+   * breath. The two together are the one combination with no way back: no
+   * window, no icon, no menu, and Task Manager as the only exit. The user keeps
+   * the choice they made -- the icon goes -- and closing the last window falls
+   * back to quitting.
    */
   setVisible(visible: boolean): void {
     setShowTrayIcon(visible);
+    if (!visible && isKeepRunningInTray()) {
+      setKeepRunningInTray(false);
+      logger.main.info('[TrayManager] Tray icon hidden, so keep-running-in-tray is off: the last window close quits again');
+    }
     this.refreshMenuBar();
   }
 
@@ -390,7 +415,19 @@ export class TrayManager {
       this.tray.on('right-click', () => {
         if (this.tray && this.appMenu) this.tray.popUpContextMenu(this.appMenu);
       });
+      return;
     }
+
+    // Off macOS the context menu answers the right-click, leaving the left one
+    // free. It is gated on the setting rather than always live so that an
+    // install which never turns "keep running in the tray" on sees exactly the
+    // tray it saw before: a right-click menu and nothing else. Read at click
+    // time, not here, because the tray is built once at startup and the setting
+    // can be flipped at any point after that.
+    this.tray.on('click', () => {
+      if (!isKeepRunningInTray()) return;
+      this.handleOpenApp();
+    });
   }
 
   /**
@@ -1628,13 +1665,27 @@ export class TrayManager {
     }
   }
 
-  /** Focus any project window. Shared by the native menu item and the panel footer. */
+  /**
+   * Focus any project window. Shared by the native menu item, the panel footer
+   * and, off macOS, a left-click on the tray icon.
+   *
+   * The reopen branch is only reachable once "keep running in the tray" is on:
+   * without it the app has already quit by the time no window is left, so there
+   * is no tray icon and no menu to click.
+   */
   handleOpenApp(): void {
     const windows = projectWindows();
     if (windows.length > 0) {
       windows[0].show();
       windows[0].focus();
+      return;
     }
+    if (!this.openWorkspaceManager) {
+      logger.main.warn('[TrayManager] No window open and no WorkspaceManager opener injected');
+      return;
+    }
+    logger.main.info('[TrayManager] No window open, reopening the WorkspaceManager from the tray');
+    this.openWorkspaceManager();
   }
 
   handleSessionClick(sessionId: string, workspacePath: string): void {

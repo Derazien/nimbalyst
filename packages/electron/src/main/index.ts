@@ -9,6 +9,7 @@ import { parseInviteDeepLink, type InviteDeepLinkTarget } from '../shared/invite
 import { resolveOrgMessagingDestination } from '../shared/orgMessagingRouting';
 import { safeHandle, safeOn } from './utils/ipcRegistry';
 import { installMicrophoneGate } from './mediaPermissionGate';
+import { createWindowAllClosedHandler } from './windowAllClosed';
 import { markBootComplete } from './utils/bootState';
 import { markStart, markEnd, checkpoint, logSummary } from './utils/startupTiming';
 import { resolveSpellCheckerLanguages } from './utils/spellcheckLanguages';
@@ -2191,6 +2192,9 @@ app.whenReady().then(async () => {
     try {
         const trayManager = TrayManager.getInstance();
         trayManager.setDatabase(database);
+        // With "keep running in the tray" on, the tray can be the only surface
+        // left, so it needs a way back to the WorkspaceManager.
+        trayManager.setWorkspaceManagerOpener(() => { createWorkspaceManagerWindow(); });
         await trayManager.initialize();
     } catch (error) {
         logger.main.error('[TrayManager] Failed to initialize:', error);
@@ -4221,34 +4225,14 @@ app.on('before-quit', async (event) => {
     }, 50);
 });
 
-// Window all closed handler
-app.on('window-all-closed', () => {
-  logger.main.info('All windows closed');
-  if (isAppQuitting) {
-    // App is quitting, allow normal quit to proceed
-    app.quit();
-    return;
-  }
-
-  // Check if the WorkspaceManager itself was manually closed by the user
-  // In that case, don't reopen it (quit on Windows/Linux, stay running on macOS)
-  if (wasWorkspaceManagerManuallyClosed()) {
-    if (process.platform !== 'darwin') {
-      logger.main.info('WorkspaceManager manually closed on non-macOS platform, quitting app');
-      app.quit();
-    } else {
-      logger.main.info('WorkspaceManager manually closed on macOS, app stays running (dock icon can reopen)');
-    }
-    return;
-  }
-
-  // A project window was closed (not the WorkspaceManager)
-  // Show the WorkspaceManager so user can open another project
-  if (app.isReady()) {
-    logger.main.info('Project window closed, showing WorkspaceManager');
-    createWorkspaceManagerWindow();
-  }
-});
+// Window all closed handler. The decision lives in `windowAllClosed.ts` so it
+// can be tested without booting the main process; only the two inputs that are
+// local to this file are passed in.
+app.on('window-all-closed', createWindowAllClosedHandler({
+  isAppQuitting: () => isAppQuitting,
+  wasWorkspaceManagerManuallyClosed,
+  showWorkspaceManager: () => { createWorkspaceManagerWindow(); },
+}));
 
 // Windows-specific shutdown signal handlers
 // Windows sends different signals than Unix systems during forced shutdowns
