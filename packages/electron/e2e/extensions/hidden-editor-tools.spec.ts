@@ -110,6 +110,60 @@ test('hidden editor: read, write, and verify without visible tab', async ({ page
 });
 
 /**
+ * A hidden editor saves only when an element's version changes, and
+ * Excalidraw's updateScene does not bump versions. A tool that rewrote an
+ * existing element without bumping it reported success while the edit never
+ * reached disk unless the file happened to be open in a tab. Disk is checked
+ * after each call: a later save would otherwise carry an earlier lost edit.
+ */
+test('hidden editor: tools that rewrite existing elements save them to disk', async ({ page }) => {
+  const workspacePath = await page.evaluate(async () => {
+    const state = await (window as any).electronAPI.getInitialState?.();
+    return state?.workspacePath || '';
+  });
+  if (!workspacePath) {
+    test.skip(true, 'No workspace path available');
+    return;
+  }
+
+  // Shaped like a file the app saved: an element without a fractional `index`
+  // is re-indexed (and version-bumped) on load, which marks the editor dirty
+  // from mount and hides the bug.
+  const saved = JSON.parse(createExcalidrawFile());
+  saved.elements[0].index = 'a0';
+  const testFilePath = path.join(workspacePath, `hidden-rewrite-${Date.now()}.excalidraw`);
+  fs.writeFileSync(testFilePath, JSON.stringify(saved, null, 2), 'utf8');
+
+  async function callTool(toolName: string, args: Record<string, unknown> = {}) {
+    return page.evaluate(
+      async ({ toolName, args, testFilePath, workspacePath }: any) => {
+        const bridge = (window as any).__nimbalyst_extension_tools__;
+        if (!bridge?.executeExtensionTool) throw new Error('Extension tools bridge not available (dev mode only)');
+        return bridge.executeExtensionTool('excalidraw.' + toolName, { ...args, filePath: testFilePath }, {
+          workspacePath,
+          activeFilePath: testFilePath,
+        });
+      },
+      { toolName, args, testFilePath, workspacePath }
+    );
+  }
+  const seedOnDisk = () =>
+    JSON.parse(fs.readFileSync(testFilePath, 'utf8')).elements.find((e: any) => e.id === 'seed-rect');
+
+  try {
+    const moved: any = await callTool('move_element', { label: 'seed-rect', x: 250, y: 60 });
+    expect(moved.success).not.toBe(false);
+    await expect.poll(() => [seedOnDisk().x, seedOnDisk().y], { timeout: 3000 }).toEqual([250, 60]);
+
+    const recolored: any = await callTool('update_element', { id: 'seed-rect', color: 'red' });
+    expect(recolored.success).not.toBe(false);
+    await expect.poll(() => seedOnDisk().backgroundColor, { timeout: 3000 }).toBe('#ffc9c9');
+  } finally {
+    try { fs.unlinkSync(testFilePath); } catch { /* ignore */ }
+  }
+});
+
+/**
  * Regression for NIM-905: a hidden editor mounted to serve a READ-only tool
  * must not flush its (now-stale) buffer back over an out-of-band write to disk.
  *
