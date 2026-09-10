@@ -242,22 +242,22 @@ export function validateNimPreviewPath(
   return candidate;
 }
 
-export function registerNimPreviewSchemeAsPrivileged(): void {
-  protocol.registerSchemesAsPrivileged([
-    {
-      scheme: NIM_PREVIEW_SCHEME,
-      privileges: {
-        standard: true,
-        secure: true,
-        supportFetchAPI: true,
-        bypassCSP: false,
-        corsEnabled: true,
-        // Required for ES-module script imports to resolve relative paths.
-        codeCache: true,
-      },
-    },
-  ]);
-}
+/**
+ * The `nim-preview` scheme's privileges. Registered with every other custom
+ * scheme in one call, see `privilegedSchemes.ts`.
+ */
+export const NIM_PREVIEW_PRIVILEGED_SCHEME: Electron.CustomScheme = {
+  scheme: NIM_PREVIEW_SCHEME,
+  privileges: {
+    standard: true,
+    secure: true,
+    supportFetchAPI: true,
+    bypassCSP: false,
+    corsEnabled: true,
+    // Required for ES-module script imports to resolve relative paths.
+    codeCache: true,
+  },
+};
 
 async function handleNimPreviewRequest(request: Request): Promise<Response> {
   try {

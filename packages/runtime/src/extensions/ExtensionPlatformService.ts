@@ -80,6 +80,14 @@ export interface ExtensionPlatformService {
   resolvePath(extensionPath: string, relativePath: string): string;
 
   /**
+   * URL, with a trailing slash, the renderer can load an extension's own files
+   * from (fonts, images). Optional: a platform that cannot serve extension
+   * files by URL leaves it out.
+   * @param extensionId - The extension's manifest id
+   */
+  getExtensionAssetBaseUrl?(extensionId: string): string | undefined;
+
+  /**
    * Get files matching a glob pattern in a directory.
    * @param dirPath - Base directory for the search
    * @param pattern - Glob pattern (e.g., "*.datamodel")

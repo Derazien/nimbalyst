@@ -1191,6 +1191,7 @@ function createExtensionContext(
   const context: ExtensionContext = {
     manifest,
     extensionPath,
+    assetBaseUrl: platformService.getExtensionAssetBaseUrl?.(manifest.id),
     services,
     subscriptions,
   };
@@ -1215,6 +1216,7 @@ function createAPICompatibilityProxy(
   const knownProperties = new Set([
     'manifest',
     'extensionPath',
+    'assetBaseUrl',
     'services',
     'subscriptions',
   ]);
