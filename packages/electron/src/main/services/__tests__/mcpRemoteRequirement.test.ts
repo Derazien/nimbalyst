@@ -204,3 +204,22 @@ describe('MCPConfigService.isOAuthAuthorized', () => {
     expect(checkMcpRemoteAuthStatus).not.toHaveBeenCalled();
   });
 });
+
+describe('wrapped server launch args', () => {
+  const service = new MCPConfigService();
+
+  it('answers npx install prompt so a newly pinned release can start unattended', () => {
+    // `npx <spec>` asks "Ok to proceed?" when the spec is not already in the
+    // cache. An MCP stdio child has no terminal to answer with, so it hangs.
+    // Nothing notices while the pinned release happens to be cached, and then
+    // the first bump of the pin takes every wrapped server down at once.
+    const runtime = service.processServerConfigForRuntime(
+      { type: 'http', url: 'https://api.example.com/mcp', oauth: {} } as MCPServerConfig,
+      { nativeHttpSupported: true },
+    );
+
+    expect(runtime.type).toBe('stdio');
+    expect(runtime.args?.[0]).toBe('-y');
+    expect(runtime.args?.[1]).toMatch(/^mcp-remote@/);
+  });
+});
