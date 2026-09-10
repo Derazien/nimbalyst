@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Excalidraw diagrams drawn by the AI no longer clip or cram their labels: text wraps inside each box with padding, boxes grow to fit, and a cramped board can be repaired in one step.
 
 ### Removed
 <!-- Removed features go here -->

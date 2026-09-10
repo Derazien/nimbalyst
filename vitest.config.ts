@@ -202,7 +202,10 @@ export default defineConfig({
           exclude: [...baseExclude, ...nodeOnly],
           // Inline so vite transforms it and our monaco-editor stub alias
           // applies to its transitive `monaco-editor/esm/.../editor.api.js`.
-          server: { deps: { inline: [/y-monaco/] } },
+          // `@excalidraw/excalidraw` imports open-color's JSON without an import
+          // attribute, which Node's loader rejects; inlined, tests can run its
+          // real text wrapping.
+          server: { deps: { inline: [/y-monaco/, /@excalidraw\/excalidraw/] } },
         },
       },
       {

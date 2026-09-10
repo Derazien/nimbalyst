@@ -56,7 +56,7 @@
       "excalidraw.add_arrow",
       "excalidraw.update_element",
       "excalidraw.remove_element",
-      "excalidraw.relayout",
+      "excalidraw.fit_to_text",
       "excalidraw.import_mermaid",
       "excalidraw.clear_all",
       "excalidraw.add_frame",
