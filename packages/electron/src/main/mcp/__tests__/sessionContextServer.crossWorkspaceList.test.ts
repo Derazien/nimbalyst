@@ -39,7 +39,10 @@ vi.mock('../../window/windowState', () => ({
   listOpenWorkspacePaths: () => [...liveWindows],
 }));
 
-vi.mock('electron', () => ({ BrowserWindow: { getAllWindows: () => [] } }));
+vi.mock('electron', () => ({
+  app: { getPath: () => '/mock', isPackaged: false },
+  BrowserWindow: { getAllWindows: () => [] },
+}));
 vi.mock('../../database/PGLiteDatabaseWorker', () => ({ database: { query: async () => ({ rows: [] }) } }));
 
 import { dispatchSessionContextTool, handleListRecentSessions } from '../sessionContextServer';
