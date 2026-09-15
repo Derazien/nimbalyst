@@ -321,6 +321,39 @@ describe('searchableTextExtractor', () => {
     });
   });
 
+  describe('kimi-code', () => {
+    it('indexes plain-text input rows as user prompts', () => {
+      const r = extractSearchable({ source: 'kimi-code', direction: 'input', content: 'fix the bug' });
+      expect(r).toEqual({ searchableText: 'fix the bug', messageKind: 'user' });
+    });
+
+    it('classifies ACP session/update rows as meta rather than indexing raw JSON', () => {
+      // Same contract as copilot-cli: per-chunk ACP envelopes and the
+      // item.completed synthesis carry no extractor-readable assistant text,
+      // so they must NOT fall through to the generic whole-blob index.
+      const chunk = extractSearchable({
+        source: 'kimi-code',
+        direction: 'output',
+        content: JSON.stringify({
+          type: 'session/update',
+          sessionId: 's1',
+          update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'partial' } },
+        }),
+      });
+      expect(chunk).toEqual({ searchableText: null, messageKind: 'meta' });
+
+      const synthesis = extractSearchable({
+        source: 'kimi-code',
+        direction: 'output',
+        content: JSON.stringify({
+          type: 'item.completed',
+          item: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'full answer' }] },
+        }),
+      });
+      expect(synthesis).toEqual({ searchableText: null, messageKind: 'meta' });
+    });
+  });
+
   describe('size cap', () => {
     it('truncates extremely long searchable text', () => {
       const big = 'a'.repeat(600_000);

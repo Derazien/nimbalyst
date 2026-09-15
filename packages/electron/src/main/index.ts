@@ -229,6 +229,7 @@ import {
   CopilotCLIProvider,
   GrokBuildProvider,
   CursorAgentProvider,
+  KimiCodeProvider,
   GeminiAntigravityProvider,
   configureOpenCodeModelCatalog,
 } from '@nimbalyst/runtime/ai/server';
@@ -2075,6 +2076,11 @@ app.whenReady().then(async () => {
     CursorAgentProvider.setMCPConfigLoader(
         (workspacePath?: string) => syncHeadlessAgentMcpConfig('cursor-agent', MCP_PROVIDER_IDS.CURSOR, 'Cursor', workspacePath),
     );
+    // Kimi, like Grok, gets its servers inline through ACP `session/new`, so
+    // nothing is written to disk for it.
+    KimiCodeProvider.setMCPConfigLoader(
+        (workspacePath?: string) => loadEnabledMcpServersFor(MCP_PROVIDER_IDS.KIMI, 'Kimi', workspacePath),
+    );
 
     // Claude CLI (subscription) launcher shares the Claude Agent MCP filter —
     // the genuine CLI hits the identical MCP handlers as the SDK path (NIM-806).
@@ -2161,6 +2167,7 @@ app.whenReady().then(async () => {
     CopilotCLIProvider.setShellEnvironmentLoader(() => getShellEnvironment());
     GrokBuildProvider.setShellEnvironmentLoader(() => getShellEnvironment());
     CursorAgentProvider.setShellEnvironmentLoader(() => getShellEnvironment());
+    KimiCodeProvider.setShellEnvironmentLoader(() => getShellEnvironment());
 
     // Inject enhanced PATH loader so agents can access system tools
     // (docker, homebrew, nvm, etc.) that are missing from Electron's GUI PATH.
@@ -2174,6 +2181,7 @@ app.whenReady().then(async () => {
     CopilotCLIProvider.setEnhancedPathLoader(() => getEnhancedPath());
     GrokBuildProvider.setEnhancedPathLoader(() => getEnhancedPath());
     CursorAgentProvider.setEnhancedPathLoader(() => getEnhancedPath());
+    KimiCodeProvider.setEnhancedPathLoader(() => getEnhancedPath());
 
     // Gemini executes its tools in this process. The provider ships in the
     // runtime package, which cannot import from main, so the executor is
@@ -2458,6 +2466,7 @@ app.whenReady().then(async () => {
       OpenAICodexACPProvider.setSecurityLogger(securityLogger);
       GrokBuildProvider.setSecurityLogger(securityLogger);
       CursorAgentProvider.setSecurityLogger(securityLogger);
+      KimiCodeProvider.setSecurityLogger(securityLogger);
     }
 
     ClaudeCodeProvider.setClaudeSettingsPatternSaver(patternSaver);
@@ -2495,6 +2504,12 @@ app.whenReady().then(async () => {
     // Cursor's one-shot headless transport still gates the whole turn; Grok's
     // ACP transport uses the same trust check plus per-tool permission events.
     CursorAgentProvider.setTrustChecker(trustChecker);
+
+    // Kimi's ACP transport gates like Grok's: trust check plus per-tool
+    // permission round-trips.
+    KimiCodeProvider.setPermissionPatternSaver(patternSaver);
+    KimiCodeProvider.setPermissionPatternChecker(patternChecker);
+    KimiCodeProvider.setTrustChecker(trustChecker);
 
     // ACP exposes pre/post file-write hooks. Wire them so Codex ACP edits
     // produce the same FilesEditedSidebar entries and pre-edit baselines as

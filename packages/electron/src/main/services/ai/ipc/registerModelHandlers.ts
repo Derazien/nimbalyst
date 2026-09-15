@@ -41,6 +41,9 @@ export function registerModelHandlers(ctx: AIServiceContext): void {
     if (providerSettings['openai']?.enabled === true && !!apiKeys['openai']) enabledSet.add('openai');
     if (providerSettings['openai-codex']?.enabled === true) enabledSet.add('openai-codex');
     if (providerSettings['opencode']?.enabled === true) enabledSet.add('opencode');
+    if (providerSettings['kimi-code']?.enabled === true) enabledSet.add('kimi-code');
+    // Off by default (Phase 0); its catalog is only fetched once the user opts in.
+    if (resolveProviderEnabled('kimi-code-cli', providerSettings['kimi-code-cli'])) enabledSet.add('kimi-code-cli');
     // Without these the model picker stays empty for an enabled provider:
     // the catalog is only fetched for ids in this set. Both default to
     // "on if their CLI is installed and signed in", so they must go through
@@ -226,6 +229,20 @@ export function registerModelHandlers(ctx: AIServiceContext): void {
         enabled: providerSettings['copilot-cli']?.enabled === true,
         models: providerSettings['copilot-cli']?.models,
         hiddenModels: providerSettings['copilot-cli']?.hiddenModels
+      },
+      // Kimi Code authenticates through `kimi login` (device-code OAuth on the
+      // user's membership), so no API key is required -- but models/hiddenModels
+      // still forward, or hiding a model in Settings does nothing to the picker.
+      'kimi-code': {
+        enabled: providerSettings['kimi-code']?.enabled === true,
+        models: providerSettings['kimi-code']?.models,
+        hiddenModels: providerSettings['kimi-code']?.hiddenModels
+      },
+      'kimi-code-cli': {
+        // Interactive `kimi` CLI in a terminal. Phase 0 and off by default.
+        enabled: resolveProviderEnabled('kimi-code-cli', providerSettings['kimi-code-cli']),
+        models: providerSettings['kimi-code-cli']?.models,
+        hiddenModels: providerSettings['kimi-code-cli']?.hiddenModels
       },
       'grok-build': {
         enabled: resolveProviderEnabled('grok-build', providerSettings['grok-build']),

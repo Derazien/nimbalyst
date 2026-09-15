@@ -308,6 +308,7 @@ function collectHeadlessAgentSlots(chunk: Record<string, unknown>, out: PayloadS
 function isCodexSource(source: string): boolean {
   return source.startsWith('openai-codex')
     || source.startsWith('copilot-cli')
+    || source.startsWith('kimi-code')
     || source.startsWith('opencode');
 }
 

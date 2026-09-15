@@ -12,6 +12,8 @@ import { OpenAICodexACPProvider } from './providers/OpenAICodexACPProvider';
 import { LMStudioProvider } from './providers/LMStudioProvider';
 import { OpenCodeProvider } from './providers/OpenCodeProvider';
 import { CopilotCLIProvider } from './providers/CopilotCLIProvider';
+import { KimiCodeProvider } from './providers/KimiCodeProvider';
+import { KimiCodeCliProvider } from './providers/KimiCodeCliProvider';
 import { GrokBuildProvider } from './providers/GrokBuildProvider';
 import { CursorAgentProvider } from './providers/CursorAgentProvider';
 import { GeminiAntigravityProvider } from './providers/GeminiAntigravityProvider';
@@ -84,6 +86,14 @@ export class ProviderFactory {
         break;
       case 'copilot-cli':
         provider = new CopilotCLIProvider();
+        break;
+      case 'kimi-code':
+        provider = new KimiCodeProvider();
+        break;
+      case 'kimi-code-cli':
+        // Interactive `kimi` CLI on the user's Kimi membership (Phase 0:
+        // identity + model catalog only).
+        provider = new KimiCodeCliProvider();
         break;
       case 'grok-build':
         provider = new GrokBuildProvider();

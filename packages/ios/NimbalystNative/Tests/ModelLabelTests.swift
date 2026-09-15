@@ -134,6 +134,27 @@ final class ModelLabelTests: XCTestCase {
         XCTAssertEqual(ModelLabel.shortLabel(provider: "openai-codex", model: "openai-codex:weirdo"), "Codex")
     }
 
+    // MARK: - Kimi Code
+
+    func testKimiCodeAliases() {
+        XCTAssertEqual(ModelLabel.shortLabel(provider: "kimi-code", model: "kimi-code:k3"), "Kimi K3")
+        XCTAssertEqual(ModelLabel.shortLabel(provider: "kimi-code", model: "kimi-code:k3-256k"), "Kimi K3")
+        XCTAssertEqual(ModelLabel.shortLabel(provider: "kimi-code", model: "kimi-code:kimi-for-coding"), "Kimi K2.8")
+        XCTAssertEqual(ModelLabel.shortLabel(provider: "kimi-code", model: "kimi-code:kimi-for-coding-highspeed"), "Kimi K2.7")
+    }
+
+    func testKimiCodeCliAliases() {
+        XCTAssertEqual(ModelLabel.shortLabel(provider: "kimi-code-cli", model: "kimi-code-cli:k3"), "Kimi K3")
+        XCTAssertEqual(ModelLabel.shortLabel(provider: "kimi-code-cli", model: "kimi-code-cli:kimi-for-coding"), "Kimi K2.8")
+    }
+
+    func testKimiUnknownModelFallsBackToProviderLabel() {
+        XCTAssertEqual(ModelLabel.shortLabel(provider: "kimi-code", model: nil), "Kimi Code")
+        XCTAssertEqual(ModelLabel.shortLabel(provider: "kimi-code", model: ""), "Kimi Code")
+        XCTAssertEqual(ModelLabel.shortLabel(provider: "kimi-code", model: "kimi-code:mystery"), "Kimi Code")
+        XCTAssertEqual(ModelLabel.shortLabel(provider: "kimi-code-cli", model: nil), "Kimi Code CLI")
+    }
+
     // MARK: - LM Studio
 
     func testLmStudio() {

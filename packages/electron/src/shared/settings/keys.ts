@@ -143,6 +143,16 @@ export const SETTINGS_REGISTRY = {
     { store: 'ai-settings', path: 'providerSettings.cursor-agent' },
     { enabled: false, testStatus: 'idle', installStatus: 'not-installed' },
   ),
+  'ai.provider.kimi-code': setting(
+    ProviderConfigSchema,
+    { store: 'ai-settings', path: 'providerSettings.kimi-code' },
+    { enabled: false, testStatus: 'idle', installStatus: 'not-installed' },
+  ),
+  'ai.provider.kimi-code-cli': setting(
+    ProviderConfigSchema,
+    { store: 'ai-settings', path: 'providerSettings.kimi-code-cli' },
+    { enabled: false, testStatus: 'idle' },
+  ),
   'ai.provider.lmstudio': setting(
     ProviderConfigSchema,
     { store: 'ai-settings', path: 'providerSettings.lmstudio' },

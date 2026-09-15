@@ -26,7 +26,7 @@ import { HelpTooltip } from '../../help';
 import { isDirectChatProvider, isProviderVisible } from '../../utils/chatProviderVisibility';
 import { useMenuTypeahead } from '../../hooks/useMenuTypeahead';
 
-const ALPHA_PROVIDERS = new Set(['opencode', 'copilot-cli', 'grok-build', 'cursor-agent', 'antigravity-gemini-agent']);
+const ALPHA_PROVIDERS = new Set(['opencode', 'copilot-cli', 'grok-build', 'cursor-agent', 'antigravity-gemini-agent', 'kimi-code', 'kimi-code-cli']);
 
 interface Model {
   id: string;
@@ -229,6 +229,8 @@ export function ModelSelector({
       case 'grok-build':
       case 'cursor-agent':
       case 'antigravity-gemini-agent':
+      case 'kimi-code':
+      case 'kimi-code-cli':
       case 'lmstudio':
         return provider;
       case 'openai-codex-acp':
@@ -288,6 +290,8 @@ export function ModelSelector({
       case 'copilot-cli': return 'GitHub Copilot';
       case 'grok-build': return 'Grok Build';
       case 'cursor-agent': return 'Cursor Agent';
+      case 'kimi-code': return 'Kimi Code';
+      case 'kimi-code-cli': return 'Kimi Code CLI';
       case 'antigravity-gemini-agent': return 'Gemini';
       case 'lmstudio': return 'LMStudio';
       default: {

@@ -449,6 +449,9 @@ const AGENT_SOURCES = new Set([
   'grok-build',
   'cursor-agent',
   'antigravity-gemini-agent',
+  // `kimi-code-cli` writes no rows in Phase 0 (same reason `claude-code-cli`
+  // is absent here).
+  'kimi-code',
 ]);
 
 /**
@@ -463,6 +466,8 @@ const CODEX_SHAPED_OUTPUT_SOURCES = new Set([
   'copilot-cli',
   'grok-build',
   'cursor-agent',
+  // KimiCodeProvider stores the same turn-final `item.completed` synthesis.
+  'kimi-code',
 ]);
 
 export function extractSearchable(input: ExtractorInput): ExtractedSearchable {

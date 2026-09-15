@@ -1133,7 +1133,7 @@ export class AIService {
     // instance on this session; the first one that exists tells us the type.
     const providerCandidates = request.provider
       ? [request.provider]
-      : ['claude-code', 'openai-codex', 'openai-codex-acp', 'opencode', 'grok-build', 'cursor-agent'];
+      : ['claude-code', 'openai-codex', 'openai-codex-acp', 'opencode', 'grok-build', 'cursor-agent', 'kimi-code'];
 
     let instance: AIProvider | undefined;
     let resolvedType: string | null = request.provider ?? null;

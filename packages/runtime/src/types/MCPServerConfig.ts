@@ -137,6 +137,8 @@ export const MCP_PROVIDER_IDS = {
   COPILOT: 'copilot',
   GROK: 'grok',
   CURSOR: 'cursor',
+  // Kimi sessions receive Nimbalyst MCP servers inline via ACP `session/new`.
+  KIMI: 'kimi',
 } as const;
 
 export type MCPProviderId = typeof MCP_PROVIDER_IDS[keyof typeof MCP_PROVIDER_IDS];
@@ -147,6 +149,7 @@ export const ALL_MCP_PROVIDER_IDS: MCPProviderId[] = [
   MCP_PROVIDER_IDS.COPILOT,
   MCP_PROVIDER_IDS.GROK,
   MCP_PROVIDER_IDS.CURSOR,
+  MCP_PROVIDER_IDS.KIMI,
 ];
 
 /**

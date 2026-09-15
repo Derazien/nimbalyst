@@ -1245,6 +1245,10 @@ const defaultProviders: Record<string, ProviderConfig> = {
   'grok-build': { enabled: false, testStatus: 'idle', installStatus: 'not-installed' },
   'cursor-agent': { enabled: false, testStatus: 'idle', installStatus: 'not-installed' },
   'antigravity-gemini-agent': { enabled: false, testStatus: 'idle', installStatus: 'not-installed' },
+  // Kimi membership CLI (ACP). Off by default (alpha).
+  'kimi-code': { enabled: false, testStatus: 'idle', installStatus: 'not-installed' },
+  // Interactive `kimi` CLI sibling. Phase 0: identity + model catalog only.
+  'kimi-code-cli': { enabled: false, testStatus: 'idle' },
   lmstudio: { enabled: false, baseUrl: 'http://127.0.0.1:8234', testStatus: 'idle' },
 };
 

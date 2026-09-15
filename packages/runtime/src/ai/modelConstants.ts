@@ -581,6 +581,11 @@ export const DEFAULT_MODELS = {
   // fallbacks used when the CLI cannot be reached.
   'grok-build': 'grok-build:grok-4.6',
   'cursor-agent': 'cursor-agent:auto',
+  // Kimi model aliases are discovered live from the CLI (`session/new` ACP
+  // configOptions carry the catalog). K3 is the current flagship; both
+  // provider variants share the alias namespace.
+  'kimi-code': 'kimi-code:k3',
+  'kimi-code-cli': 'kimi-code-cli:k3',
 };
 
 /**

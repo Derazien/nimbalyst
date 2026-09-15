@@ -67,7 +67,8 @@ type CLITool =
   | 'opencode'
   | 'copilot-cli'
   | 'grok-build'
-  | 'cursor-agent';
+  | 'cursor-agent'
+  | 'kimi';
 
 /**
  * How a CLI gets onto the machine.
@@ -98,6 +99,7 @@ const CLI_INSTALL_STRATEGIES: Record<CLITool, CLIInstallStrategy> = {
     command: 'curl -fsSL https://cursor.com/install | bash',
     docsUrl: 'https://cursor.com/docs/cli/using',
   },
+  'kimi': { kind: 'npm', package: '@moonshot-ai/kimi-code' },  // npm: @moonshot-ai/kimi-code, binary: kimi
 };
 
 function npmPackageFor(tool: CLITool): string {
@@ -117,6 +119,7 @@ const CLI_COMMANDS: Record<CLITool, string> = {
   'copilot-cli': 'copilot',
   'grok-build': 'grok',
   'cursor-agent': 'cursor-agent',  // NOT `agent`: both vendors symlink that name
+  'kimi': 'kimi',
 };
 
 /**
@@ -130,6 +133,10 @@ const CLI_COMMANDS: Record<CLITool, string> = {
 const CLI_EXTRA_INSTALL_LOCATIONS: Partial<Record<CLITool, readonly string[]>> = {
   'grok-build': ['.grok/bin/grok', '.local/bin/grok'],
   'cursor-agent': ['.local/bin/cursor-agent'],
+  // kimi.com's native installer (an alternative to the npm package) drops the
+  // binary here -- %USERPROFILE%\.kimi-code\bin on Windows, ~/.kimi-code/bin
+  // elsewhere; os.homedir() covers both.
+  'kimi': ['.kimi-code/bin/kimi'],
 };
 
 export class CLIManager {

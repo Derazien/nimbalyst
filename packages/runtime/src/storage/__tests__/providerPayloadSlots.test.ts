@@ -92,6 +92,25 @@ describe('providerPayloadSlots -- codex', () => {
       'item.result.elapsed',
     ]));
   });
+
+  it('treats kimi-code rows as the same ACP/codex-shaped family', () => {
+    const acpChunk = {
+      type: 'session/update',
+      update: {
+        rawOutput: {
+          call_id: 'call_1',
+          stdout: 'x'.repeat(4000),
+        },
+      },
+    };
+    // Kimi stores the sibling protocol's `{type:'session/update', update}`
+    // envelope, so the ACP slot walk applies just like openai-codex-acp.
+    expect(paths(acpChunk, 'kimi-code')).toEqual(['update.rawOutput.stdout']);
+    expect(paths(acpChunk, 'kimi-code-cli')).toEqual(['update.rawOutput.stdout']);
+
+    const completed = { type: 'item.completed', item: { result: { rows: 'x'.repeat(4000) } } };
+    expect(paths(completed, 'kimi-code')).toEqual(expect.arrayContaining(['item.result.rows']));
+  });
 });
 
 describe('providerPayloadSlots -- Nimbalyst envelope', () => {

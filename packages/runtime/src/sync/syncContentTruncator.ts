@@ -235,6 +235,25 @@ export function shouldSyncMessageForSessionRoom(
     return true;
   }
 
+  // Kimi Code shares the Copilot transcript contract: KimiACPRawParser skips
+  // per-chunk rows and renders the self-contained item.completed row instead.
+  // Its envelope is `{type:'session/update', update}` (not JSON-RPC params).
+  // usage_update rows carry token counts no parser renders (desktop context
+  // display is fed by live events, mobile by the index clientMetadata
+  // channel). Thought chunks, tool calls, and permission rows DO render.
+  if (source.startsWith('kimi-code')) {
+    if (content && (content.includes('"agent_message_chunk"') || content.includes('"usage_update"'))) {
+      try {
+        const parsed = JSON.parse(content) as { update?: { sessionUpdate?: string } };
+        const sessionUpdate = parsed?.update?.sessionUpdate;
+        if (sessionUpdate === 'agent_message_chunk' || sessionUpdate === 'usage_update') return false;
+      } catch {
+        // Unparseable -- let it through.
+      }
+    }
+    return true;
+  }
+
   // Grok Build and Cursor Agent persist every NDJSON record their CLI emits.
   // HeadlessAgentRawParser renders only the turn-final `item.completed`, the
   // tool_call / tool_call_update (Grok) or tool_call started/completed

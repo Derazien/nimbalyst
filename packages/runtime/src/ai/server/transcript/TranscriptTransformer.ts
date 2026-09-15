@@ -23,6 +23,7 @@ import { CodexRawParser } from './parsers/CodexRawParser';
 import { CodexRawParserDispatcher } from './parsers/CodexRawParserDispatcher';
 import { CodexACPRawParser } from './parsers/CodexACPRawParser';
 import { CopilotRawParser } from './parsers/CopilotRawParser';
+import { KimiACPRawParser } from './parsers/KimiACPRawParser';
 import { OpenCodeRawParser } from './parsers/OpenCodeRawParser';
 import { HeadlessAgentRawParser } from './parsers/HeadlessAgentRawParser';
 import { GeminiAntigravityRawParser } from './parsers/GeminiAntigravityRawParser';
@@ -489,6 +490,10 @@ export class TranscriptTransformer {
   private createParser(provider: string): IRawMessageParser {
     if (provider === 'copilot-cli') {
       return new CopilotRawParser();
+    }
+    // Both Kimi Code providers share the family raw shape (see selectRawParser).
+    if (provider === 'kimi-code' || provider === 'kimi-code-cli') {
+      return new KimiACPRawParser();
     }
     if (provider === 'openai-codex') {
       // Dispatches per-message between the SDK parser (legacy default) and

@@ -90,6 +90,16 @@ export const BUILTIN_FILE_CHANGE_FIDELITY: Readonly<Record<AIProviderType, FileC
     // The ACP parser handles neither `locations` nor `diff`.
     'copilot-cli': 'none',
 
+    // Kimi's ACP `tool_call` updates carry `rawInput` naming the path before
+    // the write lands (tool titles are Claude-Code-style: 'Write', 'Edit').
+    // The `fs/write_text_file` client hook delivers post-edit content, but the
+    // pre-write path signal is the tool call itself, so the watcher stays on
+    // for edits made any other way (shell commands, sub-agents).
+    'kimi-code': 'tool-args',
+
+    // Phase 0: `sendMessage` throws, nothing is observed, watcher-only.
+    'kimi-code-cli': 'none',
+
     // Grok's `tool_call_update` carries a real `{type:'diff', path, oldText,
     // newText}` block with an absolute path, emitted before the write lands —
     // richer than most `'tool-args'` providers. It stops short of
@@ -145,6 +155,14 @@ export const PROVIDER_EDIT_TOOL_NAMES: Readonly<Record<AIProviderType, readonly 
     ]),
     opencode: Object.freeze(['edit', 'write', 'create']),
     'copilot-cli': Object.freeze([]),
+
+    // Kimi's write-ish tool titles as reported in ACP `tool_call` updates
+    // (Claude-Code-style vocabulary; the spike observed 'Write'). Lowercase
+    // spellings cover the transport ever switching to id-style names.
+    'kimi-code': Object.freeze([
+      'Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'write', 'edit',
+    ]),
+    'kimi-code-cli': Object.freeze([]),
 
     // Grok's only file-writing tools. Deletes and moves go through
     // `run_terminal_command` and are the watcher's problem.

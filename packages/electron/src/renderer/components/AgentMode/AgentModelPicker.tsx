@@ -21,6 +21,8 @@ const providerLabels: Record<string, string> = {
   'claude-code-cli': 'Claude Code CLI',
   'openai-codex': 'OpenAI Codex',
   'openai-codex-acp': 'OpenAI Codex (ACP)',
+  'kimi-code': 'Kimi Code',
+  'kimi-code-cli': 'Kimi Code CLI',
 };
 
 function getModelLabel(model: AgentModelOption): string {

@@ -198,7 +198,7 @@ export interface Message {
  * Add new providers here -- the type, runtime array, and exhaustiveness
  * checks all derive from this one definition.
  */
-export const AI_PROVIDER_TYPES = ['claude', 'claude-code', 'claude-code-cli', 'openai', 'openai-codex', 'openai-codex-acp', 'lmstudio', 'opencode', 'copilot-cli', 'grok-build', 'cursor-agent', 'antigravity-gemini-agent'] as const;
+export const AI_PROVIDER_TYPES = ['claude', 'claude-code', 'claude-code-cli', 'openai', 'openai-codex', 'openai-codex-acp', 'lmstudio', 'opencode', 'copilot-cli', 'grok-build', 'cursor-agent', 'antigravity-gemini-agent', 'kimi-code', 'kimi-code-cli'] as const;
 
 export type AIProviderType = typeof AI_PROVIDER_TYPES[number];
 
@@ -226,6 +226,8 @@ export type AgentProviderType =
   | 'copilot-cli'
   | 'grok-build'
   | 'cursor-agent'
+  | 'kimi-code'
+  | 'kimi-code-cli'
   // Keeps its original contribution id from the years it shipped as an
   // extension: the id is persisted on every existing Gemini session row, and
   // re-keying it would orphan that history for a cosmetic gain.
@@ -240,6 +242,8 @@ const AGENT_PROVIDER_TYPES: ReadonlySet<string> = new Set<AgentProviderType>([
   'copilot-cli',
   'grok-build',
   'cursor-agent',
+  'kimi-code',
+  'kimi-code-cli',
   'antigravity-gemini-agent',
 ]);
 
@@ -263,6 +267,25 @@ export function isAgentProvider(provider: string | null | undefined): provider i
  */
 export function isClaudeCodeFamily(provider: string | null | undefined): provider is 'claude-code' | 'claude-code-cli' {
   return provider === 'claude-code' || provider === 'claude-code-cli';
+}
+
+/**
+ * The Kimi Code provider family — both Kimi-Code variants that drive the
+ * genuine `kimi` CLI on the user's Kimi membership and share the Kimi model
+ * namespace (`k3`, `kimi-for-coding`, …) and the `KimiACPRawParser` transcript
+ * shape:
+ *
+ * - `kimi-code`      — ACP transport (`kimi acp`), streaming with per-tool
+ *                      permission round-trips and structured file writes.
+ * - `kimi-code-cli`  — interactive `kimi` CLI driven in the terminal strip
+ *                      (Phase 0: provider identity + model catalog only).
+ *
+ * The two are distinct provider IDs so a session can never flip between them
+ * once it has messages, per `shouldBlockStartedSessionProviderSwitch()` —
+ * mirroring the `claude-code` / `claude-code-cli` precedent (NIM-805/806).
+ */
+export function isKimiCodeFamily(provider: string | null | undefined): provider is 'kimi-code' | 'kimi-code-cli' {
+  return provider === 'kimi-code' || provider === 'kimi-code-cli';
 }
 
 /**

@@ -49,6 +49,11 @@ const PROVIDER_API_KEY_SOURCE: Readonly<Record<AIProviderType, string | null>> =
   'grok-build': null,
   'cursor-agent': null,
   'antigravity-gemini-agent': null,
+
+  // CLI OAuth (`kimi login` device flow) only -- no key ever, and no env
+  // fallback per the standing no-env-fallback rule.
+  'kimi-code': null,
+  'kimi-code-cli': null,
 });
 
 export class ModelRegistry {
@@ -208,6 +213,12 @@ export class ModelRegistry {
       case 'antigravity-gemini-agent':
         const { GeminiAntigravityProvider } = await import('./providers/GeminiAntigravityProvider');
         return GeminiAntigravityProvider.getModels();
+      case 'kimi-code':
+        const { KimiCodeProvider } = await import('./providers/KimiCodeProvider');
+        return KimiCodeProvider.getModels();
+      case 'kimi-code-cli':
+        const { KimiCodeCliProvider } = await import('./providers/KimiCodeCliProvider');
+        return KimiCodeCliProvider.getModels();
       default:
         return assertExhaustiveProvider(provider);
     }
@@ -319,6 +330,12 @@ export class ModelRegistry {
       case 'antigravity-gemini-agent':
         const { GeminiAntigravityProvider: GAP } = await import('./providers/GeminiAntigravityProvider');
         return GAP.getDefaultModel();
+      case 'kimi-code':
+        const { KimiCodeProvider: KCP } = await import('./providers/KimiCodeProvider');
+        return KCP.getDefaultModel();
+      case 'kimi-code-cli':
+        const { KimiCodeCliProvider: KCCP } = await import('./providers/KimiCodeCliProvider');
+        return KCCP.getDefaultModel();
       default:
         assertExhaustiveProvider(provider);
     }

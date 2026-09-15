@@ -20,7 +20,7 @@ describe('resolveProviderAuthRequirement', () => {
   });
 
   it('does not require a host API key for CLI-login agents', () => {
-    for (const provider of ['grok-build', 'cursor-agent', 'antigravity-gemini-agent'] as const) {
+    for (const provider of ['grok-build', 'cursor-agent', 'antigravity-gemini-agent', 'kimi-code', 'kimi-code-cli'] as const) {
       expect(resolveProviderAuthRequirement(provider)?.requiresApiKey).toBe(false);
     }
   });

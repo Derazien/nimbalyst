@@ -22,6 +22,8 @@ These providers currently register through `packages/runtime/src/ai/server/Provi
 | `copilot-cli` | **GitHub Copilot**. Alpha settings panel. | ACP over stdio via `copilot --acp --stdio` and `CopilotACPProtocol`. | Existing Copilot CLI login. | Minimal fixed catalog (`copilot-cli:default`). | No separate API key flow; relies on CLI auth. |
 | `grok-build` | **Grok Build**. Alpha settings panel. | ACP over stdio via `grok agent stdio` and `GrokACPProtocol`. | `grok login` only. | Discovered from `grok models`, which works without auth. | Grok's ACP updates keep the `rawInput`/`rawOutput` and `{type:'diff', path, oldText, newText}` blocks the old `grok -p` surface carried, and add a live permission round-trip, MCP servers delivered inline through `session/new` (nothing is written to `~/.grok/`), and Grok's native `_x.ai/ask_user_question`. The user's model is applied with `session/set_model` — the `-m` spawn flag is reset at `session/new`. Token counts arrive in `response._meta`, not standard `usage`; grok stays `contextReporting: 'token-counts'`. File-change fidelity is `'tool-args'` — Grok has no delete or move tool, so removals go through `run_terminal_command` and the watcher must stay on. |
 | `cursor-agent` | **Cursor Agent**. Alpha settings panel. | Headless NDJSON per turn: `cursor-agent --resume <chatId> -p … --output-format stream-json` via `CursorAgentProtocol`. | `cursor-agent login` only. | Discovered from `cursor-agent --list-models` (reflects the account's entitlements). | The only built-in provider besides Codex app-server with `'structured'` file-change fidelity: `editToolCall` results carry `beforeFullFileContent`/`afterFullFileContent` plus a unified diff, and `deleteToolCall` reports removals with `prevContent`. Headless `--print` grants write and shell for the whole turn with no per-tool approval to intercept, so the turn is gated up front on workspace trust. |
+| `kimi-code` | **Kimi Code**. | ACP over stdio via `kimi acp` and `KimiACPProtocol`. | `kimi login` device flow only — no API key path at all. | Static alias catalog mirroring the CLI (`k3`, `k3-256k`, `kimi-for-coding`, `kimi-for-coding-highspeed`); live catalog arrives via ACP `configOptions` in a later phase. | Runs on the user's Kimi membership. Per-tool ACP permission round-trips (`session/request_permission` with approve_once/approve_always/reject), so the only provider-side gate is workspace trust. MCP servers are delivered inline through `session/new`. `usage_update` carries token counts with no window denominator, so it stays `contextReporting: 'token-counts'`; file-change fidelity is `'tool-args'` (the `fs/write_text_file` client hook delivers post-edit content). |
+| `kimi-code-cli` | **Kimi Code CLI**. Phase 0: identity + model catalog only — `sendMessage` lands in Phase 1. | Interactive `kimi` CLI in the terminal strip (Phase 1+). | `kimi login` device flow only. | Same static alias catalog under the `kimi-code-cli:` namespace. | Phase-0 sibling of `kimi-code`, mirroring the `claude-code` / `claude-code-cli` split: transport parity, and a started session can never flip between the ACP-driven and terminal-driven paths. |
 
 ### Custom Claude models
 
@@ -79,7 +81,7 @@ Use this pattern when the upstream SDK already exposes the exact lifecycle you n
 
 ### 2. Protocol-backed provider
 
-`OpenAICodexProvider.ts`, `OpenAICodexACPProvider.ts`, `OpenCodeProvider.ts`, and `CopilotCLIProvider.ts` all extend `BaseAgentProvider` but push provider-specific transport details into protocol adapters under `packages/runtime/src/ai/server/protocols/`.
+`OpenAICodexProvider.ts`, `OpenAICodexACPProvider.ts`, `OpenCodeProvider.ts`, `CopilotCLIProvider.ts`, and `KimiCodeProvider.ts` all extend `BaseAgentProvider` but push provider-specific transport details into protocol adapters under `packages/runtime/src/ai/server/protocols/`.
 
 Use this pattern when:
 
@@ -93,7 +95,7 @@ Use this pattern when:
 
 We currently have two CLI-backed sub-patterns:
 
-- **ACP CLI**: `OpenAICodexACPProvider`, `CopilotCLIProvider`
+- **ACP CLI**: `OpenAICodexACPProvider`, `CopilotCLIProvider`, `KimiCodeProvider`
 - **CLI/server hybrid**: `OpenCodeProvider` starts a subprocess-backed local server and then speaks HTTP/SSE through its SDK client
 
 For new CLI integrations, prefer a structured protocol like ACP or JSON-over-stdio. Avoid PTY scraping unless there is no viable alternative.
@@ -115,6 +117,7 @@ Current provider-to-parser mapping is:
 - `openai-codex-acp` -> `CodexACPRawParser`
 - `opencode` -> `OpenCodeRawParser`
 - `copilot-cli` -> `CopilotRawParser`
+- `kimi-code` / `kimi-code-cli` -> `KimiACPRawParser`
 - `grok-build` / `cursor-agent` -> `HeadlessAgentRawParser` (re-uses the protocol adapters' own `mapGrokRecord` / `mapCursorRecord` rather than re-decoding the wire shapes a second time)
 
 If a new provider emits a new raw event shape, it needs a parser and parser registration. If it deliberately reuses an existing shape, document that and route it to the existing parser explicitly.
@@ -268,7 +271,7 @@ Existing wiring for this already exists in `packages/electron/src/main/index.ts`
 
 Current CLI-backed agents fall into three auth patterns:
 
-- provider CLI login only: `copilot-cli`, `grok-build`, `cursor-agent`
+- provider CLI login only: `copilot-cli`, `grok-build`, `cursor-agent`, `kimi-code`, `kimi-code-cli`
 - CLI login with optional API key override: `openai-codex`
 - provider-owned config/auth file: `opencode`
 

@@ -202,6 +202,8 @@ export function getProviderDisplayName(provider: string): string {
     case 'copilot-cli': return 'GitHub Copilot';
     case 'grok-build': return 'Grok Build';
     case 'cursor-agent': return 'Cursor Agent';
+    case 'kimi-code': return 'Kimi Code';
+    case 'kimi-code-cli': return 'Kimi Code CLI';
     case 'antigravity-gemini-agent': return 'Gemini';
     default: return provider;
   }
@@ -215,6 +217,8 @@ export function getProviderLabel(provider: string): string {
     case 'claude': return 'Chat';
     case 'claude-code': return 'CODE';
     case 'claude-code-cli': return 'CLI';
+    case 'kimi-code': return 'KIMI';
+    case 'kimi-code-cli': return 'CLI';
     case 'openai': return 'GPT';
     case 'lmstudio': return 'LOCAL';
     default: return provider.toUpperCase();

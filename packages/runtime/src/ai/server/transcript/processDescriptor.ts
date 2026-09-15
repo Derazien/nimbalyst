@@ -259,9 +259,16 @@ export async function processDescriptor(
 
 export function selectRawParser(
   provider: string,
-): 'codex' | 'codex-acp' | 'copilot' | 'claude-code' | 'opencode' | 'voice' | 'grok-build' | 'cursor-agent' | 'gemini-antigravity' {
+): 'codex' | 'codex-acp' | 'copilot' | 'claude-code' | 'opencode' | 'voice' | 'grok-build' | 'cursor-agent' | 'gemini-antigravity' | 'kimi-code' {
   if (provider === 'copilot-cli') {
     return 'copilot';
+  }
+  // Both Kimi Code providers drive the same `kimi` agent: `kimi-code` stores
+  // ACP raw events, and `kimi-code-cli` (Phase 0: writes nothing yet) shares
+  // the family raw shape, so both route to KimiACPRawParser -- the
+  // claude-code / claude-code-cli shared-parser precedent.
+  if (provider === 'kimi-code' || provider === 'kimi-code-cli') {
+    return 'kimi-code';
   }
   if (provider === 'openai-codex') {
     return 'codex';

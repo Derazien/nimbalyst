@@ -645,6 +645,49 @@ describe('truncateContentForSync', () => {
     ).toBe(true);
   });
 
+  it('drops kimi-code agent_message_chunk and usage_update rows (item.completed is self-contained)', () => {
+    // Kimi's envelope is {type:'session/update', update} -- not JSON-RPC params.
+    expect(
+      shouldSyncMessageForSessionRoom(
+        'kimi-code',
+        { eventType: 'session/update' },
+        JSON.stringify({ type: 'session/update', sessionId: 's1', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'partial' } } }),
+      ),
+    ).toBe(false);
+    expect(
+      shouldSyncMessageForSessionRoom(
+        'kimi-code',
+        { eventType: 'session/update' },
+        JSON.stringify({ type: 'session/update', sessionId: 's1', update: { sessionUpdate: 'usage_update', used: 100, size: 262144 } }),
+      ),
+    ).toBe(false);
+
+    // Tool calls and permission rows DO render on mobile -- keep.
+    expect(
+      shouldSyncMessageForSessionRoom(
+        'kimi-code',
+        { eventType: 'session/update' },
+        JSON.stringify({ type: 'session/update', sessionId: 's1', update: { sessionUpdate: 'tool_call', toolCallId: 'tc-1', title: 'Write', rawInput: { file_path: '/a.ts' } } }),
+      ),
+    ).toBe(true);
+    expect(
+      shouldSyncMessageForSessionRoom(
+        'kimi-code',
+        { eventType: 'session/request_permission' },
+        JSON.stringify({ type: 'session/request_permission', sessionId: 's1', request: {} }),
+      ),
+    ).toBe(true);
+
+    // The completed item carries the full text itself -- keep.
+    expect(
+      shouldSyncMessageForSessionRoom(
+        'kimi-code',
+        { eventType: 'item.completed' },
+        JSON.stringify({ type: 'item.completed', item: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'full text' }] } }),
+      ),
+    ).toBe(true);
+  });
+
   it('syncs a screenshot tool_result to mobile instead of eliding the whole message', () => {
     // capture_editor_screenshot returns an inline base64 image block, ~200 KB
     // of base64 once sized for mobile -- far over MAX_SYNC_MESSAGE_BYTES.

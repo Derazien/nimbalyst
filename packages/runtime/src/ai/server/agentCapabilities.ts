@@ -178,6 +178,30 @@ export const BUILTIN_AGENT_CAPABILITIES: Readonly<Record<AIProviderType, AgentCa
     contextReporting: 'token-counts',
   },
 
+  // Kimi's ACP surface, measured over `kimi acp`: no slash-command catalog in
+  // the session payload (configOptions carries only the model picker), no
+  // skills listing, and no compaction RPC in our adapter. `usage_update`
+  // notifications carry cumulative token counts but no context-window size,
+  // so there is no honest fill percentage (#914).
+  'kimi-code': {
+    slashCommands: false,
+    skills: false,
+    compaction: 'unsupported',
+    contextReporting: 'token-counts',
+  },
+
+  // Phase 0 identity provider: the genuine interactive CLI is driven by its
+  // own TUI, not by this provider class -- `sendMessage` throws, so there is
+  // nothing here to enumerate or compact. Its own TUI handles `/`-commands;
+  // the Phase 1 terminal observation path (same shape as claude-code-cli's
+  // proxy) is expected to supply currentContext.
+  'kimi-code-cli': {
+    slashCommands: false,
+    skills: false,
+    compaction: 'unsupported',
+    contextReporting: 'context-window',
+  },
+
   // Antigravity's `GetModelResponse` returns `{ response }` and nothing else --
   // no input/output counts, no context fill, no denominator. Measured against
   // the live server, not inferred from a manifest. The account-level quota RPC

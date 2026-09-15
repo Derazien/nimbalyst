@@ -25,6 +25,10 @@ public enum ModelLabel {
             return openAILabel(id)
         case "openai-codex":
             return codexLabel(id)
+        case "kimi-code":
+            return kimiLabel(id, providerFallback: "Kimi Code")
+        case "kimi-code-cli":
+            return kimiLabel(id, providerFallback: "Kimi Code CLI")
         case "lmstudio", "lm-studio":
             return "Local"
         default:
@@ -197,6 +201,32 @@ public enum ModelLabel {
         if let name = openAIShortNames[bare] { return "Codex \(name)" }
         if bare.hasPrefix("gpt-") { return "Codex \(prettifyGPT(bare))" }
         return "Codex"
+    }
+
+    // MARK: - Kimi Code
+
+    /// Mirrors the static alias catalog in `KimiCodeProvider` (the CLI's ACP
+    /// model picker values, minus the `kimi-code/` transport prefix).
+    private static let kimiAliasShortNames: [String: String] = [
+        "k3": "Kimi K3",
+        "k3-256k": "Kimi K3",
+        "kimi-for-coding": "Kimi K2.8",
+        "kimi-for-coding-highspeed": "Kimi K2.7",
+    ]
+
+    private static func kimiLabel(_ modelId: String?, providerFallback: String) -> String? {
+        // No model field: we still know the provider, so show the provider
+        // label rather than hiding the badge. Mirrors the Codex fallback.
+        guard let raw = modelId, !raw.isEmpty else { return providerFallback }
+
+        // Strip "kimi-code:" / "kimi-code-cli:" prefix and any transport
+        // prefix ("kimi-code/k3").
+        var bare = raw.split(separator: ":", maxSplits: 1).last.map(String.init) ?? raw
+        if let slash = bare.split(separator: "/", maxSplits: 1).last, bare.contains("/") {
+            bare = String(slash)
+        }
+        if let name = kimiAliasShortNames[bare] { return name }
+        return providerFallback
     }
 
     private static func prettifyGPT(_ id: String) -> String {

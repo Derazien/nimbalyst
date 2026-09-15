@@ -72,6 +72,12 @@ export function resolveProviderAuthRequirement(
     case 'antigravity-gemini-agent':
       return NEEDS_NO_KEY;
 
+    // Kimi Code (ACP and interactive CLI) signs in through `kimi login`
+    // (device-code OAuth on the user's Kimi membership). No API key.
+    case 'kimi-code':
+    case 'kimi-code-cli':
+      return NEEDS_NO_KEY;
+
     case 'lmstudio':
       // Needs only a base URL, but the provider signature still takes a key.
       return { ...NEEDS_NO_KEY, placeholderApiKey: 'not-required' };

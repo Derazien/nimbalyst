@@ -308,6 +308,14 @@ export const HelpContent: Record<string, HelpEntry> = {
     title: 'Claude Code CLI (Terminal Mode)',
     body: 'For people who prefer the command-line tool itself: runs the genuine claude binary in an embedded terminal, so you get its slash commands and TUI in the Raw terminal drawer while Nimbalyst mirrors the conversation into the rich transcript. You do not need this to use your Claude subscription.',
   },
+  'model-picker-provider-kimi-code': {
+    title: 'Kimi Code',
+    body: 'Moonshot\'s Kimi coding agent over ACP: streaming, per-tool permission prompts, and structured file edits, running on your Kimi membership. Install the CLI (npm i -g @moonshot-ai/kimi-code or the native installer from kimi.com), then run kimi login once in a terminal — no API key needed.',
+  },
+  'model-picker-provider-kimi-code-cli': {
+    title: 'Kimi Code CLI (Terminal Mode, Phase 0)',
+    body: 'For people who prefer the command-line tool itself: runs the genuine kimi binary in a terminal. Phase 0: provider identity and model catalog only — interactive terminal sessions are coming soon. You do not need this to use your Kimi membership.',
+  },
   'action-prompts-dropdown': {
     title: 'Action Prompts',
     body: 'Reusable prompts you define in nimbalyst-local/ai-actions.md. Picking one inserts its body into the draft so you can tweak it before sending.',

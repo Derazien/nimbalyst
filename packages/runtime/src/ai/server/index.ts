@@ -15,6 +15,7 @@ export * from './providers/openCode/OpenCodeConfigTypes';
 export * from './providers/openCode/OpenCodeModelCatalog';
 export * from './providers/openCode/OpenCodeAgentCatalog';
 export * from './providers/CopilotCLIProvider';
+export * from './providers/KimiCodeProvider';
 export * from './providers/GrokBuildProvider';
 export * from './providers/CursorAgentProvider';
 export * from './providers/GeminiAntigravityProvider';

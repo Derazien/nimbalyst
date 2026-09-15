@@ -30,6 +30,7 @@ import { OpenAIPanel } from '../GlobalSettings/panels/OpenAIPanel';
 import { OpenAICodexPanel } from '../GlobalSettings/panels/OpenAICodexPanel';
 import { OpenCodePanel } from '../GlobalSettings/panels/OpenCodePanel';
 import { CopilotCLIPanel } from '../GlobalSettings/panels/CopilotCLIPanel';
+import { KimiCodePanel } from '../GlobalSettings/panels/KimiCodePanel';
 
 import { GrokBuildPanel } from '../GlobalSettings/panels/GrokBuildPanel';
 import { CursorAgentPanel } from '../GlobalSettings/panels/CursorAgentPanel';
@@ -90,6 +91,7 @@ const CLI_CATALOG_PROVIDERS = new Set<string>([
   'copilot-cli',
   'grok-build',
   'cursor-agent',
+  'kimi-code',
 ]);
 
 // Re-export ProviderConfig for backward compatibility
@@ -862,6 +864,23 @@ export function SettingsView({
       return panel;
     };
 
+    // kimi-code-cli has no page of its own: like claude-code-cli inside
+    // ClaudeCodePanel, the CLI sibling is configured from a section of the
+    // combined Kimi Code panel, so both sidebar routes render this.
+    const renderKimiCodePanel = () => (
+      <KimiCodePanel
+        config={providers['kimi-code'] || { enabled: false, testStatus: 'idle' }}
+        onToggle={(enabled: boolean) => handleProviderToggle('kimi-code', enabled)}
+        cli={{
+          config: providers['kimi-code-cli'] || { enabled: false, testStatus: 'idle' },
+          availableModels: availableModels['kimi-code-cli'] || [],
+          loading: loading['kimi-code-cli'] || false,
+          onToggle: (enabled: boolean) => handleProviderToggle('kimi-code-cli', enabled),
+          ...makeVisibilityHandlers('kimi-code-cli'),
+        }}
+      />
+    );
+
     const selectedCategoryId = String(selectedCategory);
     if (isExtensionSettingsRouteId(selectedCategoryId)) {
       const extensionRoute = loadedExtensionSettingsRoutes.find(
@@ -926,6 +945,9 @@ export function SettingsView({
         );
       case 'copilot-cli':
         return wrapWithOverride('copilot-cli', 'GitHub Copilot', <CopilotCLIPanel {...commonProps} />);
+      case 'kimi-code':
+      case 'kimi-code-cli':
+        return wrapWithOverride('kimi-code', 'Kimi Code', renderKimiCodePanel());
       case 'grok-build':
         return wrapWithOverride(
           'grok-build',
