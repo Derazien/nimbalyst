@@ -344,6 +344,9 @@ export class TerminalSessionManager {
       // Update terminal instance metadata if we have workspace context
       // Note: The workspace path is stored in the TerminalProcess for new architecture
       if (terminal.workspacePath) {
+        // This runs on every persist tick of every terminal with live output, and
+        // a store write is a blocking fsync on the main thread. Only a forced
+        // persist (exit, destroy, quit) has to reach disk before it returns.
         updateTerminalInstance(terminal.workspacePath, terminalId, {
           shellName: terminal.shell.name,
           shellPath: terminal.shell.path,
@@ -355,7 +358,7 @@ export class TerminalSessionManager {
           cursorY: terminal.cursorY,
           screenLines: terminal.screenLines,
           lastActiveAt: Date.now(),
-        });
+        }, { defer: !options.force });
       }
     } catch (error) {
       console.error(`[TerminalSessionManager] Failed to update terminal state for ${terminalId}:`, error);

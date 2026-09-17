@@ -280,6 +280,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - nimbalyst-wiki plugin: the local wiki browser view now says when its server has stopped, for example after the agent session that opened it ends, instead of looking live while edits go unsaved. Agents no longer ask local-wiki users to sign in to the team wiki when they have not asked for it.
 - Moving a local wiki to a team (`/nimbalyst-wiki:team` or `nim wiki move-to-team`) now also moves drawings, mind maps, spreadsheets and the other editor pages, plus the images and attachments pages link to, when `@nimbalyst/wiki-web` is installed. Before, they stayed in the local wiki and links to them broke.
 - Excalidraw diagrams drawn by the AI no longer clip or cram their labels: text wraps inside each box with padding, boxes grow to fit, and a cramped board can be repaired in one step.
+- Nimbalyst no longer stalls or stops responding while terminals and agent sessions are producing output.
 - Excalidraw diagrams drawn by the AI no longer clip or cram their labels, even offline: text wraps inside each box with padding, boxes grow to fit, a cramped board can be repaired in one step, and Excalidraw's fonts ship with the app instead of loading from the internet.
 - Moves, alignments, grouping and other AI edits to an Excalidraw diagram that is not open are saved instead of silently lost.
 

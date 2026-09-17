@@ -107,6 +107,32 @@ const DEFAULT_WORKSPACE_STATE: WorkspaceTerminalState = {
 let _terminalStore: Store<TerminalStoreSchema> | null = null;
 
 /**
+ * How long a deferred terminal update may wait before one write carries every
+ * pending update to disk. Each store write is a synchronous temp write, fsync
+ * and rename on the main thread, so a terminal with live output must not pay
+ * for one on every persist tick.
+ */
+export const TERMINAL_STORE_FLUSH_MS = 5000;
+
+type TerminalUpdates = Partial<Omit<TerminalInstance, 'id'>>;
+
+// Deferred updates waiting for the next write: workspace key -> terminal id -> merged updates.
+const pendingUpdates = new Map<string, Map<string, TerminalUpdates>>();
+let flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** The stored state as a reader should see it, with deferred updates applied. */
+function withPendingUpdates(key: string, state: WorkspaceTerminalState): WorkspaceTerminalState {
+  const pending = pendingUpdates.get(key);
+  if (!pending) return state;
+  const terminals = { ...state.terminals };
+  for (const [terminalId, updates] of pending) {
+    const terminal = terminals[terminalId];
+    if (terminal) terminals[terminalId] = { ...terminal, ...updates, id: terminalId };
+  }
+  return { ...state, terminals };
+}
+
+/**
  * Get the terminal store instance (lazy initialization)
  */
 function getTerminalStore(): Store<TerminalStoreSchema> {
@@ -146,7 +172,36 @@ export function getWorkspaceTerminalState(workspacePath: string): WorkspaceTermi
   const key = workspaceKey(workspacePath);
   const store = getTerminalStore();
   const workspaces = store.get('workspaces', {});
-  return workspaces[key] ?? { ...DEFAULT_WORKSPACE_STATE, terminals: {}, tabOrder: [] };
+  const stored = workspaces[key] ?? { ...DEFAULT_WORKSPACE_STATE, terminals: {}, tabOrder: [] };
+  return withPendingUpdates(key, stored);
+}
+
+/**
+ * The one place the store is written. Every write carries all deferred updates
+ * with it, so after any write nothing is pending. That is what stops an older
+ * deferred value from resurfacing over a newer immediate one. `apply` runs
+ * last, so the caller's state wins over anything deferred for its workspace.
+ */
+function writeWorkspaces(apply?: (workspaces: Record<string, WorkspaceTerminalState>) => void): void {
+  if (flushTimer) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  }
+  const store = getTerminalStore();
+  const workspaces = { ...store.get('workspaces', {}) };
+  for (const key of pendingUpdates.keys()) {
+    if (workspaces[key]) workspaces[key] = withPendingUpdates(key, workspaces[key]);
+  }
+  pendingUpdates.clear();
+  apply?.(workspaces);
+  store.set('workspaces', workspaces);
+}
+
+/**
+ * Write every deferred update to disk now, in a single store write.
+ */
+export function flushTerminalStore(): void {
+  if (pendingUpdates.size > 0) writeWorkspaces();
 }
 
 /**
@@ -154,10 +209,9 @@ export function getWorkspaceTerminalState(workspacePath: string): WorkspaceTermi
  */
 export function saveWorkspaceTerminalState(workspacePath: string, state: WorkspaceTerminalState): void {
   const key = workspaceKey(workspacePath);
-  const store = getTerminalStore();
-  const workspaces = { ...store.get('workspaces', {}) };
-  workspaces[key] = state;
-  store.set('workspaces', workspaces);
+  writeWorkspaces((workspaces) => {
+    workspaces[key] = state;
+  });
 }
 
 /**
@@ -208,13 +262,37 @@ export function getTerminalInstance(
 }
 
 /**
- * Update a terminal instance
+ * Update a terminal instance.
+ *
+ * Pass `defer` for updates that arrive on every burst of terminal output
+ * (cursor, screen snapshot, last-active time). They are visible to readers at
+ * once and reach disk with the next write, at most TERMINAL_STORE_FLUSH_MS
+ * later, instead of each costing a blocking write of their own.
  */
 export function updateTerminalInstance(
   workspacePath: string,
   terminalId: string,
-  updates: Partial<Omit<TerminalInstance, 'id'>>
+  updates: TerminalUpdates,
+  options: { defer?: boolean } = {}
 ): TerminalInstance | undefined {
+  if (options.defer) {
+    const current = getWorkspaceTerminalState(workspacePath).terminals[terminalId];
+    if (!current) return undefined;
+    const key = workspaceKey(workspacePath);
+    let workspacePending = pendingUpdates.get(key);
+    if (!workspacePending) {
+      workspacePending = new Map();
+      pendingUpdates.set(key, workspacePending);
+    }
+    workspacePending.set(terminalId, { ...workspacePending.get(terminalId), ...updates });
+    if (!flushTimer) {
+      flushTimer = setTimeout(flushTerminalStore, TERMINAL_STORE_FLUSH_MS);
+      // Pending snapshot state must never be what keeps the app alive on quit.
+      flushTimer.unref?.();
+    }
+    return { ...current, ...updates, id: terminalId };
+  }
+
   let updated: TerminalInstance | undefined;
   updateWorkspaceTerminalState(workspacePath, (state) => {
     const terminal = state.terminals[terminalId];
