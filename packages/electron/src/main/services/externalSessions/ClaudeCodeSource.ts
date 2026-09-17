@@ -32,6 +32,21 @@ import type {
   ExternalSessionSource,
   ExternalSourceOptions,
 } from "./types";
+import {
+  buildClaudeCliSubagentIndex,
+  isSubagentToolName,
+  type ClaudeCliSubagentMeta,
+} from "../ai/claudeCliSubagentIndex";
+
+/** A sidecar's meta file is a few hundred bytes; anything larger is not one. */
+const MAX_SUBAGENT_META_BYTES = 64 * 1024;
+
+/** `Agent`/`Task` calls seen so far in one parent log, and how far it was read. */
+interface SpawnScan {
+  cursor: ExternalCursor | null;
+  /** tool_use id -> flattened tool_result text, null until the result lands. */
+  spawns: Map<string, string | null>;
+}
 
 type ClaudeTitleState = Partial<
   Record<"custom" | "ai" | "fallback", { value: string; offset: number }>
@@ -43,6 +58,12 @@ export class ClaudeCodeSource implements ExternalSessionSource {
   private readonly discovery = new BoundedDiscovery();
   private readonly headers = new AcceptedHeaderCache();
   private readonly titles = new Map<string, ClaudeTitleState>();
+  /** Sidecar file -> the tool_use id that spawned it. A resolved link never changes. */
+  private readonly spawnIds = new Map<string, string>();
+  /** Parent log -> its spawns, read incrementally so a live follow never rescans it. */
+  private readonly spawnScans = new Map<string, SpawnScan>();
+  /** Sidecar file -> its meta, null when it has none. Read once per sidecar. */
+  private readonly subagentMetas = new Map<string, ClaudeCliSubagentMeta | null>();
 
   private updateTitle(
     file: string,
@@ -376,6 +397,12 @@ export class ClaudeCodeSource implements ExternalSessionSource {
       this.options.maxReadBytes,
       DEFAULT_READ_BYTES
     );
+    // `ref.parentToolUseId` is the sidecar's identity, the agent id from its file
+    // name. It is not a tool_use id and matches none, so it must never be what
+    // the parser nests under. Resolve the call that really spawned this agent.
+    const spawnToolUseId = ref.parentToolUseId
+      ? await this.resolveSpawnToolUseId(ref, readOptions)
+      : undefined;
     for (const record of page.entries) {
       const entry = record.value as ClaudeCodeEntry;
       if (!recordedCwd(entry.cwd))
@@ -421,10 +448,12 @@ export class ClaudeCodeSource implements ExternalSessionSource {
         timestamp: entry.timestamp ?? new Date(0).toISOString(),
       });
       if (!message) continue;
-      if (ref.parentToolUseId) {
+      // An agent whose spawn cannot be found is imported unlinked: an
+      // unattributable turn is shown at the top level, never swallowed.
+      if (spawnToolUseId) {
         message.content = JSON.stringify({
           ...JSON.parse(message.content),
-          parent_tool_use_id: ref.parentToolUseId,
+          parent_tool_use_id: spawnToolUseId,
         });
       }
       const sourceEntryId = createHash("sha256")
@@ -465,9 +494,122 @@ export class ClaudeCodeSource implements ExternalSessionSource {
     };
   }
 
+  /**
+   * The `Agent`/`Task` tool_use id that spawned a sidecar, by confidence: the
+   * meta file names it outright; an in-process teammate or a backgrounded agent
+   * is matched through the spawn's tool_result in the parent log. Undefined when
+   * nothing visible spawned it, which a later read may still resolve.
+   */
+  private async resolveSpawnToolUseId(
+    ref: ExternalSessionRef,
+    readOptions: ExternalReadOptions
+  ): Promise<string | undefined> {
+    const agentId = ref.parentToolUseId;
+    if (!agentId) return undefined;
+    const known = this.spawnIds.get(ref.filePath);
+    if (known) return known;
+
+    // The CLI writes the meta file once, at spawn. Reading it again on every
+    // append would re-validate a path the follow loop has already accepted, so
+    // a miss is remembered too. Only the parent scan is worth retrying.
+    let meta = this.subagentMetas.get(ref.filePath);
+    if (meta === undefined) {
+      meta = await this.readSubagentMeta(ref.filePath);
+      this.subagentMetas.set(ref.filePath, meta);
+    }
+    const spawns = meta?.toolUseId
+      ? []
+      : await this.scanSpawns(
+          path.join(
+            this.root,
+            encodeWorkspaceDir(ref.workspacePath),
+            `${ref.externalId}.jsonl`
+          ),
+          readOptions
+        );
+    const resolved = buildClaudeCliSubagentIndex({
+      sidecars: [{ agentId, meta, messageIds: [] }],
+      spawns,
+    }).spawnToolUseIdForAgentId(agentId);
+    if (resolved) this.spawnIds.set(ref.filePath, resolved);
+    return resolved;
+  }
+
+  /** `agent-<id>.meta.json` beside the sidecar. Optional, so every failure is a miss. */
+  private async readSubagentMeta(
+    sidecarPath: string
+  ): Promise<ClaudeCliSubagentMeta | null> {
+    const metaPath = sidecarPath.replace(/\.jsonl$/, ".meta.json");
+    try {
+      await validateSourcePath(this.root, metaPath);
+      const handle = await fs.open(metaPath, "r");
+      try {
+        const stat = await handle.stat();
+        if (!stat.isFile() || stat.size > MAX_SUBAGENT_META_BYTES) return null;
+        const bytes = Buffer.alloc(stat.size);
+        const read = await handle.read(bytes, 0, bytes.length, 0);
+        const parsed = JSON.parse(bytes.subarray(0, read.bytesRead).toString("utf8"));
+        return parsed && typeof parsed === "object" ? parsed : null;
+      } finally {
+        await handle.close();
+      }
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Every `Agent`/`Task` call in a parent log with its result text. The scan
+   * resumes from where the last one stopped, so following a session live reads
+   * each byte of the parent once instead of rescanning it for every sidecar page.
+   */
+  private async scanSpawns(
+    parentPath: string,
+    readOptions: ExternalReadOptions
+  ): Promise<Array<{ toolUseId: string; resultText: string | null }>> {
+    let scan = this.spawnScans.get(parentPath);
+    if (!scan) {
+      scan = { cursor: null, spawns: new Map() };
+      this.spawnScans.set(parentPath, scan);
+    }
+    try {
+      for (;;) {
+        const page = await readJsonl(parentPath, scan.cursor, {
+          ...this.options,
+          ...readOptions,
+        });
+        // A replaced or truncated parent invalidates everything read from it.
+        if (page.reset) scan.spawns.clear();
+        for (const { value } of page.entries) {
+          const content = value?.message?.content;
+          if (!Array.isArray(content)) continue;
+          for (const block of content) {
+            if (block?.type === "tool_use" && block.id && isSubagentToolName(block.name)) {
+              if (!scan.spawns.has(block.id)) scan.spawns.set(block.id, null);
+            } else if (block?.type === "tool_result" && scan.spawns.has(block.tool_use_id)) {
+              scan.spawns.set(
+                block.tool_use_id,
+                typeof block.content === "string" ? block.content : JSON.stringify(block.content)
+              );
+            }
+          }
+        }
+        const advanced = page.cursor.byteOffset > (scan.cursor?.byteOffset ?? -1);
+        scan.cursor = page.cursor;
+        if (!advanced || page.entries.length === 0) break;
+      }
+    } catch {
+      // A parent that cannot be read resolves nothing; the sidecar imports unlinked.
+    }
+    return [...scan.spawns].map(([toolUseId, resultText]) => ({ toolUseId, resultText }));
+  }
+
   dispose(): Promise<void> {
     this.headers.clear();
     this.titles.clear();
+    this.spawnIds.clear();
+    this.spawnScans.clear();
+    this.subagentMetas.clear();
     return this.discovery.dispose();
   }
 }

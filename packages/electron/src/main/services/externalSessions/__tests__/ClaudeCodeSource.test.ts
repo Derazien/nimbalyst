@@ -10,7 +10,9 @@ import { entryToMessage } from "../claudeCodeImportCodec";
 vi.mock("node:fs/promises", { spy: true });
 let dir: string;
 let source: ClaudeCodeSource;
-const cwd = "/workspace/a.b";
+// Resolved so the suite also runs on Windows, where the source reports a
+// drive-qualified workspace. On POSIX this is the same string.
+const cwd = path.resolve("/workspace/a.b");
 const timestamp = "2026-09-14T10:00:00.000Z";
 const entry = (uuid: string, content: unknown = "hello") => ({
   type: "user",
@@ -67,7 +69,12 @@ it("discovers log-verified parent and late sidecar files, reuses the manual code
   const subref = refs.find((r) => r.parentToolUseId === "agent1")!;
   expect(subref).toMatchObject({ externalId: "parent", filePath: sidecar });
   const sub = await source.readSince(subref, null);
-  expect(JSON.parse(sub.messages[0].content).parent_tool_use_id).toBe("agent1");
+  // Nothing in this transcript spawned agent1 and it has no meta file, so its
+  // turn is imported unlinked. The file-name id is the sidecar's identity, not a
+  // tool_use id: tagging with it links to nothing and strands the agent's tool
+  // calls at the top level.
+  expect(sub.messages).toHaveLength(1);
+  expect(JSON.parse(sub.messages[0].content).parent_tool_use_id ?? null).toBeNull();
   expect(sub.messages[0].sourceEntryId).not.toBe(
     main.messages[0].sourceEntryId
   );
@@ -112,6 +119,56 @@ it("follows a session whose shell cwd moves after launch, including its sidecars
   expect((await source.readSince(subref, null)).messages).toHaveLength(1);
 });
 
+it("links a sidecar's messages to the tool_use that spawned it, never to the file-name agent id", async () => {
+  const base = path.join(dir, encodeWorkspaceDir(cwd));
+  const spawn = (uuid: string, id: string) => ({
+    ...entry(uuid),
+    type: "assistant",
+    message: { role: "assistant", content: [{ type: "tool_use", id, name: "Agent", input: {} }] },
+  });
+  await write(path.join(base, "parent.jsonl"), [
+    spawn("a1", "toolu_meta"),
+    spawn("a2", "toolu_teammate"),
+    // An in-process teammate reports a mailbox handle, not its sidecar id.
+    entry("r2", [{ type: "tool_result", tool_use_id: "toolu_teammate", content: "Spawned. agent_id: researcher@alpha" }]),
+  ]);
+  const sidecarFor = async (agentId: string, meta: Record<string, unknown>) => {
+    const file = path.join(base, `parent/subagents/agent-${agentId}.jsonl`);
+    await write(file, [{ ...entry(`s-${agentId}`), isSidechain: true, agentId }]);
+    await fs.writeFile(file.replace(/\.jsonl$/, ".meta.json"), JSON.stringify(meta));
+  };
+  // The meta file names the spawn outright; a teammate's is found by its handle.
+  await sidecarFor("agentmeta", { toolUseId: "toolu_meta" });
+  await sidecarFor("agentmate", { name: "researcher", teamName: "alpha" });
+
+  const refs = await source.discover(cwd);
+  const parentIdOf = async (agentId: string) => {
+    const ref = refs.find((r) => r.parentToolUseId === agentId)!;
+    return JSON.parse((await source.readSince(ref, null)).messages[0].content).parent_tool_use_id;
+  };
+  expect(await parentIdOf("agentmeta")).toBe("toolu_meta");
+  expect(await parentIdOf("agentmate")).toBe("toolu_teammate");
+
+  // A spawn result can land after the sidecar is first read. The miss is not
+  // final: the parent scan resumes, and the turns that follow are linked.
+  await sidecarFor("agentlate", { name: "late", teamName: "alpha" });
+  const lateRef = (await source.discover(cwd)).find((r) => r.parentToolUseId === "agentlate")!;
+  const early = await source.readSince(lateRef, null);
+  expect(JSON.parse(early.messages[0].content).parent_tool_use_id ?? null).toBeNull();
+  await fs.appendFile(
+    path.join(base, "parent.jsonl"),
+    [
+      spawn("a3", "toolu_late"),
+      entry("r3", [{ type: "tool_result", tool_use_id: "toolu_late", content: "agent_id: late@alpha" }]),
+    ].map((e) => JSON.stringify(e)).join("\n") + "\n"
+  );
+  await fs.appendFile(
+    lateRef.filePath,
+    JSON.stringify({ ...entry("s-late-2"), isSidechain: true, agentId: "agentlate" }) + "\n"
+  );
+  const later = await source.readSince(lateRef, early.cursor);
+  expect(JSON.parse(later.messages[0].content).parent_tool_use_id).toBe("toolu_late");
+});
 it("rejects cwd encoding collisions, forged references and symlinks outside the source root", async () => {
   const file = path.join(dir, encodeWorkspaceDir(cwd), "parent.jsonl");
   await write(file, [{ ...entry("u1"), cwd: "/workspace/a-b" }]);
@@ -238,9 +295,11 @@ it("inherits sidecar cwd only from a verified parent and rejects malformed cwd o
   });
   const imported = await source.readSince(ref!, null);
   expect(imported.messages).toHaveLength(1);
+  // Nothing here spawned "child", so its turn is imported unlinked rather than
+  // tagged with the file-name id, which is no tool_use id and nests under nothing.
   expect(JSON.parse(imported.messages[0].content)).toMatchObject({
     type: "assistant",
-    parent_tool_use_id: "child",
+    parent_tool_use_id: null,
     message: assistant.message,
   });
   for (const conflict of [
