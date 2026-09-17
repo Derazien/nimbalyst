@@ -198,6 +198,20 @@ vi.mock("../../tutorial/tutorialAnalytics", () => ({
   captureTutorialMilestone: vi.fn(),
 }));
 
+// The send handler claims an imported session before dispatch, and tracks a
+// per-turn sibling inbox. Unmocked, both reach the database worker and
+// analytics, which open a real settings store at import.
+vi.mock("../../externalSessions/ExternalSessionService", () => ({
+  claimExternalSessionForLocalExecution: vi.fn(),
+}));
+vi.mock("../sessionInboxService", () => ({
+  sessionInbox: { begin: vi.fn(), current: vi.fn(), end: vi.fn(async () => undefined) },
+}));
+// Its static initializer is what opens that store, so every path to it counts.
+vi.mock("../../analytics/AnalyticsService", () => ({
+  AnalyticsService: { getInstance: () => ({ sendEvent: vi.fn() }) },
+}));
+
 import { MessageStreamingHandler } from "../MessageStreamingHandler";
 
 /** Records whether the SDK turn driver was entered at all. */

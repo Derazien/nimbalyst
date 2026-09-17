@@ -59,6 +59,11 @@ vi.mock("../../../utils/store", () => ({
 vi.mock("../../attachments/attachmentStagingRoot", () => ({
   resolveAttachmentStagingAllowDirectories: () => [],
 }));
+// The fork's submit path looks up the workspace window for side notes. Unmocked,
+// WindowManager loads the whole window and extension graph for real.
+vi.mock("../../../window/WindowManager", () => ({
+  findWindowByWorkspace: () => null,
+}));
 
 describe("CLI production external ownership", () => {
   beforeEach(() => {
