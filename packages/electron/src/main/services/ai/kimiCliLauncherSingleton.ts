@@ -193,6 +193,8 @@ export async function ensureKimiCliSession(
           console.log(`[KimiCliLauncher] kimi exited for ${input.sessionId} with code ${exitCode}`);
           runtime.poll();
           runtime.stop();
+          // A relaunch may already own this session id; leave it alone.
+          if (runtimes.get(input.sessionId) !== runtime) return;
           runtimes.delete(input.sessionId);
           void fileWatcher.stopForSession(input.sessionId).catch(() => {});
           void stateManager.endSession(input.sessionId).catch(() => {});

@@ -99,3 +99,22 @@ it('asks a Kimi Code CLI terminal for its turn state instead of a Claude PID fil
   expect(writes).toEqual(['\x03']);
   expect(result).toEqual({ success: true, resolvedAfter: 'first-interrupt' });
 });
+
+it('does not let an old process exiting late remove the terminal that replaced it under the same id', async () => {
+  const { TerminalSessionManager } = await import('../TerminalSessionManager');
+  const manager = new TerminalSessionManager();
+  let exitOld: ((e: { exitCode: number }) => Promise<void>) | undefined;
+  const oldProcess = {
+    pty: { pid: 1, onData: () => {}, onExit: (cb: typeof exitOld) => { exitOld = cb; }, kill: () => {} },
+    sessionId: TERMINAL_ID, workspacePath: WORKSPACE, shell: { name: 'kimi', path: 'kimi.exe' }, cwd: WORKSPACE,
+    historyFile: '', cols: 80, rows: 24, cursorX: 0, cursorY: 0, scrollbackBuffer: '', metadata: {}, outputSequence: 0,
+  };
+  await (manager as any).registerTerminalProcess(TERMINAL_ID, oldProcess);
+  // destroyTerminal drops the entry at once; a relaunch registers a new one before the old exit arrives.
+  (manager as any).terminals.delete(TERMINAL_ID);
+  const replacement = { ...oldProcess, pty: { ...oldProcess.pty, pid: 2 } };
+  (manager as any).terminals.set(TERMINAL_ID, replacement);
+
+  await exitOld!({ exitCode: 0 });
+  expect((manager as any).terminals.get(TERMINAL_ID)).toBe(replacement);
+});

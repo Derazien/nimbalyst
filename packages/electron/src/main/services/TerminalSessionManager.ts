@@ -941,8 +941,11 @@ export class TerminalSessionManager {
         exitCode,
       });
 
-      // Remove from map
-      this.terminals.delete(terminalId);
+      // Remove from map, unless a new terminal already took this id (a
+      // destroy followed by a relaunch lands before the old process exits).
+      if (this.terminals.get(terminalId) === terminalProcess) {
+        this.terminals.delete(terminalId);
+      }
     });
 
     // Persist initial state before adding to map to avoid race with quick exit
