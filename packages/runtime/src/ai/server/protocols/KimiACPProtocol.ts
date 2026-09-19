@@ -217,6 +217,7 @@ export class KimiACPProtocol implements AgentProtocol {
   /** An injected command (tests, embedding hosts) is never replaced by path discovery. */
   private readonly commandPinned: boolean;
   private processEnv: Record<string, string> | undefined;
+  private launchEnv: Record<string, string> = {};
   private readonly spawnProcess;
   private readonly extraEnv: Record<string, string>;
   private readonly onPermissionRequest?: KimiACPProtocolDeps['onPermissionRequest'];
@@ -246,12 +247,17 @@ export class KimiACPProtocol implements AgentProtocol {
     this.onTurnFilesEdited = deps?.onTurnFilesEdited;
   }
 
-  setKimiPath(path: string): void {
+  /**
+   * `prefixArgs`/`launchEnv` come from a Windows npm shim resolved to Node
+   * plus its script (providers/kimiLaunch.ts); a native binary has neither.
+   */
+  setKimiPath(path: string, prefixArgs: string[] = [], launchEnv: Record<string, string> = {}): void {
     if (this.commandPinned) {
       return;
     }
     this.command = path;
-    this.args = ['acp'];
+    this.args = [...prefixArgs, 'acp'];
+    this.launchEnv = launchEnv;
   }
 
   setProcessEnv(env: Record<string, string> | undefined): void {
@@ -577,7 +583,7 @@ export class KimiACPProtocol implements AgentProtocol {
     this.processExitError = null;
     // Scrub after the final merge, never before: a key deleted upstream is
     // merely absent, and absence cannot mask the spread of the parent env.
-    const env = scrubProviderApiKeys({ ...(this.processEnv ?? process.env), ...this.extraEnv });
+    const env = scrubProviderApiKeys({ ...(this.processEnv ?? process.env), ...this.launchEnv, ...this.extraEnv });
 
     const child = this.spawnProcess(this.command, this.args, {
       stdio: ['pipe', 'pipe', 'pipe'],

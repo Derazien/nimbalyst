@@ -43,6 +43,7 @@ import {
 import { ModelIdentifier } from '../ModelIdentifier';
 import { KimiACPProtocol, type OnBeforeKimiFileWrite, type OnKimiTurnFilesEdited } from '../protocols/KimiACPProtocol';
 import { scrubProviderApiKeys } from '../providerApiKeyScrub';
+import { resolveKimiLaunch, type KimiLaunch } from './kimiLaunch';
 import { ProtocolEvent, ProtocolSession } from '../protocols/ProtocolInterface';
 import { PermissionMode } from './ProviderPermissionMixin';
 import { McpConfigService } from '../services/McpConfigService';
@@ -215,17 +216,26 @@ export class KimiCodeProvider extends BaseAgentProvider {
     KimiCodeProvider.onTurnFilesEdited = handler;
   }
 
-  private static resolveKimiExecutableForRuntime(pathValue?: string): string | undefined {
+  /**
+   * The first kimi install that can actually be spawned. A Windows npm/pnpm
+   * `kimi.cmd` shim resolves to Node plus the script it launches (see
+   * kimiLaunch.ts); a shim that cannot be read is skipped.
+   */
+  private static resolveKimiLaunchForRuntime(pathValue?: string): KimiLaunch | undefined {
     if (KimiCodeProvider.kimiPathLoader) {
       const customPath = KimiCodeProvider.kimiPathLoader();
-      if (customPath) {
-        return customPath;
+      const launch = customPath ? resolveKimiLaunch(customPath, pathValue) : undefined;
+      if (launch) {
+        return launch;
       }
     }
 
     for (const candidate of getSystemKimiExecutableCandidates(pathValue)) {
       if (candidate === 'kimi' || fs.existsSync(candidate)) {
-        return candidate;
+        const launch = resolveKimiLaunch(candidate, pathValue);
+        if (launch) {
+          return launch;
+        }
       }
     }
 
@@ -535,23 +545,23 @@ export class KimiCodeProvider extends BaseAgentProvider {
   }
 
   private static isKimiInstalled(): boolean {
-    const command = KimiCodeProvider.resolveKimiExecutableForRuntime(
+    const launch = KimiCodeProvider.resolveKimiLaunchForRuntime(
       KimiCodeProvider.enhancedPathLoader?.() || process.env.PATH
-    ) || 'kimi';
+    ) ?? { command: 'kimi', prefixArgs: [], env: {} };
     // Use the enhanced PATH (npm-global, ~/.kimi-code/bin, etc.) so the runtime
     // check matches what the settings panel sees. A packaged app launched from
     // a GUI shell has a minimal process.env.PATH, which misses every place
     // kimi is typically installed.
-    let env: NodeJS.ProcessEnv | undefined;
+    let env: NodeJS.ProcessEnv = { ...process.env, ...launch.env };
     if (KimiCodeProvider.enhancedPathLoader) {
       try {
-        env = { ...process.env, PATH: KimiCodeProvider.enhancedPathLoader() };
+        env = { ...env, PATH: KimiCodeProvider.enhancedPathLoader() };
       } catch {
         // fall through to default env
       }
     }
     try {
-      execFileSync(command, ['--version'], { stdio: 'pipe', timeout: 5000, env });
+      execFileSync(launch.command, [...launch.prefixArgs, '--version'], { stdio: 'pipe', timeout: 5000, env });
       return true;
     } catch {
       return false;
@@ -559,11 +569,11 @@ export class KimiCodeProvider extends BaseAgentProvider {
   }
 
   private configureProtocol(): void {
-    const resolvedPath = KimiCodeProvider.resolveKimiExecutableForRuntime(
+    const launch = KimiCodeProvider.resolveKimiLaunchForRuntime(
       KimiCodeProvider.enhancedPathLoader?.() || process.env.PATH
     );
-    if (resolvedPath) {
-      this.protocol.setKimiPath(resolvedPath);
+    if (launch) {
+      this.protocol.setKimiPath(launch.command, launch.prefixArgs, launch.env);
     }
     // Default: `kimi acp` (from the @moonshot-ai/kimi-code install)
 

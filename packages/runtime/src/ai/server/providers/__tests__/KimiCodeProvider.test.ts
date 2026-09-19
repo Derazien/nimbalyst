@@ -39,6 +39,7 @@ import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { KimiCodeProvider } from '../KimiCodeProvider';
+import { readNodeShimTarget } from '../kimiLaunch';
 import { KimiACPProtocol } from '../../protocols/KimiACPProtocol';
 import type { ProtocolEvent, ProtocolSession, SessionOptions } from '../../protocols/ProtocolInterface';
 import type { StreamChunk } from '../../types';
@@ -252,7 +253,7 @@ describe('KimiCodeProvider', () => {
       const provider = new KimiCodeProvider({ protocol: protocol as unknown as KimiACPProtocol });
       (provider as any).configureProtocol();
 
-      expect(protocol.setKimiPath).toHaveBeenCalledWith('D:\\tools\\kimi\\kimi.exe');
+      expect(protocol.setKimiPath).toHaveBeenCalledWith('D:\\tools\\kimi\\kimi.exe', [], {});
       expect(protocol.setProcessEnv).toHaveBeenCalledTimes(1);
       const env = protocol.setProcessEnv.mock.calls[0][0] as Record<string, string>;
       expect(env.CUSTOM_FLAG).toBe('1');
@@ -385,6 +386,67 @@ describe('KimiCodeProvider', () => {
       provider.destroy();
       expect(protocol.destroy).toHaveBeenCalledTimes(1);
     });
+  });
+
+  describe('Windows npm install (kimi.cmd shim)', () => {
+    // What `npm install -g @moonshot-ai/kimi-code` writes on Windows
+    // (cmd-shim, npm 10), and pnpm's equivalent.
+    const npmShim = (target: string) => [
+      '@ECHO off', 'GOTO start', ':find_dp0', 'SET dp0=%~dp0', 'EXIT /b', ':start', 'SETLOCAL', 'CALL :find_dp0', '',
+      'IF EXIST "%dp0%\\node.exe" (', '  SET "_prog=%dp0%\\node.exe"', ') ELSE (', '  SET "_prog=node"',
+      '  SET PATHEXT=%PATHEXT:;.JS;=;%', ')', '',
+      `endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\${target}" %*`, '',
+    ].join('\r\n');
+    const pnpmShim = [
+      '@SETLOCAL',
+      '@IF EXIST "%~dp0\\node.exe" (',
+      '  "%~dp0\\node.exe"  "%~dp0\\global\\5\\node_modules\\@moonshot-ai\\kimi-code\\dist\\main.mjs" %*',
+      ') ELSE (',
+      '  @SET PATHEXT=%PATHEXT:;.JS;=;%',
+      '  node  "%~dp0\\global\\5\\node_modules\\@moonshot-ai\\kimi-code\\dist\\main.mjs" %*',
+      ')',
+    ].join('\r\n');
+
+    it('reads the script a Windows npm or pnpm shim launches, relative to the shim', () => {
+      expect(readNodeShimTarget(npmShim('node_modules\\@moonshot-ai\\kimi-code\\dist\\main.mjs'), 'C:\\npm\\kimi.cmd'))
+        .toBe(path.win32.join('C:\\npm', 'node_modules', '@moonshot-ai', 'kimi-code', 'dist', 'main.mjs'));
+      expect(readNodeShimTarget(pnpmShim, 'C:\\pnpm\\kimi.cmd'))
+        .toBe(path.win32.join('C:\\pnpm', 'global', '5', 'node_modules', '@moonshot-ai', 'kimi-code', 'dist', 'main.mjs'));
+      // A batch file that launches no node script is not something we can run.
+      expect(readNodeShimTarget('@echo off\r\n"%~dp0\\kimi.exe" %*\r\n', 'C:\\x\\kimi.cmd')).toBeUndefined();
+    });
+
+    it.runIf(process.platform === 'win32')('runs a turn when kimi is installed as an npm kimi.cmd shim', async () => {
+      const prefix = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-npm-prefix-'));
+      const workspacePath = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-npm-ws-'));
+      const auditPath = path.join(workspacePath, 'audit.ndjson');
+      const agentScript = fileURLToPath(new URL('../../protocols/__tests__/fixtures/mockKimiAcpAgent.mjs', import.meta.url));
+      const shimPath = path.join(prefix, 'kimi.cmd');
+      fs.writeFileSync(shimPath, npmShim(path.relative(prefix, agentScript)));
+      // Discovery must not find the real kimi.exe on this machine instead.
+      KimiCodeProvider.setKimiPathLoader(() => shimPath);
+      const protocol = new KimiACPProtocol(undefined, { env: { KIMI_ACP_TEST_AUDIT_PATH: auditPath } });
+      const provider = new KimiCodeProvider({ protocol });
+      await provider.initialize({ model: 'kimi-code:k3' });
+
+      try {
+        const chunks: StreamChunk[] = [];
+        for await (const chunk of provider.sendMessage('Apply the kimi edit', undefined, undefined, undefined, workspacePath)) {
+          chunks.push(chunk);
+        }
+
+        expect(chunks.filter((c) => c.type === 'error')).toEqual([]);
+        expect(chunks.some((c) => c.type === 'complete')).toBe(true);
+        expect(fs.readFileSync(auditPath, 'utf8')).toContain('"session/new"');
+        // The install check runs the same launch, never the .cmd itself
+        // (Node refuses to execFile a batch file: EINVAL).
+        expect(String(execFileSyncMock.mock.calls[0]?.[0]).toLowerCase().endsWith('.cmd')).toBe(false);
+      } finally {
+        protocol.destroy();
+        fs.rmSync(prefix, { recursive: true, force: true });
+        fs.rmSync(workspacePath, { recursive: true, force: true });
+      }
+    }, 15000);
   });
 
   describe('against the mock kimi agent', () => {
