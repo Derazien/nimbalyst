@@ -63,7 +63,7 @@ export function KimiCodePanel({
           <AlphaBadge size="sm" tooltip={SETTINGS_ALPHA_TOOLTIP} />
         </h3>
         <p className="provider-panel-description text-sm leading-relaxed text-[var(--nim-text-muted)]">
-          Moonshot's Kimi coding agent via the ACP (Agent Communication Protocol) server mode.
+          Moonshot's Kimi coding agent via its ACP (Agent Client Protocol) server mode.
           Uses your Kimi membership for authentication — no API key.
         </p>
       </div>

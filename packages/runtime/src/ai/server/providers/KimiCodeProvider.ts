@@ -2,7 +2,7 @@
  * Kimi Code Agent Provider
  *
  * Integrates the Kimi Code CLI (`kimi`) into Nimbalyst through its ACP
- * (Agent Communication Protocol) server mode: `kimi acp` speaks standard ACP
+ * (Agent Client Protocol) server mode: `kimi acp` speaks standard ACP
  * over stdio, driven by the sibling `KimiACPProtocol` adapter under
  * `protocols/`.
  *
