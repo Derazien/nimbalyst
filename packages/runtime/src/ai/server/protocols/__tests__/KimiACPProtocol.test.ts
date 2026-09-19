@@ -163,15 +163,21 @@ describe('KimiACPProtocol', () => {
       expect(events.some((event) => event.type === 'text' && event.content === 'Kimi turn started')).toBe(true);
       expect(events.some((event) => event.type === 'text' && event.content === 'Kimi turn done')).toBe(true);
 
-      const toolCall = events.find((event) => event.type === 'tool_call' && event.toolCall?.id === 'tool-1');
-      expect(toolCall?.toolCall?.name).toBe('Write kimi-target.txt');
-      expect(toolCall?.toolCall?.arguments?.path).toBe(path.join(workspacePath, 'kimi-target.txt'));
+      // Real kimi announces a tool with a bare title first and sends the
+      // arguments in a later in_progress update. The card must carry those
+      // arguments, and only one tool_call may be emitted for the call.
+      const toolCalls = events.filter((event) => event.type === 'tool_call' && event.toolCall?.id === '0:tool_kimi_write_1');
+      expect(toolCalls).toHaveLength(1);
+      expect(toolCalls[0].toolCall?.name).toBe('Write');
+      expect(toolCalls[0].toolCall?.arguments?.content).toBe('after from kimi\n');
+      expect(typeof toolCalls[0].toolCall?.arguments?.path).toBe('string');
 
       const toolResult = events.find((event) => event.type === 'tool_result');
-      expect(toolResult?.toolResult?.id).toBe('tool-1');
-      expect(toolResult?.toolResult?.name).toBe('Write kimi-target.txt');
+      expect(toolResult?.toolResult?.id).toBe('0:tool_kimi_write_1');
+      // A progress title ("Writing kimi-target.txt") never replaces the tool name.
+      expect(toolResult?.toolResult?.name).toBe('Write');
       expect(toolResult?.toolResult?.result?.success).toBe(true);
-      expect(toolResult?.toolResult?.result?.output).toMatchObject({ bytesWritten: 16 });
+      expect(toolResult?.toolResult?.result?.output).toBe('Wrote 16 bytes to kimi-target.txt');
 
       const usage = events.find((event) => event.type === 'usage');
       expect(usage?.contextFillTokens).toBe(123);
@@ -247,7 +253,7 @@ describe('KimiACPProtocol', () => {
 
       expect(preEditContent).toBe('before from kimi\n');
       expect(fs.readFileSync(targetPath, 'utf-8')).toBe('after from kimi\n');
-      expect(editedFiles).toContain(targetPath);
+      expect(editedFiles.map((filePath) => path.normalize(filePath))).toContain(targetPath);
     } finally {
       cleanup();
     }

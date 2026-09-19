@@ -168,7 +168,15 @@ class MockKimiAcpAgent {
       return { stopReason: 'cancelled' };
     }
 
+    // Event order below was recorded from a real `kimi acp` (0.43.1) turn on
+    // 2026-09-17: the first tool_call carries only a title; the arguments and
+    // the absolute location arrive in a later in_progress update, right
+    // before the fs/write_text_file call; kimi spells absolute paths with
+    // forward slashes on every platform and the rawInput path is relative to
+    // the session cwd.
     const targetPath = path.join(session.cwd, 'kimi-target.txt');
+    const kimiStylePath = targetPath.replace(/\\/g, '/');
+    const toolCallId = '0:tool_kimi_write_1';
 
     await this.connection.sessionUpdate({
       sessionId: params.sessionId,
@@ -190,30 +198,44 @@ class MockKimiAcpAgent {
       sessionId: params.sessionId,
       update: {
         sessionUpdate: 'tool_call',
-        toolCallId: 'tool-1',
-        title: 'Write kimi-target.txt',
+        toolCallId,
+        title: 'Write',
         kind: 'edit',
         status: 'pending',
-        locations: [{ path: targetPath }],
-        rawInput: { path: targetPath, content: 'after from kimi\n' },
+        content: [],
       },
     });
+
+    for (let i = 0; i < 2; i += 1) {
+      await this.connection.sessionUpdate({
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: 'tool_call_update',
+          toolCallId,
+          status: 'in_progress',
+          content: [],
+        },
+      });
+    }
 
     const permission = await this.connection.requestPermission({
       sessionId: params.sessionId,
       toolCall: {
-        toolCallId: 'tool-1',
-        title: 'Write kimi-target.txt',
+        toolCallId,
+        title: 'Write',
         kind: 'edit',
         status: 'pending',
-        locations: [{ path: targetPath }],
-        rawInput: { path: targetPath, content: 'after from kimi\n' },
       },
-      options: [
-        { optionId: 'approve_once', name: 'Approve once', kind: 'allow_once' },
-        { optionId: 'approve_always', name: 'Approve for this session', kind: 'allow_always' },
-        { optionId: 'reject', name: 'Reject', kind: 'reject_once' },
-      ],
+      options: process.env.KIMI_ACP_TEST_NO_REJECT_OPTION === '1'
+        ? [
+            { optionId: 'approve_once', name: 'Approve once', kind: 'allow_once' },
+            { optionId: 'approve_always', name: 'Approve for this session', kind: 'allow_always' },
+          ]
+        : [
+            { optionId: 'approve_once', name: 'Approve once', kind: 'allow_once' },
+            { optionId: 'approve_always', name: 'Approve for this session', kind: 'allow_always' },
+            { optionId: 'reject', name: 'Reject', kind: 'reject_once' },
+          ],
     });
     audit('session/request_permission:response', {
       sessionId: params.sessionId,
@@ -222,11 +244,12 @@ class MockKimiAcpAgent {
     });
 
     if (permission.outcome.outcome !== 'selected' || permission.outcome.optionId === 'reject') {
+      // Not observed live (the probe only approved); shape assumed.
       await this.connection.sessionUpdate({
         sessionId: params.sessionId,
         update: {
           sessionUpdate: 'tool_call_update',
-          toolCallId: 'tool-1',
+          toolCallId,
           status: 'failed',
           rawOutput: { error: 'User denied the edit' },
         },
@@ -234,9 +257,23 @@ class MockKimiAcpAgent {
       return { stopReason: 'cancelled' };
     }
 
+    await this.connection.sessionUpdate({
+      sessionId: params.sessionId,
+      update: {
+        sessionUpdate: 'tool_call_update',
+        toolCallId,
+        title: 'Writing kimi-target.txt',
+        kind: 'edit',
+        status: 'in_progress',
+        rawInput: { path: 'kimi-target.txt', content: 'after from kimi\n' },
+        locations: [{ path: kimiStylePath }],
+        content: [],
+      },
+    });
+
     await this.connection.writeTextFile({
       sessionId: params.sessionId,
-      path: targetPath,
+      path: kimiStylePath,
       content: 'after from kimi\n',
     });
 
@@ -244,22 +281,17 @@ class MockKimiAcpAgent {
       sessionId: params.sessionId,
       update: {
         sessionUpdate: 'tool_call_update',
-        toolCallId: 'tool-1',
-        status: 'in_progress',
-        content: [{ type: 'content', content: { type: 'text', text: '{"path":' } }],
-      },
-    });
-
-    await this.connection.sessionUpdate({
-      sessionId: params.sessionId,
-      update: {
-        sessionUpdate: 'tool_call_update',
-        toolCallId: 'tool-1',
+        toolCallId,
         status: 'completed',
-        rawOutput: { path: targetPath, bytesWritten: 16 },
+        rawOutput: 'Wrote 16 bytes to kimi-target.txt',
+        locations: [{ path: kimiStylePath }],
+        content: [],
       },
     });
 
+    // Not observed from kimi 0.43.1 in the recorded turn (no usage_update and
+    // no usage on the prompt response); kept so the adapter's handling of the
+    // ACP usage_update notification stays covered.
     await this.connection.sessionUpdate({
       sessionId: params.sessionId,
       update: { sessionUpdate: 'usage_update', used: 123, size: 256000 },

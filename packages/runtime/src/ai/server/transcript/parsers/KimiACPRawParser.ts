@@ -82,6 +82,11 @@ export class KimiACPRawParser implements IRawMessageParser {
   // batch so a tool_call_update or a session/request_permission row for the
   // same call doesn't double-create.
   private readonly emittedStartedToolCallIds = new Set<string>();
+  // Real kimi announces a tool with a bare title first and sends the
+  // arguments in a later in_progress update. The start is held here until an
+  // update carries rawInput or locations (or the call ends), so the card is
+  // never written with empty arguments.
+  private readonly pendingStarts = new Map<string, { title?: string; kind?: string }>();
 
   async parseMessage(
     msg: RawMessage,
@@ -135,10 +140,10 @@ export class KimiACPRawParser implements IRawMessageParser {
   // Output messages (item.completed + session/update + session/request_permission)
   // ---------------------------------------------------------------------------
 
-  private parseOutputMessage(
+  private async parseOutputMessage(
     msg: RawMessage,
     context: ParseContext,
-  ): CanonicalEventDescriptor[] {
+  ): Promise<CanonicalEventDescriptor[]> {
     let parsed: Record<string, unknown>;
     try {
       parsed = JSON.parse(msg.content);
@@ -202,11 +207,11 @@ export class KimiACPRawParser implements IRawMessageParser {
     return [{ type: 'assistant_message', text, createdAt: msg.createdAt }];
   }
 
-  private parseSessionUpdate(
+  private async parseSessionUpdate(
     msg: RawMessage,
     update: ACPSessionUpdate,
     context: ParseContext,
-  ): CanonicalEventDescriptor[] {
+  ): Promise<CanonicalEventDescriptor[]> {
     const kind = update.sessionUpdate;
 
     switch (kind) {
@@ -227,7 +232,7 @@ export class KimiACPRawParser implements IRawMessageParser {
         return this.parseToolCall(msg, update, context);
 
       case 'tool_call_update':
-        return this.parseToolCallUpdate(msg, update);
+        return this.parseToolCallUpdate(msg, update, context);
 
       case 'usage_update':
         // Token counts ride the provider's `complete` event; no canonical
@@ -248,45 +253,94 @@ export class KimiACPRawParser implements IRawMessageParser {
     const callId = typeof update.toolCallId === 'string' ? update.toolCallId : '';
     if (!callId) return [];
 
+    return this.startOrHold(msg, context, callId, update.title, update.kind, update.rawInput,
+      update.locations as ACPToolCallLocation[] | null | undefined);
+  }
+
+  /**
+   * Emit the started descriptor now when the call already carries arguments,
+   * otherwise hold it until an update brings them. A call another row (or an
+   * earlier batch) already started is never started twice.
+   */
+  private startOrHold(
+    msg: RawMessage,
+    context: ParseContext,
+    callId: string,
+    title: string | undefined,
+    kind: string | undefined,
+    rawInput: unknown,
+    locations: ACPToolCallLocation[] | null | undefined,
+  ): CanonicalEventDescriptor[] {
     if (this.emittedStartedToolCallIds.has(callId) || context.hasToolCall(callId)) {
       return [];
     }
+    if (!this.hasArguments(rawInput, locations)) {
+      const held = this.pendingStarts.get(callId);
+      this.pendingStarts.set(callId, { title: held?.title ?? title, kind: held?.kind ?? kind });
+      return [];
+    }
+    const held = this.pendingStarts.get(callId);
+    this.pendingStarts.delete(callId);
     this.emittedStartedToolCallIds.add(callId);
-
-    return [this.toolCallStartedDescriptor(
-      msg,
-      callId,
-      update.title,
-      update.kind,
-      update.rawInput,
-      update.locations as ACPToolCallLocation[] | null | undefined,
-    )];
+    return [this.toolCallStartedDescriptor(msg, callId, held?.title ?? title, held?.kind ?? kind, rawInput, locations)];
   }
 
-  private parseToolCallUpdate(
+  private hasArguments(rawInput: unknown, locations: ACPToolCallLocation[] | null | undefined): boolean {
+    if (this.firstLocationPath(locations)) return true;
+    if (rawInput === null || rawInput === undefined) return false;
+    if (typeof rawInput === 'object') return Object.keys(rawInput as object).length > 0;
+    return true;
+  }
+
+  private async parseToolCallUpdate(
     msg: RawMessage,
     update: ACPSessionUpdate,
-  ): CanonicalEventDescriptor[] {
+    context: ParseContext,
+  ): Promise<CanonicalEventDescriptor[]> {
     const callId = typeof update.toolCallId === 'string' ? update.toolCallId : '';
     if (!callId) return [];
 
-    // Don't synthesize tool_call_started from update events. ACP always emits
-    // a `tool_call` (or a request_permission row) first; emitting a started
-    // here with a missing title would display a generic name or dupe the
-    // existing canonical event. Only terminal states produce a descriptor.
     const status = typeof update.status === 'string' ? update.status : '';
-    if (status !== 'completed' && status !== 'failed') {
-      return [];
+    const isTerminal = status === 'completed' || status === 'failed';
+    const locations = update.locations as ACPToolCallLocation[] | null | undefined;
+    const descriptors: CanonicalEventDescriptor[] = [];
+
+    const held = this.pendingStarts.get(callId);
+    if (held) {
+      // The start was held for its arguments: release it on the first update
+      // that carries them, or with the terminal update if none ever did.
+      if (this.hasArguments(update.rawInput, locations) || isTerminal) {
+        this.pendingStarts.delete(callId);
+        this.emittedStartedToolCallIds.add(callId);
+        descriptors.push(this.toolCallStartedDescriptor(msg, callId, held.title, held.kind, update.rawInput, locations));
+      }
+    } else if (
+      !isTerminal
+      && this.hasArguments(update.rawInput, locations)
+      && !this.emittedStartedToolCallIds.has(callId)
+      && !context.hasToolCall(callId)
+      && (await context.findByProviderToolCallId(callId)) === null
+    ) {
+      // The tool_call row was processed by an earlier batch that held the
+      // start and then ended. Nothing canonical exists for the call, so this
+      // argument-carrying update is the first chance to write the card.
+      this.emittedStartedToolCallIds.add(callId);
+      descriptors.push(this.toolCallStartedDescriptor(msg, callId, update.title, update.kind, update.rawInput, locations));
+    }
+
+    if (!isTerminal) {
+      return descriptors;
     }
 
     const isError = status === 'failed';
-    return [{
+    descriptors.push({
       type: 'tool_call_completed',
       providerToolCallId: callId,
       status: isError ? 'error' : 'completed',
       result: this.extractResultText(update),
       isError,
-    }];
+    });
+    return descriptors;
   }
 
   private parseRequestPermission(
@@ -300,19 +354,7 @@ export class KimiACPRawParser implements IRawMessageParser {
     const callId = typeof toolCall.toolCallId === 'string' ? toolCall.toolCallId : '';
     if (!callId) return [];
 
-    if (this.emittedStartedToolCallIds.has(callId) || context.hasToolCall(callId)) {
-      return [];
-    }
-    this.emittedStartedToolCallIds.add(callId);
-
-    return [this.toolCallStartedDescriptor(
-      msg,
-      callId,
-      toolCall.title,
-      toolCall.kind,
-      toolCall.rawInput,
-      toolCall.locations,
-    )];
+    return this.startOrHold(msg, context, callId, toolCall.title, toolCall.kind, toolCall.rawInput, toolCall.locations);
   }
 
   // ---------------------------------------------------------------------------

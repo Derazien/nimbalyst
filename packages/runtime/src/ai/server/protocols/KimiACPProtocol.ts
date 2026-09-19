@@ -124,6 +124,13 @@ interface SessionToolState {
   kind?: string | null;
   rawInput?: unknown;
   locations?: ToolCallLocation[] | null;
+  /**
+   * Whether a tool_call event has been emitted for this call. Real kimi
+   * announces a call with a bare title and sends the arguments in a later
+   * in_progress update, so the event waits for that update (or the terminal
+   * one) rather than showing an empty card.
+   */
+  announced: boolean;
 }
 
 interface KimiSessionState {
@@ -654,24 +661,29 @@ export class KimiACPProtocol implements AgentProtocol {
       locations: params.toolCall.locations,
     });
 
-    turn?.queue.push({
-      type: 'tool_call',
-      toolCall: {
-        id: requestId,
-        name: toolState.name,
-        arguments: this.mergeLocationPath(
-          this.normalizeArguments(params.toolCall.rawInput),
-          toolState.locations,
-        ),
-      },
-      metadata: {
-        rawEvent: {
-          type: 'session/request_permission_preview',
-          sessionId: params.sessionId,
-          toolCall: params.toolCall,
+    // Real kimi's permission request names the tool but carries no
+    // arguments; the card is announced by the update that brings them.
+    if (!toolState.announced && this.hasToolArguments(toolState.rawInput, toolState.locations)) {
+      toolState.announced = true;
+      turn?.queue.push({
+        type: 'tool_call',
+        toolCall: {
+          id: requestId,
+          name: toolState.name,
+          arguments: this.mergeLocationPath(
+            this.normalizeArguments(toolState.rawInput),
+            toolState.locations,
+          ),
         },
-      },
-    });
+        metadata: {
+          rawEvent: {
+            type: 'session/request_permission_preview',
+            sessionId: params.sessionId,
+            toolCall: params.toolCall,
+          },
+        },
+      });
+    }
 
     const decision = this.onPermissionRequest
       ? await this.onPermissionRequest({
@@ -756,45 +768,50 @@ export class KimiACPProtocol implements AgentProtocol {
           locations: update.locations,
         });
 
-        return [{
-          type: 'tool_call',
-          toolCall: {
-            id: update.toolCallId,
-            name: toolName,
-            arguments: this.mergeLocationPath(
-              this.normalizeArguments(update.rawInput),
-              toolState.locations,
-            ),
-          },
-        }];
+        // Held until an update carries the arguments (real kimi order).
+        if (!this.hasToolArguments(toolState.rawInput, toolState.locations)) {
+          return [];
+        }
+        toolState.announced = true;
+        return [this.toolCallEvent(update.toolCallId, toolState)];
       }
       case 'tool_call_update': {
-        // Progress updates often carry no title; passing '' keeps the tracked
-        // state from the original tool_call instead of clobbering it with the
-        // 'Tool call' placeholder.
+        // A progress title ("Writing new.txt") is display only: the tool name
+        // is fixed by the first sight of the call. '' keeps the tracked name;
+        // a call first seen here (earlier updates lost) is named from it.
+        const existing = this.sessionTools.get(sessionId)?.get(update.toolCallId);
         const toolState = this.createOrUpdateToolState(sessionId, update.toolCallId, {
-          name: update.title ? this.deriveToolName(update.title, update.kind) : '',
+          name: !existing && update.title ? this.deriveToolName(update.title, update.kind) : '',
           title: update.title ?? '',
           kind: update.kind,
           rawInput: update.rawInput,
           locations: update.locations,
         });
 
-        // Only terminal states surface as tool results; in_progress updates
-        // just refresh the tracked state (streaming args arrive as partial
-        // content chunks and are not re-emitted).
-        if (update.status !== 'completed' && update.status !== 'failed') {
-          return [];
+        const isTerminal = update.status === 'completed' || update.status === 'failed';
+        const events: ProtocolEvent[] = [];
+
+        // The first update that brings the arguments (or the terminal one,
+        // if none did) announces the call.
+        if (!toolState.announced && (isTerminal || this.hasToolArguments(toolState.rawInput, toolState.locations))) {
+          toolState.announced = true;
+          events.push(this.toolCallEvent(update.toolCallId, toolState));
         }
 
-        return [{
+        // Only terminal states surface as tool results.
+        if (!isTerminal) {
+          return events;
+        }
+
+        events.push({
           type: 'tool_result',
           toolResult: {
             id: update.toolCallId,
             name: toolState.name,
             result: this.buildToolResult(update),
           },
-        }];
+        });
+        return events;
       }
       default:
         // plan, current_mode_update, and anything new: raw_event only.
@@ -917,22 +934,50 @@ export class KimiACPProtocol implements AgentProtocol {
   private createOrUpdateToolState(
     sessionId: string,
     toolCallId: string,
-    state: SessionToolState
+    state: Omit<SessionToolState, 'announced'>
   ): SessionToolState {
     const sessionState = this.sessionTools.get(sessionId) ?? new Map<string, SessionToolState>();
     this.sessionTools.set(sessionId, sessionState);
 
     const existing = sessionState.get(toolCallId);
-    const nextState = {
+    const nextState: SessionToolState = {
       name: state.name || existing?.name || 'Tool call',
       title: state.title || existing?.title || state.name,
       kind: state.kind ?? existing?.kind,
       rawInput: state.rawInput ?? existing?.rawInput,
       locations: state.locations ?? existing?.locations,
+      announced: existing?.announced ?? false,
     };
 
     sessionState.set(toolCallId, nextState);
     return nextState;
+  }
+
+  private toolCallEvent(toolCallId: string, toolState: SessionToolState): ProtocolEvent {
+    return {
+      type: 'tool_call',
+      toolCall: {
+        id: toolCallId,
+        name: toolState.name,
+        arguments: this.mergeLocationPath(
+          this.normalizeArguments(toolState.rawInput),
+          toolState.locations,
+        ),
+      },
+    };
+  }
+
+  private hasToolArguments(rawInput: unknown, locations: ToolCallLocation[] | null | undefined): boolean {
+    if (locations?.some((loc) => typeof loc?.path === 'string' && loc.path.length > 0)) {
+      return true;
+    }
+    if (rawInput === null || rawInput === undefined) {
+      return false;
+    }
+    if (typeof rawInput === 'object') {
+      return Object.keys(rawInput as object).length > 0;
+    }
+    return true;
   }
 
   private deriveToolName(title: string, kind?: string | null): string {

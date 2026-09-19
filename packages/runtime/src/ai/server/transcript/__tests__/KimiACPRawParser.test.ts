@@ -45,6 +45,24 @@ function sessionUpdateRow(update: Record<string, unknown>): string {
   });
 }
 
+// Recorded from a real `kimi acp` 0.43.1 turn on 2026-09-17: the first
+// tool_call has no arguments, two argument-less in_progress updates and
+// the permission request follow, then one in_progress update finally
+// carries rawInput (relative path) and locations (absolute path).
+const REAL_WRITE_ORDER = [
+  { sessionUpdate: 'tool_call', toolCallId: '0:tool_w', title: 'Write', kind: 'edit', status: 'pending', content: [] },
+  { sessionUpdate: 'tool_call_update', toolCallId: '0:tool_w', status: 'in_progress', content: [] },
+  { sessionUpdate: 'tool_call_update', toolCallId: '0:tool_w', status: 'in_progress', content: [] },
+  {
+    sessionUpdate: 'tool_call_update', toolCallId: '0:tool_w', title: 'Writing new.txt', kind: 'edit', status: 'in_progress',
+    rawInput: { path: 'new.txt', content: 'hello' }, locations: [{ path: 'C:/ws/new.txt' }], content: [],
+  },
+  {
+    sessionUpdate: 'tool_call_update', toolCallId: '0:tool_w', status: 'completed',
+    rawOutput: 'Wrote 5 bytes to new.txt', locations: [{ path: 'C:/ws/new.txt' }], content: [],
+  },
+];
+
 describe('KimiACPRawParser', () => {
   describe('input messages', () => {
     it('parses plain text input as user_message', async () => {
@@ -212,6 +230,74 @@ describe('KimiACPRawParser', () => {
         arguments: { file_path: 'D:\\work\\project\\hello.txt', content: 'hello' },
         targetFilePath: 'D:\\work\\project\\hello.txt',
       });
+    });
+
+
+    it('holds tool_call_started until the update that carries the arguments (real kimi order)', async () => {
+      const parser = new KimiACPRawParser();
+      const seen = new Set<string>();
+      const context = makeContext({ hasToolCall: (id) => seen.has(id) });
+      const results: Array<Awaited<ReturnType<KimiACPRawParser['parseMessage']>>> = [];
+      let id = 1;
+      for (const update of REAL_WRITE_ORDER) {
+        const descriptors = await parser.parseMessage(makeRawMessage({ id: id++, content: sessionUpdateRow(update) }), context);
+        for (const d of descriptors) {
+          if (d.type === 'tool_call_started' && d.providerToolCallId) seen.add(d.providerToolCallId);
+        }
+        results.push(descriptors);
+      }
+
+      // Nothing renders while the arguments are unknown.
+      expect(results[0]).toHaveLength(0);
+      expect(results[1]).toHaveLength(0);
+      expect(results[2]).toHaveLength(0);
+      // The argument-carrying update produces the one and only started card,
+      // named after the original title, never the progress title.
+      expect(results[3]).toHaveLength(1);
+      expect(results[3][0]).toMatchObject({
+        type: 'tool_call_started',
+        toolName: 'Write',
+        providerToolCallId: '0:tool_w',
+        arguments: { content: 'hello' },
+      });
+      expect(typeof (results[3][0] as { arguments: Record<string, unknown> }).arguments.path).toBe('string');
+      expect(results[4]).toHaveLength(1);
+      expect(results[4][0]).toMatchObject({ type: 'tool_call_completed', providerToolCallId: '0:tool_w', result: 'Wrote 5 bytes to new.txt' });
+    });
+
+    it('emits the held start together with the terminal update when no update ever carried arguments', async () => {
+      const parser = new KimiACPRawParser();
+      const first = await parser.parseMessage(makeRawMessage({
+        content: sessionUpdateRow({ sessionUpdate: 'tool_call', toolCallId: '0:tool_r', title: 'Read', kind: 'read', status: 'pending' }),
+      }), makeContext());
+      expect(first).toHaveLength(0);
+
+      const terminal = await parser.parseMessage(makeRawMessage({
+        content: sessionUpdateRow({ sessionUpdate: 'tool_call_update', toolCallId: '0:tool_r', status: 'completed', rawOutput: '1\tline one' }),
+      }), makeContext());
+      expect(terminal.map((d) => d.type)).toEqual(['tool_call_started', 'tool_call_completed']);
+      expect(terminal[0]).toMatchObject({ toolName: 'Read', providerToolCallId: '0:tool_r' });
+    });
+
+    it('recovers the start from an argument-carrying update when the tool_call row landed in an earlier batch', async () => {
+      // A fresh parser (new batch) has no memory of the tool_call row, and the
+      // canonical store has no event for the call either.
+      const parser = new KimiACPRawParser();
+      const descriptors = await parser.parseMessage(makeRawMessage({
+        content: sessionUpdateRow(REAL_WRITE_ORDER[3]),
+      }), makeContext());
+      expect(descriptors).toHaveLength(1);
+      expect(descriptors[0]).toMatchObject({ type: 'tool_call_started', providerToolCallId: '0:tool_w', arguments: { content: 'hello' } });
+    });
+
+    it('does not re-create a start that an earlier batch already wrote', async () => {
+      const parser = new KimiACPRawParser();
+      const descriptors = await parser.parseMessage(makeRawMessage({
+        content: sessionUpdateRow(REAL_WRITE_ORDER[3]),
+      }), makeContext({
+        findByProviderToolCallId: async () => ({ id: 1 } as unknown as Awaited<ReturnType<ParseContext['findByProviderToolCallId']>>),
+      }));
+      expect(descriptors).toHaveLength(0);
     });
 
     it('fills the path from locations[] when rawInput carries none', async () => {
@@ -387,6 +473,31 @@ describe('KimiACPRawParser', () => {
       });
     });
 
+    it('keeps waiting for the arguments when the permission row carries none (real kimi order)', async () => {
+      const parser = new KimiACPRawParser();
+      const seen = new Set<string>();
+      const context = makeContext({ hasToolCall: (id) => seen.has(id) });
+      const toolCall = await parser.parseMessage(makeRawMessage({ id: 1, content: sessionUpdateRow(REAL_WRITE_ORDER[0]) }), context);
+      expect(toolCall).toHaveLength(0);
+
+      const permission = await parser.parseMessage(makeRawMessage({
+        id: 2,
+        content: JSON.stringify({
+          type: 'session/request_permission',
+          sessionId: 'kimi-acp-session-1',
+          request: {
+            toolCall: { toolCallId: '0:tool_w', title: 'Write', kind: 'edit', status: 'pending' },
+            options: [{ optionId: 'approve_once' }, { optionId: 'approve_always' }, { optionId: 'reject' }],
+          },
+        }),
+      }), context);
+      expect(permission).toHaveLength(0);
+
+      const withArgs = await parser.parseMessage(makeRawMessage({ id: 3, content: sessionUpdateRow(REAL_WRITE_ORDER[3]) }), context);
+      expect(withArgs).toHaveLength(1);
+      expect(withArgs[0]).toMatchObject({ type: 'tool_call_started', toolName: 'Write', arguments: { content: 'hello' } });
+    });
+
     it('does not duplicate a tool_call_started already emitted for the call', async () => {
       const parser = new KimiACPRawParser();
       const permissionMsg = makeRawMessage({
@@ -394,7 +505,7 @@ describe('KimiACPRawParser', () => {
           type: 'session/request_permission',
           sessionId: 'kimi-acp-session-1',
           request: {
-            toolCall: { toolCallId: 'tc-9', title: 'Write', rawInput: {} },
+            toolCall: { toolCallId: 'tc-9', title: 'Write', rawInput: { file_path: 'D:\\work\\project\\hello.txt' } },
             options: [],
           },
         }),
