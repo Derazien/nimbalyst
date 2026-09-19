@@ -192,23 +192,33 @@ export interface AgentWorkflowServiceOptions {
 
 const DEFAULT_CACHE_TTL_MS = 5000;
 
-function isDirectoryEntry(entry: fs.Dirent, fullPath: string): boolean {
+// The workflow scan runs when a project opens, so nothing in it may block on the disk.
+async function isDirectoryEntry(entry: fs.Dirent, fullPath: string): Promise<boolean> {
   if (entry.isDirectory()) return true;
   if (!entry.isSymbolicLink()) return false;
   try {
-    return fs.statSync(fullPath).isDirectory();
+    return (await fsp.stat(fullPath)).isDirectory();
   } catch {
     return false;
   }
 }
 
-function isFileEntry(entry: fs.Dirent, fullPath: string): boolean {
+async function isFileEntry(entry: fs.Dirent, fullPath: string): Promise<boolean> {
   if (entry.isFile()) return true;
   if (!entry.isSymbolicLink()) return false;
   try {
-    return fs.statSync(fullPath).isFile();
+    return (await fsp.stat(fullPath)).isFile();
   } catch {
     return false;
+  }
+}
+
+async function readWorkflowFile(filePath: string): Promise<string | undefined> {
+  try {
+    return await fsp.readFile(filePath, 'utf-8');
+  } catch (error) {
+    console.error(`[AgentWorkflowService] Error reading ${filePath}:`, error);
+    return undefined;
   }
 }
 
@@ -683,14 +693,14 @@ export class AgentWorkflowService {
 
     if (sourceSettings.workspaceClaudeCompatibilityEnabled) {
       if (sourceSettings.includeProjectClaudeSources) {
-        this.scanCommandDirectory(
+        await this.scanCommandDirectory(
           path.join(this.workspacePath, '.claude', 'commands'),
           path.join(this.workspacePath, '.claude', 'commands'),
           'project',
           'workspace-claude-command',
           snapshot.descriptors,
         );
-        this.scanSkillDirectory(
+        await this.scanSkillDirectory(
           path.join(this.workspacePath, '.claude', 'skills'),
           path.join(this.workspacePath, '.claude', 'skills'),
           'project',
@@ -702,14 +712,14 @@ export class AgentWorkflowService {
       if (sourceSettings.includeUserClaudeSources) {
         const userCommandsPath = path.join(this.userClaudeConfigDir, 'commands');
         const userSkillsPath = path.join(this.userClaudeConfigDir, 'skills');
-        this.scanCommandDirectory(
+        await this.scanCommandDirectory(
           userCommandsPath,
           userCommandsPath,
           'user',
           'workspace-claude-command',
           snapshot.descriptors,
         );
-        this.scanSkillDirectory(
+        await this.scanSkillDirectory(
           userSkillsPath,
           userSkillsPath,
           'user',
@@ -748,7 +758,7 @@ export class AgentWorkflowService {
 
       for (const subdir of subdirs) {
         const extensionPath = path.join(extensionsDir, subdir.name);
-        if (!isDirectoryEntry(subdir, extensionPath)) {
+        if (!await isDirectoryEntry(subdir, extensionPath)) {
           continue;
         }
 
@@ -811,7 +821,7 @@ export class AgentWorkflowService {
 
         const commandsRoot = path.join(workflowRoot, 'commands');
         const skillsRoot = path.join(workflowRoot, 'skills');
-        this.scanCommandDirectory(
+        await this.scanCommandDirectory(
           commandsRoot,
           commandsRoot,
           'plugin',
@@ -822,7 +832,7 @@ export class AgentWorkflowService {
             namespace,
           },
         );
-        this.scanSkillDirectory(
+        await this.scanSkillDirectory(
           skillsRoot,
           skillsRoot,
           'plugin',
@@ -852,7 +862,7 @@ export class AgentWorkflowService {
       const sourceId = extensionId ?? pluginNamespace;
 
       const skillsRoot = path.join(pluginRoot, 'skills');
-      this.scanSkillDirectory(
+      await this.scanSkillDirectory(
         skillsRoot,
         skillsRoot,
         'plugin',
@@ -864,25 +874,25 @@ export class AgentWorkflowService {
         },
       );
 
-      this.scanClaudePluginCommands(pluginRoot, pluginNamespace, sourceType, sourceId, snapshot.descriptors);
+      await this.scanClaudePluginCommands(pluginRoot, pluginNamespace, sourceType, sourceId, snapshot.descriptors);
     }
   }
 
-  private scanClaudePluginCommands(
+  private async scanClaudePluginCommands(
     pluginRoot: string,
     namespace: string,
     sourceType: AgentWorkflowSourceType,
     sourceId: string,
     descriptors: AgentWorkflowDescriptor[],
-  ): void {
-    if (!fs.existsSync(pluginRoot)) {
+  ): Promise<void> {
+    if (!await pathExists(pluginRoot)) {
       return;
     }
 
-    const recurse = (currentPath: string): void => {
+    const recurse = async (currentPath: string): Promise<void> => {
       let entries: fs.Dirent[];
       try {
-        entries = fs.readdirSync(currentPath, { withFileTypes: true });
+        entries = await fsp.readdir(currentPath, { withFileTypes: true });
       } catch {
         return;
       }
@@ -890,17 +900,17 @@ export class AgentWorkflowService {
       for (const entry of entries) {
         const fullPath = path.join(currentPath, entry.name);
 
-        if (isDirectoryEntry(entry, fullPath)) {
+        if (await isDirectoryEntry(entry, fullPath)) {
           // node_modules READMEs are not commands; exporting them to Codex
           // wrote many skill folders into the workspace.
           if (entry.name === '.claude-plugin' || entry.name === 'skills' || entry.name === 'node_modules') {
             continue;
           }
-          recurse(fullPath);
+          await recurse(fullPath);
           continue;
         }
 
-        if (!isFileEntry(entry, fullPath) || !entry.name.endsWith('.md') || entry.name === 'SKILL.md') {
+        if (!await isFileEntry(entry, fullPath) || !entry.name.endsWith('.md') || entry.name === 'SKILL.md') {
           continue;
         }
 
@@ -908,7 +918,11 @@ export class AgentWorkflowService {
         const relativePath = fullPath.startsWith(`${commandsRoot}${path.sep}`)
           ? path.relative(commandsRoot, fullPath)
           : path.relative(pluginRoot, fullPath);
-        const command = parseCommandFile(fullPath, 'plugin', relativePath);
+        const content = await readWorkflowFile(fullPath);
+        if (content === undefined) {
+          continue;
+        }
+        const command = parseCommandFile(fullPath, 'plugin', relativePath, content);
         if (!command || !validateCommand(command)) {
           continue;
         }
@@ -921,25 +935,25 @@ export class AgentWorkflowService {
       }
     };
 
-    recurse(pluginRoot);
+    await recurse(pluginRoot);
   }
 
-  private scanCommandDirectory(
+  private async scanCommandDirectory(
     dirPath: string,
     rootPath: string,
     source: 'project' | 'user' | 'plugin',
     sourceType: AgentWorkflowSourceType,
     descriptors: AgentWorkflowDescriptor[],
     options: { sourceId?: string; namespace?: string } = {},
-  ): void {
-    if (!fs.existsSync(dirPath)) {
+  ): Promise<void> {
+    if (!await pathExists(dirPath)) {
       return;
     }
 
-    const recurse = (currentPath: string): void => {
+    const recurse = async (currentPath: string): Promise<void> => {
       let entries: fs.Dirent[];
       try {
-        entries = fs.readdirSync(currentPath, { withFileTypes: true });
+        entries = await fsp.readdir(currentPath, { withFileTypes: true });
       } catch {
         return;
       }
@@ -947,17 +961,21 @@ export class AgentWorkflowService {
       for (const entry of entries) {
         const fullPath = path.join(currentPath, entry.name);
 
-        if (isDirectoryEntry(entry, fullPath)) {
-          recurse(fullPath);
+        if (await isDirectoryEntry(entry, fullPath)) {
+          await recurse(fullPath);
           continue;
         }
 
-        if (!isFileEntry(entry, fullPath) || !entry.name.endsWith('.md')) {
+        if (!await isFileEntry(entry, fullPath) || !entry.name.endsWith('.md')) {
           continue;
         }
 
         const relativePath = path.relative(rootPath, fullPath);
-        const command = parseCommandFile(fullPath, source, relativePath);
+        const content = await readWorkflowFile(fullPath);
+        if (content === undefined) {
+          continue;
+        }
+        const command = parseCommandFile(fullPath, source, relativePath, content);
         if (!command || !validateCommand(command)) {
           continue;
         }
@@ -970,25 +988,25 @@ export class AgentWorkflowService {
       }
     };
 
-    recurse(dirPath);
+    await recurse(dirPath);
   }
 
-  private scanSkillDirectory(
+  private async scanSkillDirectory(
     dirPath: string,
     rootPath: string,
     source: 'project' | 'user' | 'plugin',
     sourceType: AgentWorkflowSourceType,
     descriptors: AgentWorkflowDescriptor[],
     options: { sourceId?: string; namespace?: string } = {},
-  ): void {
-    if (!fs.existsSync(dirPath)) {
+  ): Promise<void> {
+    if (!await pathExists(dirPath)) {
       return;
     }
 
-    const recurse = (currentPath: string): void => {
+    const recurse = async (currentPath: string): Promise<void> => {
       let entries: fs.Dirent[];
       try {
-        entries = fs.readdirSync(currentPath, { withFileTypes: true });
+        entries = await fsp.readdir(currentPath, { withFileTypes: true });
       } catch {
         return;
       }
@@ -996,17 +1014,21 @@ export class AgentWorkflowService {
       for (const entry of entries) {
         const fullPath = path.join(currentPath, entry.name);
 
-        if (isDirectoryEntry(entry, fullPath)) {
-          recurse(fullPath);
+        if (await isDirectoryEntry(entry, fullPath)) {
+          await recurse(fullPath);
           continue;
         }
 
-        if (!isFileEntry(entry, fullPath) || entry.name !== 'SKILL.md') {
+        if (!await isFileEntry(entry, fullPath) || entry.name !== 'SKILL.md') {
           continue;
         }
 
         const relativePath = path.relative(rootPath, fullPath);
-        const skill = parseSkillFile(fullPath, source, relativePath);
+        const content = await readWorkflowFile(fullPath);
+        if (content === undefined) {
+          continue;
+        }
+        const skill = parseSkillFile(fullPath, source, relativePath, content);
         if (!skill || !validateCommand(skill) || skill.userInvocable === false) {
           continue;
         }
@@ -1019,7 +1041,7 @@ export class AgentWorkflowService {
       }
     };
 
-    recurse(dirPath);
+    await recurse(dirPath);
   }
 
   private toDescriptor(

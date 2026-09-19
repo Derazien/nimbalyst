@@ -150,11 +150,12 @@ function deriveSkillFallbackName(filePath: string, relativePath?: string): strin
 export function parseCommandFile(
   filePath: string,
   source: 'project' | 'user' | 'plugin',
-  relativePath?: string
+  relativePath?: string,
+  preloaded?: string
 ): SlashCommand | null {
   try {
-    // Read file content
-    const content = fs.readFileSync(filePath, 'utf-8');
+    // Read file content, unless the caller already read it without blocking
+    const content = preloaded ?? fs.readFileSync(filePath, 'utf-8');
 
     // Extract command name from relative path or filename
     let commandName: string;
@@ -205,10 +206,11 @@ export function parseCommandFile(
 export function parseSkillFile(
   filePath: string,
   source: 'project' | 'user' | 'plugin',
-  relativePath?: string
+  relativePath?: string,
+  preloaded?: string
 ): SlashCommand | null {
   try {
-    const content = fs.readFileSync(filePath, 'utf-8');
+    const content = preloaded ?? fs.readFileSync(filePath, 'utf-8');
     const { frontmatter, body } = parseFrontmatter(content, filePath);
 
     // Prefer explicit skill name from frontmatter, then fall back to the skill directory path.

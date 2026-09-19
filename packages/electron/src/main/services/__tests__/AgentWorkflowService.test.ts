@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
+import nodeFs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import * as os from 'os';
 import * as path from 'path';
 import { AgentWorkflowService } from '../AgentWorkflowService';
@@ -334,6 +336,46 @@ Run whenever the model decides it applies.
 
     const entries = await service.listEntries({ provider: 'claude-code' });
     expect(entries.some(entry => entry.name === 'hidden-skill-test')).toBe(false);
+  });
+
+  it('finds project commands and skills without blocking reads, since a project switch waits on the scan', async () => {
+    fs.mkdirSync(path.join(workspacePath, '.claude', 'commands', 'team'), { recursive: true });
+    fs.writeFileSync(
+      path.join(workspacePath, '.claude', 'commands', 'team', 'ship.md'),
+      '---\ndescription: Ship the branch\n---\nShip it.\n',
+      'utf-8',
+    );
+    fs.mkdirSync(path.join(workspacePath, '.claude', 'skills', 'triage'), { recursive: true });
+    fs.writeFileSync(
+      path.join(workspacePath, '.claude', 'skills', 'triage', 'SKILL.md'),
+      '---\nname: triage-skill\ndescription: Sort incoming bugs\n---\nSort them.\n',
+      'utf-8',
+    );
+
+    const service = new AgentWorkflowService(workspacePath, {
+      userHomePath,
+      extensionDirectoriesLoader: async () => [],
+      nativeClaudePluginPathsLoader: async () => [],
+      releaseChannelLoader: () => 'stable',
+    });
+    // The service imports fs as a namespace, which cannot be spied on directly:
+    // spy on the module object, then re-sync the namespace's bindings to it.
+    const blocking = (['readdirSync', 'readFileSync', 'existsSync', 'statSync'] as const)
+      .map(name => vi.spyOn(nodeFs, name));
+    syncBuiltinESMExports();
+    try {
+      const entries = await service.listEntries({ provider: 'claude-code' });
+      expect(entries.map(entry => entry.name)).toEqual(
+        expect.arrayContaining(['team:ship', 'triage-skill']),
+      );
+      for (const spy of blocking) {
+        const calls = spy.mock.calls.filter(([target]) => String(target).startsWith(workspacePath));
+        expect(calls).toEqual([]);
+      }
+    } finally {
+      for (const spy of blocking) spy.mockRestore();
+      syncBuiltinESMExports();
+    }
   });
 
   it('extracts a fallback description from Claude command bodies before exporting to Codex skills', async () => {
