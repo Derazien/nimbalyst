@@ -687,7 +687,9 @@ function initializeLogging() {
         logger.main.error('Failed to initialize debug log:', error);
     }
 
-    // Listen for console logs from renderer (always capture errors)
+    // Listen for console logs from renderer (always capture errors).
+    // Appended in order off the main thread, so a busy disk cannot stall the window.
+    let debugLogWrites = Promise.resolve();
     safeOn('console-log', (_event, data) => {
         // In production, only log errors and warnings
         if (process.env.NODE_ENV === 'production' && !['error', 'warn'].includes(data.level)) {
@@ -695,11 +697,11 @@ function initializeLogging() {
         }
 
         const logEntry = `[${data.timestamp}] [${data.level.toUpperCase()}] [${data.source}] ${data.message}\n`;
-        try {
-            appendFileSync(debugLogPath, logEntry);
-        } catch (error) {
-            // Ignore write errors
-        }
+        debugLogWrites = debugLogWrites
+            .then(() => fs.promises.appendFile(debugLogPath, logEntry))
+            .catch(() => {
+                // Ignore write errors
+            });
     });
 
     logger.main.info(`Debug logs will be written to: ${debugLogPath}`);

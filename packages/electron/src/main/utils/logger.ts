@@ -278,6 +278,10 @@ function configureLogger() {
   // Set file size limit (10MB)
   log.transports.file.maxSize = 10 * 1024 * 1024;
 
+  // Queue lines and append them off the main thread, in order. A synchronous
+  // append held the window for 3.2 s on a busy disk (2026-09-19 profiles).
+  log.transports.file.sync = false;
+
   // Enable/disable transports based on config
   log.transports.file.level = !IS_TEST && config.fileLogging ? config.globalLevel : false;
   log.transports.console.level = !IS_TEST && config.consoleLogging ? config.globalLevel : false;
