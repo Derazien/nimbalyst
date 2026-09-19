@@ -1,0 +1,150 @@
+/**
+ * What Nimbalyst knows about one running `kimi` terminal session: its kimi
+ * session id, its turn state, and the transcript rows its event log produces.
+ *
+ * Signals, all verified against kimi 0.43.1:
+ * - Before the first prompt there is no kimi session and no event log, so
+ *   "ready and idle" comes from the terminal output: the status line
+ *   (`context: N% ...`) is drawn only once the prompt box is up, never on the
+ *   "Trust this folder?" picker that the first launch in a folder shows.
+ * - After the first prompt kimi appends a row to session_index.jsonl; the
+ *   runtime claims the first unclaimed row for its folder added since launch.
+ * - From then on the session's wire.jsonl drives everything, through
+ *   `KimiCliWireTranslator`.
+ *
+ * No electron, no PTY: the launcher feeds it terminal output and wires its
+ * callbacks, so it tests against plain files.
+ */
+
+import type { ClaudeTurnState } from './claudeCliPidState';
+import {
+  JsonlFollower,
+  findNewKimiSession,
+  kimiSessionIndexMark,
+  kimiWirePath,
+} from './kimiCliSessionFiles';
+import { KimiCliWireTranslator, type KimiTurnEndReason, type KimiWireAction } from './kimiCliWireTranslator';
+
+export type KimiCliRow = Extract<KimiWireAction, { kind: 'row' }>;
+
+export interface KimiCliSessionRuntimeOptions {
+  /** The folder kimi was launched in. */
+  workDir: string;
+  indexPath: string;
+  /** A kimi session this launch resumes (`-S <id>`), already resolved on disk. */
+  resume?: { kimiSessionId: string; sessionDir: string };
+  /** Is this kimi session already another Nimbalyst session's? */
+  isClaimed: (kimiSessionId: string) => boolean;
+  onKimiSessionId: (kimiSessionId: string) => void;
+  onTurnState: (state: ClaudeTurnState, endReason?: KimiTurnEndReason) => void;
+  onRow: (row: KimiCliRow) => void;
+  /** kimi is showing something only the person at the terminal can answer. */
+  onNeedsAttention?: (why: 'trust') => void;
+}
+
+const ANSI = /\x1b\[[0-9;?<>=]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]/g;
+const READY = /context:\s*\d+%/;
+const TRUST = /Trust this folder\?/;
+const OUTPUT_TAIL = 2000;
+
+function lastIndexOf(text: string, pattern: RegExp): number {
+  const global = new RegExp(pattern.source, 'g');
+  let last = -1;
+  for (let m = global.exec(text); m; m = global.exec(text)) last = m.index;
+  return last;
+}
+
+export class KimiCliSessionRuntime {
+  private readonly translator = new KimiCliWireTranslator();
+  private follower: JsonlFollower | null = null;
+  private indexMark = 0;
+  private sessionId: string | null = null;
+  private turnState: ClaudeTurnState | null = null;
+  private outputTail = '';
+  private trustShown = false;
+  private timer: NodeJS.Timeout | null = null;
+
+  constructor(private readonly options: KimiCliSessionRuntimeOptions) {}
+
+  get kimiSessionId(): string | null {
+    return this.sessionId;
+  }
+
+  getTurnState(): ClaudeTurnState | null {
+    return this.turnState;
+  }
+
+  start(pollMs = 200): void {
+    const { resume } = this.options;
+    if (resume) {
+      this.sessionId = resume.kimiSessionId;
+      this.follow(resume.sessionDir, true);
+    } else {
+      this.indexMark = kimiSessionIndexMark(this.options.indexPath);
+    }
+    if (this.timer) return;
+    this.timer = setInterval(() => this.poll(), pollMs);
+    this.timer.unref?.();
+  }
+
+  stop(): void {
+    if (this.timer) clearInterval(this.timer);
+    this.timer = null;
+    this.follower?.stop();
+  }
+
+  /** One tick: discover the session if still unknown, then read new events. */
+  poll(): void {
+    if (!this.sessionId) {
+      const found = findNewKimiSession({
+        indexPath: this.options.indexPath,
+        sinceOffset: this.indexMark,
+        workDir: this.options.workDir,
+        isClaimed: this.options.isClaimed,
+      });
+      if (!found) return;
+      this.sessionId = found.sessionId;
+      this.options.onKimiSessionId(found.sessionId);
+      this.follow(found.sessionDir, false);
+    }
+    this.follower?.poll();
+  }
+
+  /** Raw PTY output, for the states the event log cannot report. */
+  noteTerminalOutput(chunk: string): void {
+    this.outputTail = (this.outputTail + chunk.replace(ANSI, '')).slice(-OUTPUT_TAIL);
+    // The picker's text can still be in the tail when the prompt box replaces
+    // it, so whichever was drawn last decides.
+    if (lastIndexOf(this.outputTail, TRUST) > lastIndexOf(this.outputTail, READY)) {
+      if (!this.trustShown) {
+        this.trustShown = true;
+        this.options.onNeedsAttention?.('trust');
+      }
+      return;
+    }
+    if (this.turnState === null && READY.test(this.outputTail)) {
+      this.setTurnState('idle');
+    }
+  }
+
+  private follow(sessionDir: string, startAtEnd: boolean): void {
+    this.follower = new JsonlFollower(
+      kimiWirePath(sessionDir),
+      (line) => {
+        for (const action of this.translator.translateLine(line)) {
+          if (action.kind === 'turn-state') this.setTurnState(action.state, action.endReason);
+          else this.options.onRow(action);
+        }
+      },
+      { startAtEnd },
+    );
+  }
+
+  private setTurnState(state: ClaudeTurnState, endReason?: KimiTurnEndReason): void {
+    this.turnState = state;
+    // The trust picker is gone once kimi is idle or working.
+    this.trustShown = false;
+    this.outputTail = '';
+    this.options.onTurnState(state, endReason);
+  }
+}
