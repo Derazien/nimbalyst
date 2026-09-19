@@ -325,6 +325,38 @@ describe('KimiCodeProvider', () => {
       expect(protocol.createSession).not.toHaveBeenCalled();
     });
 
+    it('forwards tool results as tool_call chunks so file tracking sees the outcome', async () => {
+      const protocol = makeProtocol([
+        { type: 'tool_call', toolCall: { id: 'tc-1', name: 'Write', arguments: { path: 'D:\\work\\kimi-test\\hello.txt' } } },
+        { type: 'tool_result', toolResult: { id: 'tc-1', name: 'Write', result: { success: true, output: 'Wrote 5 bytes' } } },
+        { type: 'complete', content: '' },
+      ]);
+      const provider = new KimiCodeProvider({ protocol: protocol as unknown as KimiACPProtocol });
+      await provider.initialize({ model: 'kimi-code:k3' });
+
+      const chunks = await collectChunks(provider);
+
+      const toolChunks = chunks.filter((c) => c.type === 'tool_call');
+      expect(toolChunks).toHaveLength(2);
+      expect(toolChunks[1].toolCall).toMatchObject({ id: 'tc-1', name: 'Write', result: { success: true } });
+    });
+
+    it('builds its protocol with the registered file-write hooks', () => {
+      const before = async () => {};
+      const after = async () => {};
+      KimiCodeProvider.setOnBeforeFileWrite(before);
+      KimiCodeProvider.setOnTurnFilesEdited(after);
+      try {
+        const provider = new KimiCodeProvider();
+        const protocol = (provider as any).protocol;
+        expect(protocol.onBeforeFileWrite).toBe(before);
+        expect(protocol.onTurnFilesEdited).toBe(after);
+      } finally {
+        KimiCodeProvider.setOnBeforeFileWrite(null);
+        KimiCodeProvider.setOnTurnFilesEdited(null);
+      }
+    });
+
     it('destroy() destroys the protocol', () => {
       const protocol = makeProtocol([]);
       const provider = new KimiCodeProvider({ protocol: protocol as unknown as KimiACPProtocol });

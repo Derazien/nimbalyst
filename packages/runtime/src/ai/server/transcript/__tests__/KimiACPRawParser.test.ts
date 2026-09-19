@@ -8,6 +8,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import path from 'path';
 import { KimiACPRawParser } from '../parsers/KimiACPRawParser';
 import type { ParseContext } from '../parsers/IRawMessageParser';
 import type { RawMessage } from '../TranscriptTransformer';
@@ -260,7 +261,12 @@ describe('KimiACPRawParser', () => {
         providerToolCallId: '0:tool_w',
         arguments: { content: 'hello' },
       });
-      expect(typeof (results[3][0] as { arguments: Record<string, unknown> }).arguments.path).toBe('string');
+      // The relative rawInput path is replaced by the absolute locations[]
+      // path so targetFilePath resolves inside the workspace.
+      expect(results[3][0]).toMatchObject({
+        arguments: { path: path.normalize('C:/ws/new.txt') },
+        targetFilePath: path.normalize('C:/ws/new.txt'),
+      });
       expect(results[4]).toHaveLength(1);
       expect(results[4][0]).toMatchObject({ type: 'tool_call_completed', providerToolCallId: '0:tool_w', result: 'Wrote 5 bytes to new.txt' });
     });

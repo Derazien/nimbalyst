@@ -2511,11 +2511,11 @@ app.whenReady().then(async () => {
     KimiCodeProvider.setPermissionPatternChecker(patternChecker);
     KimiCodeProvider.setTrustChecker(trustChecker);
 
-    // ACP exposes pre/post file-write hooks. Wire them so Codex ACP edits
+    // ACP exposes pre/post file-write hooks. Wire them so Codex ACP and Kimi edits
     // produce the same FilesEditedSidebar entries and pre-edit baselines as
     // Claude Code edits, even when Codex routes the write through
     // fs/write_text_file (which doesn't always emit a session/tool_call).
-    OpenAICodexACPProvider.setOnBeforeFileWrite(async (filePath, sessionId) => {
+    const acpOnBeforeFileWrite = async (filePath: string, sessionId: string | undefined) => {
       if (!sessionId) return;
       try {
         const session = await AISessionsRepository.get(sessionId);
@@ -2550,9 +2550,9 @@ app.whenReady().then(async () => {
           logger.ai.error('[CodexACP] onBeforeFileWrite hook failed:', error);
         }
       }
-    });
+    };
 
-    OpenAICodexACPProvider.setOnTurnFilesEdited(async (filePaths, sessionId) => {
+    const acpOnTurnFilesEdited = async (filePaths: Set<string>, sessionId: string | undefined) => {
       if (!sessionId || filePaths.size === 0) return;
       try {
         const session = await AISessionsRepository.get(sessionId);
@@ -2568,7 +2568,11 @@ app.whenReady().then(async () => {
       } catch (error) {
         logger.ai.error('[CodexACP] onTurnFilesEdited hook failed:', error);
       }
-    });
+    };
+    OpenAICodexACPProvider.setOnBeforeFileWrite(acpOnBeforeFileWrite);
+    OpenAICodexACPProvider.setOnTurnFilesEdited(acpOnTurnFilesEdited);
+    KimiCodeProvider.setOnBeforeFileWrite(acpOnBeforeFileWrite);
+    KimiCodeProvider.setOnTurnFilesEdited(acpOnTurnFilesEdited);
 
     // Inject image compressor
     // Compresses images to fit within Claude API 5MB base64 limit

@@ -24,6 +24,7 @@
  * convention so reload behaves the same as live streaming.
  */
 
+import path from 'path';
 import type { RawMessage } from '../TranscriptTransformer';
 import { parseMcpToolName } from '../utils';
 import type {
@@ -371,7 +372,9 @@ export class KimiACPRawParser implements IRawMessageParser {
     locations: ACPToolCallLocation[] | null | undefined,
   ): CanonicalEventDescriptor {
     const toolName = this.deriveToolName(title ?? 'Tool call', kind);
-    const locationPath = this.firstLocationPath(locations);
+    const rawLocationPath = this.firstLocationPath(locations);
+    // kimi spells absolute paths with forward slashes on every platform.
+    const locationPath = rawLocationPath ? path.normalize(rawLocationPath) : null;
     const args = this.mergeLocationPath(this.normalizeArguments(rawInput), locationPath);
     const targetFilePath = this.extractTargetFilePath(args) ?? locationPath;
     const { mcpServer, mcpTool } = this.extractMcpMetadata(toolName);
@@ -463,12 +466,12 @@ export class KimiACPRawParser implements IRawMessageParser {
     locationPath: string | null,
   ): Record<string, unknown> {
     if (!locationPath) return args;
-    if (
-      typeof args.file_path === 'string' ||
-      typeof args.path === 'string' ||
-      typeof args.filePath === 'string'
-    ) {
-      return args;
+    for (const key of ['path', 'file_path', 'filePath'] as const) {
+      const value = args[key];
+      if (typeof value !== 'string') continue;
+      // kimi's rawInput path is relative to the session cwd; the absolute
+      // locations[] path is what targetFilePath must carry.
+      return path.isAbsolute(value) ? args : { ...args, [key]: locationPath };
     }
     return { ...args, path: locationPath };
   }

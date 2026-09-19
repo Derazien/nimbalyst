@@ -41,7 +41,7 @@ import {
   ChatAttachment,
 } from '../types';
 import { ModelIdentifier } from '../ModelIdentifier';
-import { KimiACPProtocol } from '../protocols/KimiACPProtocol';
+import { KimiACPProtocol, type OnBeforeKimiFileWrite, type OnKimiTurnFilesEdited } from '../protocols/KimiACPProtocol';
 import { ProtocolEvent, ProtocolSession } from '../protocols/ProtocolInterface';
 import { PermissionMode } from './ProviderPermissionMixin';
 import { McpConfigService } from '../services/McpConfigService';
@@ -156,11 +156,20 @@ export class KimiCodeProvider extends BaseAgentProvider {
   private static shellEnvironmentLoader: (() => Record<string, string> | null) | null = null;
   private static enhancedPathLoader: (() => string) | null = null;
   private static kimiPathLoader: (() => string | null) | null = null;
+  // fs/write_text_file hooks (pre-edit baseline, turn-end refresh). Kimi
+  // routes Write and Edit through that reverse-RPC, and the arguments reach
+  // the stream only milliseconds before the write lands, so this hook is the
+  // one deterministic place to snapshot the file first.
+  private static onBeforeFileWrite: OnBeforeKimiFileWrite | null = null;
+  private static onTurnFilesEdited: OnKimiTurnFilesEdited | null = null;
 
   constructor(deps?: KimiCodeProviderDeps) {
     super();
 
-    this.protocol = deps?.protocol || new KimiACPProtocol();
+    this.protocol = deps?.protocol || new KimiACPProtocol(undefined, {
+      onBeforeFileWrite: KimiCodeProvider.onBeforeFileWrite ?? undefined,
+      onTurnFilesEdited: KimiCodeProvider.onTurnFilesEdited ?? undefined,
+    });
 
     this.mcpConfigService = getMcpConfigService({
       mcpConfigLoader: KimiCodeProvider.mcpConfigLoader,
@@ -195,6 +204,14 @@ export class KimiCodeProvider extends BaseAgentProvider {
 
   public static setKimiPathLoader(loader: (() => string | null) | null): void {
     KimiCodeProvider.kimiPathLoader = loader;
+  }
+
+  public static setOnBeforeFileWrite(handler: OnBeforeKimiFileWrite | null): void {
+    KimiCodeProvider.onBeforeFileWrite = handler;
+  }
+
+  public static setOnTurnFilesEdited(handler: OnKimiTurnFilesEdited | null): void {
+    KimiCodeProvider.onTurnFilesEdited = handler;
   }
 
   private static resolveKimiExecutableForRuntime(pathValue?: string): string | undefined {
@@ -396,6 +413,18 @@ export class KimiCodeProvider extends BaseAgentProvider {
               break;
             case 'tool_call':
               yield { type: 'tool_call', toolCall: item.toolCall };
+              break;
+            case 'tool_result':
+              // File tracking closes its edit window on a tool_call that
+              // carries a result.
+              yield {
+                type: 'tool_call',
+                toolCall: {
+                  id: item.toolResult.id,
+                  name: item.toolResult.name,
+                  result: item.toolResult.result,
+                },
+              };
               break;
             case 'complete':
               // Store the complete assistant response so the KimiACPRawParser

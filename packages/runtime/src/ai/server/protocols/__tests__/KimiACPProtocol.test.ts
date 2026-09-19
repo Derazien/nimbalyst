@@ -170,7 +170,10 @@ describe('KimiACPProtocol', () => {
       expect(toolCalls).toHaveLength(1);
       expect(toolCalls[0].toolCall?.name).toBe('Write');
       expect(toolCalls[0].toolCall?.arguments?.content).toBe('after from kimi\n');
-      expect(typeof toolCalls[0].toolCall?.arguments?.path).toBe('string');
+      // kimi's rawInput path is relative to the session cwd; the absolute
+      // locations[] path wins, normalized to the platform's separators, so
+      // file tracking can resolve it inside the workspace.
+      expect(toolCalls[0].toolCall?.arguments?.path).toBe(path.join(workspacePath, 'kimi-target.txt'));
 
       const toolResult = events.find((event) => event.type === 'tool_result');
       expect(toolResult?.toolResult?.id).toBe('0:tool_kimi_write_1');
@@ -231,8 +234,10 @@ describe('KimiACPProtocol', () => {
   it('captures a pre-edit baseline and reports the edited file on fs/write_text_file', async () => {
     const editedFiles: string[] = [];
     let preEditContent: string | undefined;
+    let preEditPath: string | undefined;
     const { protocol, workspacePath, cleanup } = makeHarness({
       onBeforeFileWrite: async (filePath) => {
+        preEditPath = filePath;
         preEditContent = fs.readFileSync(filePath, 'utf-8');
       },
       onTurnFilesEdited: async (filePaths) => {
@@ -253,7 +258,10 @@ describe('KimiACPProtocol', () => {
 
       expect(preEditContent).toBe('before from kimi\n');
       expect(fs.readFileSync(targetPath, 'utf-8')).toBe('after from kimi\n');
-      expect(editedFiles.map((filePath) => path.normalize(filePath))).toContain(targetPath);
+      // kimi sends forward-slash paths on every platform; the hooks (history
+      // tags, session_files) key on native paths, so they get normalized ones.
+      expect(preEditPath).toBe(targetPath);
+      expect(editedFiles).toContain(targetPath);
     } finally {
       cleanup();
     }

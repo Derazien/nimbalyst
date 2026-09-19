@@ -731,20 +731,23 @@ export class KimiACPProtocol implements AgentProtocol {
     // Kimi sends the ACP session id on fs requests, so edit correlation is
     // deterministic -- no "latest active turn" guessing.
     const activeTurn = this.activeTurns.get(params.sessionId);
+    // kimi spells absolute paths with forward slashes on every platform;
+    // history tags and session_files key on native paths.
+    const filePath = path.normalize(params.path);
 
     // Pre-edit hook: capture baseline before writing.
     if (this.onBeforeFileWrite && activeTurn) {
       try {
-        await this.onBeforeFileWrite(params.path, activeTurn.nimbalystSessionId);
+        await this.onBeforeFileWrite(filePath, activeTurn.nimbalystSessionId);
       } catch {
         // Don't block the write if tagging fails
       }
     }
 
-    await fs.mkdir(path.dirname(params.path), { recursive: true });
-    await fs.writeFile(params.path, params.content, 'utf-8');
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.writeFile(filePath, params.content, 'utf-8');
 
-    activeTurn?.filesEditedThisTurn.add(params.path);
+    activeTurn?.filesEditedThisTurn.add(filePath);
 
     return {};
   }
@@ -1027,16 +1030,17 @@ export class KimiACPProtocol implements AgentProtocol {
   ): Record<string, unknown> | undefined {
     const firstPath = locations?.find((loc) => typeof loc?.path === 'string' && loc.path.length > 0)?.path;
     if (!firstPath) return args;
+    const locationPath = path.normalize(firstPath);
 
     const base = args ?? {};
-    if (
-      typeof base.path === 'string' ||
-      typeof base.file_path === 'string' ||
-      typeof base.filePath === 'string'
-    ) {
-      return base;
+    for (const key of ['path', 'file_path', 'filePath'] as const) {
+      const value = base[key];
+      if (typeof value !== 'string') continue;
+      // kimi's rawInput path is relative to the session cwd; the absolute
+      // locations[] path is what file tracking can resolve.
+      return path.isAbsolute(value) ? base : { ...base, [key]: locationPath };
     }
-    return { ...base, path: firstPath };
+    return { ...base, path: locationPath };
   }
 
   /**
