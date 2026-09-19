@@ -34,12 +34,44 @@ vi.mock('../../services/mcpServerConfig', () => ({
   resolveTrackersWorkspacePath: () => undefined,
 }));
 
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { KimiCodeProvider } from '../KimiCodeProvider';
-import type { KimiACPProtocol } from '../../protocols/KimiACPProtocol';
+import { KimiACPProtocol } from '../../protocols/KimiACPProtocol';
 import type { ProtocolEvent, ProtocolSession, SessionOptions } from '../../protocols/ProtocolInterface';
 import type { StreamChunk } from '../../types';
 
 const WORKSPACE = 'D:\\work\\kimi-test';
+
+/**
+ * A real KimiACPProtocol driving the mock kimi agent (the same fixture the
+ * protocol suite uses), so provider-level behavior is checked end to end
+ * against what actually reaches the agent.
+ */
+function makeMockAgentHarness() {
+  const workspacePath = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-provider-'));
+  const auditPath = path.join(workspacePath, 'audit.ndjson');
+  const protocol = new KimiACPProtocol(undefined, {
+    command: process.execPath,
+    args: [fileURLToPath(new URL('../../protocols/__tests__/fixtures/mockKimiAcpAgent.mjs', import.meta.url))],
+    env: { KIMI_ACP_TEST_AUDIT_PATH: auditPath },
+  });
+  const auditMethods = () =>
+    fs.existsSync(auditPath)
+      ? fs.readFileSync(auditPath, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line).method as string)
+      : [];
+  return {
+    protocol,
+    workspacePath,
+    auditMethods,
+    cleanup: () => {
+      protocol.destroy();
+      fs.rmSync(workspacePath, { recursive: true, force: true });
+    },
+  };
+}
 
 function makeProtocol(events: ProtocolEvent[], session?: Partial<ProtocolSession>) {
   const protocol = {
@@ -299,5 +331,38 @@ describe('KimiCodeProvider', () => {
       provider.destroy();
       expect(protocol.destroy).toHaveBeenCalledTimes(1);
     });
+  });
+
+  describe('against the mock kimi agent', () => {
+    it('abort() mid-turn sends session/cancel and ends the stream', async () => {
+      const harness = makeMockAgentHarness();
+      const provider = new KimiCodeProvider({ protocol: harness.protocol });
+      await provider.initialize({ model: 'kimi-code:k3' });
+
+      try {
+        const chunks: StreamChunk[] = [];
+        // 'never finish' makes the mock agent run until it receives
+        // session/cancel; without the cancel this loop never ends.
+        for await (const chunk of provider.sendMessage(
+          'never finish',
+          undefined,
+          undefined,
+          undefined,
+          harness.workspacePath,
+        )) {
+          chunks.push(chunk);
+          if (chunk.type === 'text') {
+            provider.abort();
+          }
+        }
+
+        // session/new in the audit proves the mock agent, not a real kimi, took the turn.
+        expect(harness.auditMethods()).toContain('session/new');
+        expect(harness.auditMethods()).toContain('session/cancel');
+        expect(chunks.some((c) => c.type === 'error')).toBe(false);
+      } finally {
+        harness.cleanup();
+      }
+    }, 10000);
   });
 });

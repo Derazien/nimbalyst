@@ -191,6 +191,8 @@ export class KimiACPProtocol implements AgentProtocol {
 
   private command: string;
   private args: string[];
+  /** An injected command (tests, embedding hosts) is never replaced by path discovery. */
+  private readonly commandPinned: boolean;
   private processEnv: Record<string, string> | undefined;
   private readonly spawnProcess;
   private readonly extraEnv: Record<string, string>;
@@ -211,6 +213,7 @@ export class KimiACPProtocol implements AgentProtocol {
   constructor(kimiPath?: string, deps?: KimiACPProtocolDeps) {
     this.command = deps?.command || kimiPath || 'kimi';
     this.args = deps?.args ?? ['acp'];
+    this.commandPinned = !!deps?.command;
     this.spawnProcess = deps?.spawnProcess ?? spawn;
     this.extraEnv = deps?.env ?? {};
     this.onPermissionRequest = deps?.onPermissionRequest;
@@ -219,6 +222,9 @@ export class KimiACPProtocol implements AgentProtocol {
   }
 
   setKimiPath(path: string): void {
+    if (this.commandPinned) {
+      return;
+    }
     this.command = path;
     this.args = ['acp'];
   }

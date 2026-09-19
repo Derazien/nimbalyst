@@ -373,6 +373,8 @@ export class KimiCodeProvider extends BaseAgentProvider {
         attachments,
         sessionId,
         mode: documentContext?.mode || 'agent',
+        // Per-turn signal: this is what turns Stop into session/cancel.
+        abortSignal: abortController.signal,
       })) {
         if (abortController.signal.aborted) {
           throw new Error('Operation cancelled');
