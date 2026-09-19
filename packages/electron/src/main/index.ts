@@ -2505,10 +2505,8 @@ app.whenReady().then(async () => {
     // ACP transport uses the same trust check plus per-tool permission events.
     CursorAgentProvider.setTrustChecker(trustChecker);
 
-    // Kimi's ACP transport gates like Grok's: trust check plus per-tool
-    // permission round-trips.
-    KimiCodeProvider.setPermissionPatternSaver(patternSaver);
-    KimiCodeProvider.setPermissionPatternChecker(patternChecker);
+    // Kimi's ACP turns are gated on workspace trust; its permission requests
+    // are answered inside the protocol, so no pattern store is involved.
     KimiCodeProvider.setTrustChecker(trustChecker);
 
     // ACP exposes pre/post file-write hooks. Wire them so Codex ACP and Kimi edits
