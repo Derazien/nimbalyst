@@ -282,7 +282,7 @@ export function isClaudeCodeFamily(provider: string | null | undefined): provide
  *
  * The two are distinct provider IDs so a session can never flip between them
  * once it has messages, per `shouldBlockStartedSessionProviderSwitch()` —
- * mirroring the `claude-code` / `claude-code-cli` precedent (NIM-805/806).
+ * mirroring the `claude-code` / `claude-code-cli` split.
  */
 export function isKimiCodeFamily(provider: string | null | undefined): provider is 'kimi-code' | 'kimi-code-cli' {
   return provider === 'kimi-code' || provider === 'kimi-code-cli';
