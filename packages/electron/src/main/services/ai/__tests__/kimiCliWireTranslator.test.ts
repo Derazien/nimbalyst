@@ -120,3 +120,17 @@ describe('KimiCliWireTranslator', () => {
     }
   });
 });
+
+describe('KimiCliWireTranslator model tracking', () => {
+  it('reports the model kimi binds and switches to', () => {
+    const models = [
+      '{"type":"profile.bind","agentId":"main","modelAlias":"kimi-code/k3","time":1}',
+      '{"type":"config.update","agentId":"main","thinkingEffort":"high","time":2}',
+      '{"type":"config.update","agentId":"main","modelAlias":"kimi-code/k3-256k","thinkingEffort":"high","time":3}',
+    ].flatMap((l) => new KimiCliWireTranslator().translateLine(l));
+    expect(models).toEqual([
+      { kind: 'model', alias: 'kimi-code/k3' },
+      { kind: 'model', alias: 'kimi-code/k3-256k' },
+    ]);
+  });
+});

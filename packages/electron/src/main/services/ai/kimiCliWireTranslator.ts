@@ -20,6 +20,8 @@ export type KimiTurnEndReason = 'completed' | 'cancelled' | 'failed';
 
 export type KimiWireAction =
   | { kind: 'turn-state'; state: ClaudeTurnState; endReason?: KimiTurnEndReason }
+  /** The model kimi is on now, spelled `kimi-code/<alias>`. */
+  | { kind: 'model'; alias: string }
   | {
       kind: 'row';
       direction: 'input' | 'output';
@@ -70,6 +72,10 @@ export class KimiCliWireTranslator {
     switch (event.type) {
       case 'agent.turn.started':
         return this.setState('running');
+
+      case 'profile.bind':
+      case 'config.update':
+        return typeof event.modelAlias === 'string' ? [{ kind: 'model', alias: event.modelAlias }] : [];
 
       case 'turn.prompt':
       case 'turn.steer':

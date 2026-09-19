@@ -16,11 +16,12 @@ import path from 'path';
 import * as pty from 'node-pty';
 import { resolveKimiLaunch } from '@nimbalyst/runtime/ai/server/providers/kimiLaunch';
 import { KimiACPRawParser } from '@nimbalyst/runtime/ai/server/transcript/parsers/KimiACPRawParser';
-import { buildKimiCliSpawnConfig } from '../kimiCliSpawnConfig';
+import { buildKimiCliSpawnConfig, kimiCliModelArg } from '../kimiCliSpawnConfig';
 import { KimiCliSessionRuntime, type KimiCliRow } from '../kimiCliSessionRuntime';
 import { findKimiSessionDir, kimiSessionIndexPath, kimiWirePath } from '../kimiCliSessionFiles';
 import { submitClaudeCliPrompt } from '../claudeCliSubmit';
 import { escalateClaudeCliInterrupt } from '../claudeCliInterrupt';
+import { switchKimiCliModel } from '../kimiCliModelSwitch';
 
 const LIVE = process.env.KIMI_LIVE === '1';
 const KIMI = process.env.KIMI_PATH || path.join(os.homedir(), '.kimi-code', 'bin', 'kimi.exe');
@@ -59,6 +60,7 @@ function launch(workDir: string, opts: { resume?: { kimiSessionId: string; sessi
     workDir,
     indexPath: kimiSessionIndexPath(),
     resume: opts.resume,
+    launchModel: kimiCliModelArg(opts.model),
     isClaimed: () => false,
     onKimiSessionId: (id) => { kimiSessionId = id; log.push(`kimi session ${id}`); },
     onTurnState: (state, reason) => log.push(`state ${state}${reason ? ` (${reason})` : ''}`),
@@ -158,6 +160,16 @@ describe.skipIf(!LIVE)('Kimi Code CLI terminal mode, live', () => {
     const models = [...wire.matchAll(/"type":"llm\.request"[^\n]*?"modelAlias":"([^"]+)"/g)].map((m) => m[1]);
     record('models used per request:', models);
     expect(models.at(-1)).toBe('kimi-code/kimi-for-coding-highspeed');
+
+    // 4. Switch the running session's model for this session only; kimi's global default stays.
+    const configPath = path.join(os.homedir(), '.kimi-code', 'config.toml');
+    const configBefore = fs.readFileSync(configPath, 'utf8');
+    const switched = await switchKimiCliModel({ model: 'kimi-code-cli:k3-256k' }, {
+      write: (d) => second.proc.write(d), delay, currentModel: () => second.runtime.getModel(),
+    });
+    record('live model switch:', switched, second.runtime.getModel());
+    expect(switched).toEqual({ switched: true, cliArg: 'kimi-code/k3-256k' });
+    expect(fs.readFileSync(configPath, 'utf8')).toBe(configBefore);
     second.runtime.stop();
     second.proc.kill();
   }, 300_000);

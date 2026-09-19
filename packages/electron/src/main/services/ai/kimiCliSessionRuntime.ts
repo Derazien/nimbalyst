@@ -33,6 +33,8 @@ export interface KimiCliSessionRuntimeOptions {
   indexPath: string;
   /** A kimi session this launch resumes (`-S <id>`), already resolved on disk. */
   resume?: { kimiSessionId: string; sessionDir: string };
+  /** The `-m` value kimi was started with, if any. */
+  launchModel?: string;
   /** Is this kimi session already another Nimbalyst session's? */
   isClaimed: (kimiSessionId: string) => boolean;
   onKimiSessionId: (kimiSessionId: string) => void;
@@ -63,8 +65,11 @@ export class KimiCliSessionRuntime {
   private outputTail = '';
   private trustShown = false;
   private timer: NodeJS.Timeout | null = null;
+  private model: string | null;
 
-  constructor(private readonly options: KimiCliSessionRuntimeOptions) {}
+  constructor(private readonly options: KimiCliSessionRuntimeOptions) {
+    this.model = options.launchModel ?? null;
+  }
 
   get kimiSessionId(): string | null {
     return this.sessionId;
@@ -72,6 +77,11 @@ export class KimiCliSessionRuntime {
 
   getTurnState(): ClaudeTurnState | null {
     return this.turnState;
+  }
+
+  /** The model the event log last reported (`kimi-code/<alias>`), or the launch model until then. */
+  getModel(): string | null {
+    return this.model;
   }
 
   start(pollMs = 200): void {
@@ -133,6 +143,7 @@ export class KimiCliSessionRuntime {
       (line) => {
         for (const action of this.translator.translateLine(line)) {
           if (action.kind === 'turn-state') this.setTurnState(action.state, action.endReason);
+          else if (action.kind === 'model') this.model = action.alias;
           else this.options.onRow(action);
         }
       },
