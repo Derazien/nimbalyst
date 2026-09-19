@@ -501,9 +501,16 @@ export class MessageStreamingHandler {
     let permissionsPath = session.worktreeProjectPath || effectiveWorkspacePath;
     if (isAgentProvider(session.provider)) {
       const existingProvider = ProviderFactory.getProvider(session.provider as AIProviderType, session.id);
-      await this.svc.hooklessWatcher.ensureForSession(session.id, effectiveWorkspacePath, {
-        attributionMode: resolveWorkspaceFileAttributionMode(session.provider, existingProvider),
-      });
+      try {
+        await this.svc.hooklessWatcher.ensureForSession(session.id, effectiveWorkspacePath, {
+          attributionMode: resolveWorkspaceFileAttributionMode(session.provider, existingProvider),
+        });
+      } catch (error) {
+        // The watcher refuses a workspace near the drive root (C:\work) and can fail
+        // for other reasons. It only feeds file attribution, so the turn goes ahead
+        // without it, as the Claude Code CLI launcher already does.
+        logger.ai.warn(`[MessageStreamingHandler] file watcher start failed, continuing without it: ${error instanceof Error ? error.message : String(error)}`);
+      }
     }
 
     // Comprehensive logging of what we're sending to Claude

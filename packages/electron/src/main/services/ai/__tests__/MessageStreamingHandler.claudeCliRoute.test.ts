@@ -357,4 +357,29 @@ describe("MessageStreamingHandler claude-code-cli routing", () => {
     expect(service.deliverPromptToClaudeCliSession).not.toHaveBeenCalled();
     expect(provider.sendMessageCalls).toBe(1);
   });
+
+  it("still sends when the file watcher refuses the workspace, as it does for a path near the drive root", async () => {
+    const provider = new RecordingProvider();
+    mocks.providerFactory.createProvider.mockReturnValue(provider);
+    const session = cliSession({
+      id: "shallow-session",
+      provider: "opencode",
+      model: "opencode:anthropic/claude-sonnet-4",
+    });
+    const service = makeService(session);
+    service.hooklessWatcher.ensureForSession.mockRejectedValue(
+      new Error('Workspace path "C:\\work" is too shallow (depth 2, minimum 3).'),
+    );
+
+    await new MessageStreamingHandler(service as never).handle(
+      senderEvent,
+      "Draft the reply",
+      undefined,
+      "shallow-session",
+      "C:\\work",
+    );
+
+    // Live watching only feeds file attribution; losing it must not cost the turn.
+    expect(provider.sendMessageCalls).toBe(1);
+  });
 });
