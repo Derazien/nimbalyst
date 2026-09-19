@@ -341,6 +341,28 @@ describe('KimiCodeProvider', () => {
       expect(toolChunks[1].toolCall).toMatchObject({ id: 'tc-1', name: 'Write', result: { success: true } });
     });
 
+    it('persists the text streamed so far when the turn ends in an error instead of complete', async () => {
+      const protocol = makeProtocol([
+        { type: 'text', content: 'partial answer' },
+        { type: 'error', error: 'kimi fell over' },
+      ]);
+      const provider = new KimiCodeProvider({ protocol: protocol as unknown as KimiACPProtocol });
+      await provider.initialize({ model: 'kimi-code:k3' });
+      const logged: string[] = [];
+      (provider as any).logAgentMessage = vi.fn(async (_s: string, _p: string, _d: string, content: string) => {
+        logged.push(content);
+      });
+
+      const chunks = await collectChunks(provider);
+
+      expect(chunks.some((c) => c.type === 'error')).toBe(true);
+      // The item.completed row is what the parser renders after a reload;
+      // without it the streamed text vanishes from the transcript.
+      const completed = logged.filter((c) => c.includes('"item.completed"'));
+      expect(completed).toHaveLength(1);
+      expect(completed[0]).toContain('partial answer');
+    });
+
     it('builds its protocol with the registered file-write hooks', () => {
       const before = async () => {};
       const after = async () => {};

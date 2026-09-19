@@ -326,6 +326,10 @@ export class KimiCodeProvider extends BaseAgentProvider {
     this.abortController = abortController;
 
     let fullText = '';
+    // Set once the turn-final item.completed row is written; the finally
+    // below writes it for a turn that was stopped or failed instead, so the
+    // text streamed so far survives a reload.
+    let assistantTextStored = false;
 
     try {
       // Kimi asks per tool via ACP `session/request_permission` round-trips
@@ -432,6 +436,7 @@ export class KimiCodeProvider extends BaseAgentProvider {
               // can create a canonical assistant_message event from it.
               if (sessionId && fullText) {
                 await this.storeAssistantResponse(sessionId, fullText);
+                assistantTextStored = true;
                 // Process the new raw message through the transformer NOW,
                 // before yielding `complete`. The parser skips per-chunk ACP
                 // events and only produces canonical events from the
@@ -468,6 +473,11 @@ export class KimiCodeProvider extends BaseAgentProvider {
         yield this.toErrorChunk(errorMessage);
       }
     } finally {
+      if (sessionId && fullText && !assistantTextStored) {
+        assistantTextStored = true;
+        await this.storeAssistantResponse(sessionId, fullText);
+        await this.processTranscriptMessages(sessionId);
+      }
       if (this.abortController === abortController) {
         this.abortController = null;
       }
