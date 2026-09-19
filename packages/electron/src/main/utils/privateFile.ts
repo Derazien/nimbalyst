@@ -2,8 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 
-/** Remove public access before reading existing application-owned files. */
-export function hardenPrivateFile(file: string): number | undefined {
+/** Refuse links and remove public access before reading an application-owned file. */
+export function inspectPrivateFile(file: string): fs.Stats | undefined {
   let stat: fs.Stats;
   try {
     stat = fs.lstatSync(file);
@@ -13,9 +13,27 @@ export function hardenPrivateFile(file: string): number | undefined {
   }
   if (!stat.isFile() || stat.nlink !== 1)
     throw new Error("Refusing unsafe settings file");
+  // Windows reports every file as 0o666 and chmod can only toggle read-only there,
+  // so the call would change nothing and still write file metadata on every read.
   const mode = stat.mode & 0o600;
-  if ((stat.mode & 0o7777) !== mode) fs.chmodSync(file, mode);
-  return mode;
+  if (process.platform !== "win32" && (stat.mode & 0o7777) !== mode)
+    fs.chmodSync(file, mode);
+  return stat;
+}
+
+/** Remove public access before reading existing application-owned files. */
+export function hardenPrivateFile(file: string): number | undefined {
+  const stat = inspectPrivateFile(file);
+  return stat && stat.mode & 0o600;
+}
+
+export const statSignature = (stat: fs.Stats): string =>
+  [stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs, stat.mode].join(":");
+
+/** Changes whenever the file is replaced or rewritten; "missing" when it does not exist. */
+export function privateFileSignature(file: string): string {
+  const stat = inspectPrivateFile(file);
+  return stat ? statSignature(stat) : "missing";
 }
 
 export function assertPrivateFileWritable(file: string): void {

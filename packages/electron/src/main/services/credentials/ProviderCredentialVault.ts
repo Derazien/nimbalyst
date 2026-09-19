@@ -6,7 +6,11 @@ import type {
   ProviderCredentialSnapshot,
 } from "../../../shared/providerCredentials";
 import { SAVED_CREDENTIAL } from "../../../shared/providerCredentials";
-import { hardenPrivateFile, writePrivateFile } from "../../utils/privateFile";
+import {
+  hardenPrivateFile,
+  privateFileSignature,
+  writePrivateFile,
+} from "../../utils/privateFile";
 import {
   normalizeCredentialWorkspace,
   readLegacySettings,
@@ -42,10 +46,14 @@ export class CredentialStorageError extends Error {
   }
 }
 
+const LEGACY_SETTINGS = ["ai-settings", "workspace-settings"];
+
 export class ProviderCredentialVault {
   private readonly file: string;
   private dirty = false;
   private cached?: { signature: string; data: VaultData };
+  /** Each settings file's signature when it was last seen holding no plaintext key. */
+  private readonly legacyClean = new Map<string, string>();
   private validateDirectory(): void {
     try {
       const stat = fs.lstatSync(path.dirname(this.file));
@@ -55,42 +63,41 @@ export class ProviderCredentialVault {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
   }
-  private signature(): string {
-    this.validateDirectory();
-    return [
-      "ai-settings.json",
-      "workspace-settings.json",
-      "provider-credentials/vault.bin",
-    ]
-      .map((name) => {
-        const file = path.join(this.directory, name);
-        if (hardenPrivateFile(file) === undefined) return "missing";
-        const stat = fs.statSync(file);
-        return [
-          stat.ino,
-          stat.size,
-          stat.mtimeMs,
-          stat.ctimeMs,
-          stat.mode,
-        ].join(":");
-      })
-      .join("|");
+  /**
+   * Settings files are saved several times a minute and almost never hold a key,
+   * so each is re-read only after it changes, and without the lock.
+   */
+  private legacyPending(): boolean {
+    for (const name of LEGACY_SETTINGS) {
+      const signature = privateFileSignature(
+        path.join(this.directory, `${name}.json`)
+      );
+      if (this.legacyClean.get(name) === signature) continue;
+      if (readLegacySettings(this.directory, name).credentials.length)
+        return true;
+      this.legacyClean.set(name, signature);
+    }
+    return false;
   }
   private read(): VaultData {
     try {
-      const signature = this.signature();
+      this.validateDirectory();
       if (!this.encryption.available())
         throw new CredentialStorageError("unavailable");
-      if (this.cached?.signature === signature)
-        return structuredClone(this.cached.data);
-      return this.run(() => {
-        const data = this.prepare();
-        this.cached = {
-          signature: this.signature(),
-          data: structuredClone(data),
-        };
-        return data;
-      });
+      // Only a migration needs the lock: vault.bin is replaced atomically.
+      if (this.legacyPending())
+        return this.run(() => {
+          const data = this.prepare();
+          this.cached = {
+            signature: privateFileSignature(this.file),
+            data: structuredClone(data),
+          };
+          return data;
+        });
+      const signature = privateFileSignature(this.file);
+      if (this.cached?.signature !== signature)
+        this.cached = { signature, data: this.load() };
+      return structuredClone(this.cached.data);
     } catch (error) {
       throw error instanceof CredentialStorageError
         ? error
@@ -304,7 +311,7 @@ export class ProviderCredentialVault {
           }
           writePrivateFile(
             source.file,
-            JSON.stringify(latest.data, null, "\t")
+            JSON.stringify(latest.data, null, "	")
           );
           if (readLegacySettings(this.directory, name).credentials.length)
             throw new Error("Legacy credentials changed during migration");
@@ -460,7 +467,7 @@ export class ProviderCredentialVault {
         );
         if (!matches.length) continue;
         matches.forEach((r) => r.remove());
-        writePrivateFile(source.file, JSON.stringify(source.data, null, "\t"));
+        writePrivateFile(source.file, JSON.stringify(source.data, null, "	"));
       }
       this.dirty = true;
     });

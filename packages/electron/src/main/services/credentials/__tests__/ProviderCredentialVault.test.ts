@@ -303,6 +303,32 @@ it("migrates legacy provider-config keys and preserves their only copy during lo
   ).toEqual({ enabled: true });
 });
 
+it("reads keys after an unrelated settings save without locking, decrypting, or rewriting file modes", () => {
+  const credentials = vault();
+  credentials.set("openai", "dummy-cached");
+  expect(credentials.availableKeys()).toEqual({ openai: "dummy-cached" });
+  // Per-project UI state is saved several times a minute and never holds a key.
+  storeLegacy("workspace-settings", {
+    project: { workspacePath: "/project", sidebarWidth: 240 },
+  });
+  const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+  Object.defineProperty(process, "platform", { value: "win32" });
+  const link = vi.spyOn(fs, "linkSync");
+  const chmod = vi.spyOn(fs, "chmodSync");
+  const decrypt = vi.spyOn(encryption, "decrypt");
+  try {
+    expect(credentials.availableKeys()).toEqual({ openai: "dummy-cached" });
+    expect(link).not.toHaveBeenCalled();
+    expect(chmod).not.toHaveBeenCalled();
+    expect(decrypt).not.toHaveBeenCalled();
+  } finally {
+    Object.defineProperty(process, "platform", platform);
+    link.mockRestore();
+    chmod.mockRestore();
+    decrypt.mockRestore();
+  }
+});
+
 it("retains the prior credential and cleans encrypted temporary files after publication fails", () => {
   vault().set("openai", "dummy-prior");
   const rename = vi.spyOn(fs, "renameSync").mockImplementationOnce(() => {
