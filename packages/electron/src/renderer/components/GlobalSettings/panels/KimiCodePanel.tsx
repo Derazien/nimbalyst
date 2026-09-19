@@ -1,96 +1,18 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { ProviderConfig, Model } from '../../Settings/SettingsView';
+import { ProviderConfig } from '../../Settings/SettingsView';
 import { SettingsToggle } from '../SettingsToggle';
 import { AlphaBadge, SETTINGS_ALPHA_TOOLTIP } from '../../common/AlphaBadge';
-
-/** Props for the sibling Kimi Code CLI subsection (Phase 0). */
-interface KimiCliBundle {
-  config: ProviderConfig;
-  availableModels: Model[];
-  loading: boolean;
-  onToggle: (enabled: boolean) => void;
-  onModelVisibilityToggle: (modelId: string, visible: boolean) => void;
-  onSetAllVisible: (visible: boolean) => void;
-}
 
 interface KimiCodePanelProps {
   config: ProviderConfig;
   onToggle: (enabled: boolean) => void;
-  /** The interactive-CLI provider (`kimi-code-cli`), toggled independently. */
-  cli: KimiCliBundle;
 }
 
 type CLIStatus = 'checking' | 'installed' | 'not-installed' | 'installing' | 'install-error';
 
-// Same hidden-set model list the Claude panel shows for its CLI sibling:
-// rows come from the provider's own catalog, unchecking hides from the picker.
-function AvailableModelsSection({
-  models,
-  hiddenModels,
-  loading,
-  onVisibilityToggle,
-  onSetAllVisible,
-}: {
-  models: Model[];
-  hiddenModels: string[];
-  loading: boolean;
-  onVisibilityToggle: (modelId: string, visible: boolean) => void;
-  onSetAllVisible: (visible: boolean) => void;
-}) {
-  return (
-    <div className="provider-panel-section py-4 mb-4 border-b border-[var(--nim-border)] last:border-b-0 last:mb-0 last:pb-0">
-      <h4 className="provider-panel-section-title text-base font-semibold mb-3 text-[var(--nim-text)]">Available models</h4>
-      {loading && (
-        <div className="models-loading text-sm text-[var(--nim-text-muted)] py-2">Loading models...</div>
-      )}
-      {!loading && models.length > 0 && (
-        <div className="models-section">
-          <div className="models-header flex items-center justify-between mb-3">
-            <span className="text-sm text-[var(--nim-text-muted)]">Uncheck models to hide them from the picker:</span>
-            <div className="models-actions flex gap-2">
-              <button
-                className="models-action-btn text-xs py-1 px-2 rounded bg-[var(--nim-bg-secondary)] border border-[var(--nim-border)] text-[var(--nim-text-muted)] hover:text-[var(--nim-text)] hover:bg-[var(--nim-bg-hover)] cursor-pointer transition-all"
-                onClick={() => onSetAllVisible(true)}
-              >
-                Show all
-              </button>
-              <button
-                className="models-action-btn text-xs py-1 px-2 rounded bg-[var(--nim-bg-secondary)] border border-[var(--nim-border)] text-[var(--nim-text-muted)] hover:text-[var(--nim-text)] hover:bg-[var(--nim-bg-hover)] cursor-pointer transition-all"
-                onClick={() => onSetAllVisible(false)}
-              >
-                Hide all
-              </button>
-            </div>
-          </div>
-          <div className="models-grid flex flex-col gap-2">
-            {models.map(model => (
-              <label key={model.id} className="model-checkbox flex items-center gap-3 py-2 px-3 rounded-md bg-[var(--nim-bg-secondary)] border border-[var(--nim-border)] cursor-pointer hover:bg-[var(--nim-bg-hover)]">
-                <input
-                  type="checkbox"
-                  checked={!hiddenModels.includes(model.id)}
-                  onChange={(e) => onVisibilityToggle(model.id, e.target.checked)}
-                  className="w-4 h-4 cursor-pointer accent-[var(--nim-primary)]"
-                />
-                <span className="text-sm text-[var(--nim-text)]">{model.name}</span>
-              </label>
-            ))}
-          </div>
-          <p className="text-[11px] text-[var(--nim-text-faint)] leading-relaxed mt-3">
-            Unchecked models are hidden from the session model picker. New models appear automatically.
-          </p>
-        </div>
-      )}
-      {!loading && models.length === 0 && (
-        <div className="models-loading text-sm text-[var(--nim-text-muted)] py-2">No models available.</div>
-      )}
-    </div>
-  );
-}
-
 export function KimiCodePanel({
   config,
   onToggle,
-  cli,
 }: KimiCodePanelProps) {
   const [cliStatus, setCLIStatus] = useState<CLIStatus>('checking');
   const [cliVersion, setCLIVersion] = useState<string | null>(null);
@@ -233,34 +155,18 @@ export function KimiCodePanel({
         </>
       )}
 
-      {/* Kimi Code CLI — a separate provider (`kimi-code-cli`) that runs the
-          genuine `kimi` binary in a terminal. Phase 0: identity and model
-          catalog only. Off by default, trimmed independently of the agent above. */}
+      {/* Kimi Code CLI -- a separate provider (`kimi-code-cli`) for the genuine
+          `kimi` binary in a terminal, placed like Claude Code CLI in the Claude
+          Agent panel. It cannot run a turn yet, so there is no enable toggle and
+          its models never reach the picker (modelEnablementFilter). */}
       <div className="provider-panel-section py-4 mb-4 mt-2 border-t border-[var(--nim-border)] last:mb-0 last:pb-0">
         <h4 className="provider-panel-section-title text-base font-semibold mb-1 text-[var(--nim-text)] flex items-center gap-2">
           Kimi Code CLI
           <AlphaBadge size="sm" tooltip={SETTINGS_ALPHA_TOOLTIP} />
         </h4>
         <p className="text-xs leading-relaxed text-[var(--nim-text-muted)] mb-3">
-          For people who prefer working in the <code className="text-xs bg-[var(--nim-bg-tertiary)] px-1 py-0.5 rounded">kimi</code> command-line tool itself. Phase 0: the provider is registered and its models appear in the picker, but interactive terminal sessions are coming soon. You don&rsquo;t need this to use your Kimi membership: Kimi Code above already runs on it once you sign in with <code className="text-xs bg-[var(--nim-bg-tertiary)] px-1 py-0.5 rounded">kimi login</code>.
+          Not available yet. This will run the <code className="text-xs bg-[var(--nim-bg-tertiary)] px-1 py-0.5 rounded">kimi</code> command-line tool itself in a terminal, for people who prefer working in it. You don&rsquo;t need it to use your Kimi membership: Kimi Code above already runs on it once you sign in with <code className="text-xs bg-[var(--nim-bg-tertiary)] px-1 py-0.5 rounded">kimi login</code>.
         </p>
-
-        <SettingsToggle
-          variant="enable"
-          name="Enable Kimi Code CLI"
-          checked={cli.config.enabled ?? false}
-          onChange={(checked) => cli.onToggle(checked)}
-        />
-
-        {(cli.config.enabled ?? false) && (
-          <AvailableModelsSection
-            models={cli.availableModels}
-            hiddenModels={cli.config.hiddenModels || []}
-            loading={cli.loading}
-            onVisibilityToggle={cli.onModelVisibilityToggle}
-            onSetAllVisible={cli.onSetAllVisible}
-          />
-        )}
       </div>
     </div>
   );

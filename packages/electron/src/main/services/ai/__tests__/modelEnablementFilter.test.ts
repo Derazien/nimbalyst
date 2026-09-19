@@ -105,6 +105,18 @@ describe('resolveProviderEnabled', () => {
     expect(resolveProviderEnabled('claude-code', { enabled: false })).toBe(false);
   });
 
+  it('a provider that cannot run yet stays off, and none of its models is selectable, whatever the saved flag says', () => {
+    // kimi-code-cli is a Phase 0 identity: its sendMessage throws. A saved
+    // {enabled:true} (the toggle shipped for a while) must not put its models
+    // in the picker, where the first send would fail.
+    const saved = { enabled: true };
+    expect(resolveProviderEnabled('kimi-code-cli', saved)).toBe(false);
+    const model = { id: 'kimi-code-cli:k3', provider: 'kimi-code-cli' };
+    expect(isModelEnabled(model, { enabled: resolveProviderEnabled('kimi-code-cli', saved) })).toBe(false);
+    // The ACP sibling is unaffected.
+    expect(resolveProviderEnabled('kimi-code', saved)).toBe(true);
+  });
+
   it('every other provider is opt-in', () => {
     for (const provider of ['claude', 'openai', 'lmstudio', 'opencode']) {
       expect(resolveProviderEnabled(provider, undefined)).toBe(false);
