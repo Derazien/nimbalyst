@@ -352,6 +352,16 @@ describe('searchableTextExtractor', () => {
       });
       expect(synthesis).toEqual({ searchableText: null, messageKind: 'meta' });
     });
+
+    it('treats Kimi Code CLI (terminal) rows, which share the shape, the same way', () => {
+      expect(extractSearchable({ source: 'kimi-code-cli', direction: 'input', content: 'fix the bug' }))
+        .toEqual({ searchableText: 'fix the bug', messageKind: 'user' });
+      expect(extractSearchable({
+        source: 'kimi-code-cli',
+        direction: 'output',
+        content: JSON.stringify({ type: 'session/update', update: { sessionUpdate: 'tool_call', toolCallId: 't1', title: 'Write' } }),
+      })).toEqual({ searchableText: null, messageKind: 'meta' });
+    });
   });
 
   describe('size cap', () => {

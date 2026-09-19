@@ -449,9 +449,9 @@ const AGENT_SOURCES = new Set([
   'grok-build',
   'cursor-agent',
   'antigravity-gemini-agent',
-  // `kimi-code-cli` writes no rows in Phase 0 (same reason `claude-code-cli`
-  // is absent here).
+  // Kimi Code CLI (terminal) stores the same row shapes as the ACP provider.
   'kimi-code',
+  'kimi-code-cli',
 ]);
 
 /**
@@ -466,8 +466,10 @@ const CODEX_SHAPED_OUTPUT_SOURCES = new Set([
   'copilot-cli',
   'grok-build',
   'cursor-agent',
-  // KimiCodeProvider stores the same turn-final `item.completed` synthesis.
+  // KimiCodeProvider stores the same turn-final `item.completed` synthesis,
+  // and so does the Kimi Code CLI terminal mode.
   'kimi-code',
+  'kimi-code-cli',
 ]);
 
 export function extractSearchable(input: ExtractorInput): ExtractedSearchable {

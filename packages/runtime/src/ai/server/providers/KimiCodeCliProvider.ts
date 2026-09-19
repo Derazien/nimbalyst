@@ -13,13 +13,12 @@
  * session can never flip between the ACP-driven and terminal-driven paths
  * once it has messages.
  *
- * Rollout is phased (same shape as the claude-code-cli rollout):
- *
- * - Phase 0 (this file, initial): provider identity + model catalog wiring so
- *   the rest of the app can route, validate, and construct this provider. The
- *   actual CLI driving (`sendMessage`) lands in Phase 1.
- * - Phase 1+: spawn the interactive `kimi` CLI in the terminal strip;
- *   observation backends reconstruct the transcript.
+ * Like claude-code-cli, this class is identity + model catalog only. The
+ * turns run in the genuine `kimi` terminal app on the Electron side
+ * (kimiCliLauncherSingleton: PTY in the terminal drawer, prompts typed into
+ * it, turn state and transcript read from kimi's own event log). Every app
+ * send path routes a kimi-code-cli prompt there before it could reach
+ * `sendMessage`, which is why that method only refuses.
  *
  * HARD SAFETY INVARIANT: this provider never reads API keys from the
  * environment — auth is `kimi login` and nothing else. See CLAUDE.md.
@@ -57,9 +56,9 @@ export class KimiCodeCliProvider extends BaseAgentProvider {
     _workspacePath?: string,
     _attachments?: unknown[]
   ): AsyncIterableIterator<StreamChunk> {
-    // Phase 1 wires this to the genuine `kimi` CLI in the terminal strip.
+    // Turns run in the kimi terminal; the send paths route there first.
     throw new Error(
-      'Kimi Code CLI (interactive terminal) provider not yet implemented (Phase 1).'
+      'Kimi Code CLI turns run in the kimi terminal, not through the in-process provider.'
     );
   }
 
