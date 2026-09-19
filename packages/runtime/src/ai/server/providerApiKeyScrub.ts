@@ -26,6 +26,8 @@ export const SCRUBBED_PROVIDER_API_KEY_ENV_VARS = [
   'CURSOR_API_KEY',
   'XAI_API_KEY',
   'GROK_API_KEY',
+  'MOONSHOT_API_KEY',
+  'KIMI_API_KEY',
 ] as const;
 
 /**

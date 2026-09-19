@@ -61,7 +61,18 @@ class MockKimiAcpAgent {
   async newSession(params) {
     const sessionId = `session_${randomUUID()}`;
     this.sessions.set(sessionId, { cwd: params.cwd, model: 'kimi-code/k3', cancelled: false });
-    audit('session/new', { sessionId, cwd: params.cwd });
+    audit('session/new', {
+      sessionId,
+      cwd: params.cwd,
+      // What the child actually received: the scrub must hold on the final
+      // spawn env, not on some intermediate map.
+      env: {
+        MOONSHOT_API_KEY: process.env.MOONSHOT_API_KEY ?? null,
+        KIMI_API_KEY: process.env.KIMI_API_KEY ?? null,
+        ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? null,
+        KIMI_ACP_TEST_MARKER: process.env.KIMI_ACP_TEST_MARKER ?? null,
+      },
+    });
     return {
       sessionId,
       configOptions: [

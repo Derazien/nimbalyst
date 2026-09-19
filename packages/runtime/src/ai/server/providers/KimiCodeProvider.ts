@@ -42,6 +42,7 @@ import {
 } from '../types';
 import { ModelIdentifier } from '../ModelIdentifier';
 import { KimiACPProtocol, type OnBeforeKimiFileWrite, type OnKimiTurnFilesEdited } from '../protocols/KimiACPProtocol';
+import { scrubProviderApiKeys } from '../providerApiKeyScrub';
 import { ProtocolEvent, ProtocolSession } from '../protocols/ProtocolInterface';
 import { PermissionMode } from './ProviderPermissionMixin';
 import { McpConfigService } from '../services/McpConfigService';
@@ -600,13 +601,9 @@ export class KimiCodeProvider extends BaseAgentProvider {
     }
 
     // Scrub API keys per CLAUDE.md policy -- kimi auth is the CLI's own OAuth
-    // (`kimi login`), never an env-carried key.
-    delete env.ANTHROPIC_API_KEY;
-    delete env.OPENAI_API_KEY;
-    delete env.MOONSHOT_API_KEY;
-    delete env.KIMI_API_KEY;
-
-    return env;
+    // (`kimi login`), never an env-carried key. The protocol scrubs the final
+    // spawn env again; this keeps the provider's own map honest too.
+    return scrubProviderApiKeys(env);
   }
 
   /**

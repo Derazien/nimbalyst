@@ -313,6 +313,33 @@ describe('KimiACPProtocol', () => {
     }
   }, 15000);
 
+  it('never lets a provider API key reach the kimi child, whatever env it was handed', async () => {
+    // These arrive through the last merge before spawn, the place the
+    // provider-side deletes cannot reach.
+    const { protocol, workspacePath, auditPath, cleanup } = makeHarness({
+      env: {
+        MOONSHOT_API_KEY: 'sk-moonshot-leak',
+        KIMI_API_KEY: 'sk-kimi-leak',
+        ANTHROPIC_API_KEY: 'sk-ant-leak',
+        KIMI_ACP_TEST_MARKER: 'kept',
+      },
+    });
+
+    try {
+      await protocol.createSession({ workspacePath });
+
+      const newSession = auditRows(auditPath).find((row) => row.method === 'session/new');
+      expect(newSession?.params.env).toEqual({
+        MOONSHOT_API_KEY: null,
+        KIMI_API_KEY: null,
+        ANTHROPIC_API_KEY: null,
+        KIMI_ACP_TEST_MARKER: 'kept',
+      });
+    } finally {
+      cleanup();
+    }
+  }, 15000);
+
   it('sends session/cancel when the per-turn abort signal fires', async () => {
     const { protocol, workspacePath, auditPath, cleanup } = makeHarness();
 
