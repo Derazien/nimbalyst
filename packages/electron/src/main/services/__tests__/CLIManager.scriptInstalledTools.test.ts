@@ -70,6 +70,21 @@ function spawnVersion(output: string) {
   return child as any;
 }
 
+/** A spawn stub for a command that is not there: no output, exit `code`. */
+function spawnExit(code: number) {
+  let closeHandler: ((code: number) => void) | undefined;
+  const child = {
+    stdout: { on: vi.fn() },
+    stderr: { on: vi.fn() },
+    on: vi.fn((e: string, h: (...args: any[]) => void) => {
+      if (e === 'close') closeHandler = h as (code: number) => void;
+    }),
+    kill: vi.fn(),
+  };
+  queueMicrotask(() => closeHandler?.(code));
+  return child as any;
+}
+
 describe('CLIManager script-installed tools', () => {
   const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
 
@@ -105,6 +120,24 @@ describe('CLIManager script-installed tools', () => {
     expect(result.path).toBe(grokPath);
     // No npm registry to consult, so no phantom "update available" prompt.
     expect(result.updateAvailable).toBe(false);
+  });
+
+  it('finds kimi.exe from the native Windows installer when kimi is not on PATH', async () => {
+    // kimi.com's installer puts kimi.exe in %USERPROFILE%\.kimi-code\bin and
+    // Nimbalyst may not see that folder on its PATH; detection must not ride
+    // on PATH alone.
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    const kimiExe = path.join(os.homedir(), '.kimi-code', 'bin', 'kimi.exe');
+    existsSyncMock.mockImplementation((p: string) => p === kimiExe);
+    spawnMock.mockImplementation((command: string) => (
+      command === kimiExe ? spawnVersion('2.0.1\n') : spawnExit(1)
+    ));
+
+    const result = await new CLIManager().checkInstallation('kimi' as any);
+
+    expect(result.installed).toBe(true);
+    expect(result.version).toBe('2.0.1');
+    expect(result.path).toBe(kimiExe);
   });
 
   it('refuses to install a script-only CLI and names the vendor command', async () => {

@@ -134,9 +134,9 @@ const CLI_EXTRA_INSTALL_LOCATIONS: Partial<Record<CLITool, readonly string[]>> =
   'grok-build': ['.grok/bin/grok', '.local/bin/grok'],
   'cursor-agent': ['.local/bin/cursor-agent'],
   // kimi.com's native installer (an alternative to the npm package) drops the
-  // binary here -- %USERPROFILE%\.kimi-code\bin on Windows, ~/.kimi-code/bin
-  // elsewhere; os.homedir() covers both.
-  'kimi': ['.kimi-code/bin/kimi'],
+  // binary here: kimi.exe in %USERPROFILE%\.kimi-code\bin on Windows, kimi in
+  // ~/.kimi-code/bin elsewhere. Only one of the two exists on any machine.
+  'kimi': ['.kimi-code/bin/kimi.exe', '.kimi-code/bin/kimi'],
 };
 
 export class CLIManager {
@@ -603,9 +603,10 @@ export class CLIManager {
       );
     }
 
-    // Script-installed tools: probe known locations directly, because a
-    // GUI-launched Electron often has no `~/.local/bin` on PATH.
-    if (CLI_INSTALL_STRATEGIES[tool].kind === 'script') {
+    // Script-installed tools, and kimi (npm or kimi.com's native installer):
+    // probe known locations directly, because a GUI-launched Electron often
+    // has no `~/.local/bin` or `~/.kimi-code/bin` on PATH.
+    if (CLI_INSTALL_STRATEGIES[tool].kind === 'script' || tool === 'kimi') {
       return this.checkVersionedExecutableInstallation(
         tool,
         this.getScriptInstalledExecutableCandidates(tool, this.getEnhancedPath()),
