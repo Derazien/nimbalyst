@@ -265,7 +265,7 @@ export class ToolUsageService {
        FROM ai_sessions s
        LEFT JOIN tool_usage_backfill_sessions b ON b.session_id = s.id
        WHERE b.session_id IS NULL
-         AND s.provider IN ('claude-code', 'claude-code-cli', 'openai-codex', 'openai-codex-acp', 'kimi-code', 'kimi-code-cli')`,
+         AND s.provider IN ('claude-code', 'claude-code-cli', 'openai-codex', 'openai-codex-acp')`,
     );
 
     let sessionsProcessed = 0;
