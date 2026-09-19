@@ -231,6 +231,57 @@ describe('KimiACPProtocol', () => {
     }
   }, 15000);
 
+  it('answers cancelled, never an approval, when a denied request offers no reject option', async () => {
+    const { protocol, workspacePath, auditPath, cleanup } = makeHarness({
+      env: { KIMI_ACP_TEST_NO_REJECT_OPTION: '1' },
+      onPermissionRequest: async () => ({ decision: 'deny', scope: 'once' }),
+    });
+
+    try {
+      const session = await protocol.createSession({ workspacePath });
+      for await (const event of protocol.sendMessage(session, { content: 'Reject the kimi edit' })) {
+        void event;
+      }
+
+      const permissionResponse = auditRows(auditPath).find((row) => row.method === 'session/request_permission:response');
+      expect(permissionResponse?.params).toMatchObject({ outcome: 'cancelled', optionId: null });
+      expect(fs.existsSync(path.join(workspacePath, 'kimi-target.txt'))).toBe(false);
+    } finally {
+      cleanup();
+    }
+  }, 15000);
+
+  it('cancels a permission request that is still waiting on the user when the turn is aborted', async () => {
+    const controller = new AbortController();
+    const { protocol, workspacePath, auditPath, cleanup } = makeHarness({
+      // The user never answers; Stop is pressed while the prompt is open.
+      onPermissionRequest: () => {
+        controller.abort();
+        return new Promise(() => {});
+      },
+    });
+
+    try {
+      const session = await protocol.createSession({ workspacePath });
+      const events: any[] = [];
+      for await (const event of protocol.sendMessage(session, {
+        content: 'Apply the kimi edit',
+        abortSignal: controller.signal,
+      })) {
+        events.push(event);
+      }
+
+      const rows = auditRows(auditPath);
+      const permissionResponse = rows.find((row) => row.method === 'session/request_permission:response');
+      expect(permissionResponse?.params).toMatchObject({ outcome: 'cancelled' });
+      expect(rows.some((row) => row.method === 'session/cancel')).toBe(true);
+      expect(events.find((event) => event.type === 'complete')?.metadata?.stopReason).toBe('cancelled');
+      expect(fs.existsSync(path.join(workspacePath, 'kimi-target.txt'))).toBe(false);
+    } finally {
+      cleanup();
+    }
+  }, 15000);
+
   it('captures a pre-edit baseline and reports the edited file on fs/write_text_file', async () => {
     const editedFiles: string[] = [];
     let preEditContent: string | undefined;

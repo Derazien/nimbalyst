@@ -117,6 +117,8 @@ interface ActiveTurnState {
   /** Assistant text accumulated this turn, reported on the complete event. */
   fullText: string;
   filesEditedThisTurn: Set<string>;
+  /** Set once session/cancel was requested for this turn. */
+  cancelled?: boolean;
 }
 
 interface SessionToolState {
@@ -229,6 +231,8 @@ export class KimiACPProtocol implements AgentProtocol {
   private readonly sessionTools = new Map<string, Map<string, SessionToolState>>();
   private readonly sessionStates = new Map<string, KimiSessionState>();
   private readonly knownSessionIds = new Set<string>();
+  /** Per ACP session: releases for permission requests still waiting on the user. */
+  private readonly pendingPermissionCancels = new Map<string, Set<() => void>>();
   private processExitError: Error | null = null;
 
   constructor(kimiPath?: string, deps?: KimiACPProtocolDeps) {
@@ -756,8 +760,9 @@ export class KimiACPProtocol implements AgentProtocol {
       });
     }
 
-    const decision = this.onPermissionRequest
-      ? await this.onPermissionRequest({
+    const onPermissionRequest = this.onPermissionRequest;
+    const decision = onPermissionRequest
+      ? await this.raceWithTurnCancel(params.sessionId, () => onPermissionRequest({
           requestId,
           sessionId: params.sessionId,
           nimbalystSessionId: turn?.nimbalystSessionId,
@@ -767,10 +772,20 @@ export class KimiACPProtocol implements AgentProtocol {
           toolInput: params.toolCall.rawInput,
           toolCall: params.toolCall,
           options: params.options,
-        })
+        }))
       : { decision: 'allow' as const, scope: 'once' as const };
 
+    // Aborted while the prompt was open: ACP wants `cancelled`, never a pick.
+    if (decision === null) {
+      return { outcome: { outcome: 'cancelled' } };
+    }
+
     const selectedOption = this.selectPermissionOption(params.options, decision);
+    if (!selectedOption) {
+      // A denied request with no reject option must not fall through to an
+      // approval; cancelling is the only safe answer.
+      return { outcome: { outcome: 'cancelled' } };
+    }
 
     return {
       outcome: {
@@ -778,6 +793,42 @@ export class KimiACPProtocol implements AgentProtocol {
         optionId: selectedOption.optionId,
       },
     };
+  }
+
+  /**
+   * Resolve `decision` unless the session's turn is cancelled first, in
+   * which case null is returned so the request is answered `cancelled`.
+   */
+  private raceWithTurnCancel<T>(sessionId: string, start: () => Promise<T>): Promise<T | null> {
+    let release: (() => void) | undefined;
+    const cancelled = new Promise<null>((resolve) => {
+      release = () => resolve(null);
+      const pending = this.pendingPermissionCancels.get(sessionId) ?? new Set<() => void>();
+      pending.add(release);
+      this.pendingPermissionCancels.set(sessionId, pending);
+    });
+    // Registered before the prompt starts, and checked once more after, so a
+    // cancel that lands while the prompt is being opened is not missed.
+    const decision = start();
+    if (this.activeTurns.get(sessionId)?.cancelled) {
+      release?.();
+    }
+    return Promise.race([decision, cancelled]).finally(() => {
+      if (release) {
+        this.pendingPermissionCancels.get(sessionId)?.delete(release);
+      }
+    });
+  }
+
+  private cancelPendingPermissions(sessionId: string): void {
+    const pending = this.pendingPermissionCancels.get(sessionId);
+    if (!pending) {
+      return;
+    }
+    this.pendingPermissionCancels.delete(sessionId);
+    for (const release of pending) {
+      release();
+    }
   }
 
   private async handleReadTextFile(
@@ -1182,6 +1233,13 @@ export class KimiACPProtocol implements AgentProtocol {
   }
 
   private async cancelPrompt(sessionId: string): Promise<void> {
+    // A permission request still waiting on the user is answered first, so
+    // the agent is never left holding an open request after session/cancel.
+    const turn = this.activeTurns.get(sessionId);
+    if (turn) {
+      turn.cancelled = true;
+    }
+    this.cancelPendingPermissions(sessionId);
     const connection = this.connection;
     if (!connection) {
       return;
@@ -1302,14 +1360,13 @@ export class KimiACPProtocol implements AgentProtocol {
   private selectPermissionOption(
     options: PermissionOption[],
     decision: { decision: 'allow' | 'deny'; scope: ToolPermissionScope }
-  ): PermissionOption {
+  ): PermissionOption | undefined {
     if (decision.decision === 'deny') {
-      return (
-        options.find((option) =>
-          option.optionId === 'reject' ||
-          option.kind === 'reject_once' ||
-          option.kind === 'reject_always'
-        ) ?? options[0]
+      // No fallback to options[0]: in kimi's ordering that is approve_once.
+      return options.find((option) =>
+        option.optionId === 'reject' ||
+        option.kind === 'reject_once' ||
+        option.kind === 'reject_always'
       );
     }
 
