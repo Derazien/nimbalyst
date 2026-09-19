@@ -310,7 +310,7 @@ export const HelpContent: Record<string, HelpEntry> = {
   },
   'model-picker-provider-kimi-code': {
     title: 'Kimi Code',
-    body: 'Moonshot\'s Kimi coding agent over ACP: streaming, per-tool permission prompts, and structured file edits, running on your Kimi membership. Install the CLI (npm i -g @moonshot-ai/kimi-code or the native installer from kimi.com), then run kimi login once in a terminal — no API key needed.',
+    body: 'Moonshot\'s Kimi coding agent over ACP: streaming, file edits with diff review, and a read-only plan mode, running on your Kimi membership. Tool approvals are answered automatically inside a trusted workspace. Install the CLI (npm i -g @moonshot-ai/kimi-code or the native installer from kimi.com), then run kimi login once in a terminal. No API key needed.',
   },
   'model-picker-provider-kimi-code-cli': {
     title: 'Kimi Code CLI (Terminal Mode, Phase 0)',

@@ -178,16 +178,18 @@ export const BUILTIN_AGENT_CAPABILITIES: Readonly<Record<AIProviderType, AgentCa
     contextReporting: 'token-counts',
   },
 
-  // Kimi's ACP surface, measured over `kimi acp`: no slash-command catalog in
-  // the session payload (configOptions carries only the model picker), no
-  // skills listing, and no compaction RPC in our adapter. `usage_update`
-  // notifications carry cumulative token counts but no context-window size,
-  // so there is no honest fill percentage (#914).
+  // Kimi's ACP surface, recorded over `kimi acp` 0.43.1 on 2026-09-17. Kimi
+  // announces its slash commands (compact, status, usage, mcp, tasks, ...) in
+  // an `available_commands_update` right after session/new; the adapter does
+  // not surface that catalog yet, so none of it is offered here. No skills
+  // listing. In a recorded two-tool turn no `usage_update` arrived and the
+  // prompt response carried no usage, so there is no measured signal to show
+  // (#914); the adapter forwards usage_update if a later kimi sends one.
   'kimi-code': {
     slashCommands: false,
     skills: false,
     compaction: 'unsupported',
-    contextReporting: 'token-counts',
+    contextReporting: 'none',
   },
 
   // Phase 0 identity provider: the genuine interactive CLI is driven by its

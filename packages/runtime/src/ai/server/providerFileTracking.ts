@@ -90,11 +90,13 @@ export const BUILTIN_FILE_CHANGE_FIDELITY: Readonly<Record<AIProviderType, FileC
     // The ACP parser handles neither `locations` nor `diff`.
     'copilot-cli': 'none',
 
-    // Kimi's ACP `tool_call` updates carry `rawInput` naming the path before
-    // the write lands (tool titles are Claude-Code-style: 'Write', 'Edit').
-    // The `fs/write_text_file` client hook delivers post-edit content, but the
-    // pre-write path signal is the tool call itself, so the watcher stays on
-    // for edits made any other way (shell commands, sub-agents).
+    // Kimi's ACP `tool_call` names the tool (Claude-Code-style 'Write',
+    // 'Edit'); its arguments arrive in a later update only milliseconds
+    // before the write lands. The pre-edit baseline therefore comes from the
+    // `fs/write_text_file` client hook (KimiCodeProvider.setOnBeforeFileWrite),
+    // which kimi routes every Write and Edit through, and the tool call is
+    // what attributes the edit. The watcher stays on for edits made any other
+    // way (shell commands, sub-agents).
     'kimi-code': 'tool-args',
 
     // Phase 0: `sendMessage` throws, nothing is observed, watcher-only.
