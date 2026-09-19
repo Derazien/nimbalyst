@@ -221,7 +221,7 @@ export class KimiCodeProvider extends BaseAgentProvider {
    * `kimi.cmd` shim resolves to Node plus the script it launches (see
    * kimiLaunch.ts); a shim that cannot be read is skipped.
    */
-  private static resolveKimiLaunchForRuntime(pathValue?: string): KimiLaunch | undefined {
+  static resolveKimiLaunchForRuntime(pathValue?: string): KimiLaunch | undefined {
     if (KimiCodeProvider.kimiPathLoader) {
       const customPath = KimiCodeProvider.kimiPathLoader();
       const launch = customPath ? resolveKimiLaunch(customPath, pathValue) : undefined;
@@ -544,7 +544,7 @@ export class KimiCodeProvider extends BaseAgentProvider {
     return { type: 'error', error: errorMessage };
   }
 
-  private static isKimiInstalled(): boolean {
+  static isKimiInstalled(): boolean {
     const launch = KimiCodeProvider.resolveKimiLaunchForRuntime(
       KimiCodeProvider.enhancedPathLoader?.() || process.env.PATH
     ) ?? { command: 'kimi', prefixArgs: [], env: {} };
@@ -583,7 +583,7 @@ export class KimiCodeProvider extends BaseAgentProvider {
     }
   }
 
-  private static buildKimiEnvironment(): Record<string, string> | null {
+  static buildKimiEnvironment(): Record<string, string> | null {
     let shellEnv: Record<string, string> | null = null;
     let enhancedPath: string | null = null;
 

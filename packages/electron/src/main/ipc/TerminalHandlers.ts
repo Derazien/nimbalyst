@@ -6,7 +6,10 @@
  */
 
 import { getTerminalSessionManager } from '../services/TerminalSessionManager';
-import { ensureClaudeCliSession, isClaudeCliInstalled } from '../services/ai/claudeCliLauncherSingleton';
+import { isClaudeCliInstalled } from '../services/ai/claudeCliLauncherSingleton';
+import { ensureTerminalCliSession } from '../services/ai/terminalCliSessionRouter';
+import { setKimiCliSessionModel } from '../services/ai/kimiCliLauncherSingleton';
+import { isKimiCliTerminal } from '../services/ai/kimiCliRuntimes';
 import { submitClaudeCliPromptProduction } from '../services/ai/claudeCliSubmitSingleton';
 import { switchClaudeCliModel } from '../services/ai/claudeCliModelSwitch';
 import { switchClaudeCliEffort } from '../services/ai/claudeCliEffortSwitch';
@@ -309,7 +312,8 @@ export function registerTerminalHandlers(): void {
       if (!payload?.workspacePath || typeof payload.workspacePath !== 'string') {
         throw new Error('workspacePath is required and must be a string');
       }
-      return ensureClaudeCliSession(payload);
+      // Kimi Code CLI sessions ride the same rails; the router picks the CLI.
+      return ensureTerminalCliSession(payload);
     }
   );
 
@@ -388,6 +392,13 @@ export function registerTerminalHandlers(): void {
       }
       if (!payload?.model || typeof payload.model !== 'string') {
         throw new Error('model is required and must be a string');
+      }
+      if (isKimiCliTerminal(payload.sessionId)) {
+        const kimiResult = await setKimiCliSessionModel(payload.sessionId, payload.model);
+        if (!kimiResult.switched) {
+          throw new Error(`Model "${payload.model}" cannot be applied to a Kimi Code CLI session`);
+        }
+        return { success: true, cliArg: kimiResult.cliArg };
       }
       const result = await switchClaudeCliModel(payload, {
         writeToTerminal: (sessionId: string, data: string) =>

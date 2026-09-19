@@ -1,4 +1,5 @@
 import { claimExternalSessionForLocalExecution } from '../externalSessions/ExternalSessionService';
+import { isTerminalCliProvider } from '../../../shared/terminalCliProviders';
 import { warnIfUnpublished } from '@nimbalyst/runtime/sync/pushOutcome';
 import type { SessionChange } from '@nimbalyst/runtime/sync/types';
 import { sessionInbox } from './sessionInboxService';
@@ -464,7 +465,7 @@ export class MessageStreamingHandler {
     // (Phase 1)" errors into the transcript while the genuine CLI turn ran fine
     // on its PTY. Route them onto the CLI rails here, where no send path can
     // miss the guard.
-    if (session.provider === 'claude-code-cli') {
+    if (isTerminalCliProvider(session.provider)) {
       if (queuedPromptId) {
         // The turn never starts, so nothing later clears the dedup mark.
         this.svc.processingQueuedPromptIds.delete(queuedPromptId);

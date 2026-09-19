@@ -1704,7 +1704,7 @@ const LocalSessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscrip
     // `--effort` is fixed at spawn, so without this the selector could only
     // apply to the NEXT session. Mirrors handleModelChange: PTY first, so a
     // failed switch leaves the persisted value untouched.
-    if (isClaudeCliTerminalSession(provider) && cliSessionCommitted) {
+    if (provider === 'claude-code-cli' && cliSessionCommitted) {
       try {
         await window.electronAPI.terminal.setClaudeCliEffort(sessionId, level);
       } catch (error) {
@@ -2642,7 +2642,7 @@ const LocalSessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscrip
             // transcript floor — the drawer's fixed-height band used to
             // flex-starve the transcript to ~0px in small Split-mode layouts.
             minHeight:
-              provider === 'claude-code-cli' && cliSessionCommitted && cliTerminalExpanded
+              isClaudeCliTerminalSession(provider) && cliSessionCommitted && cliTerminalExpanded
                 ? 120
                 : 0,
           }}
@@ -2731,7 +2731,7 @@ const LocalSessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscrip
           <ClaudeCliNotInstalledNotice variant="panel" />
         </div>
       )}
-      {provider === 'claude-code-cli' && cliSessionCommitted && claudeCliInstalled !== false && (
+      {isClaudeCliTerminalSession(provider) && cliSessionCommitted && claudeCliInstalled !== false && (
         <div
           ref={cliTerminalDrawerRef}
           className="claude-cli-terminal-drawer"

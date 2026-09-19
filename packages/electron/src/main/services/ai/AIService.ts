@@ -1,4 +1,5 @@
 import { reservePromptAnswer } from './PromptAnswerReservation';
+import { isTerminalCliProvider } from '../../../shared/terminalCliProviders';
 import { sessionInbox } from './sessionInboxService';
 import { resolveProviderApiKey } from './resolveProviderApiKey';
 import { SAVED_CREDENTIAL, withoutProviderConfigCredentials } from '../../../shared/providerCredentials';
@@ -98,7 +99,7 @@ import { canDispatchIntoDrain, isLeadTurnPending } from './drainFollowUp';
 import { hasLiveInteractivePrompt } from '../../mcp/tools/interactivePromptLiveness';
 import { isCommitProposalInFlight } from '@nimbalyst/runtime/ai/server/commitProposalInFlight';
 import { deferInterruptDuringCommit, deferUserSendNowDuringCommit } from './commitInterruptDeferral';
-import { ensureClaudeCliSession } from './claudeCliLauncherSingleton';
+import { ensureTerminalCliSession } from './terminalCliSessionRouter';
 import {
   resolveProviderWorkflowCatalog,
   type ProviderWorkflowCatalog,
@@ -524,14 +525,14 @@ export class AIService {
       return { success: false, error: 'Session not found' };
     }
 
-    if (session.provider === 'claude-code-cli') {
+    if (isTerminalCliProvider(session.provider)) {
       const terminalManager = getTerminalSessionManager();
       if (!terminalManager.isTerminalActive(sessionId)) {
         return { success: false, error: 'No active terminal for session' };
       }
 
       terminalManager.writeToTerminal(sessionId, '\x03');
-      logger.main.info(`[AIService] Interrupted claude-code-cli terminal for session ${sessionId}`);
+      logger.main.info(`[AIService] Interrupted ${session.provider} terminal for session ${sessionId}`);
       return { success: true, method: 'terminal-ctrl-c' };
     }
 
@@ -943,7 +944,7 @@ export class AIService {
     } catch (lookupError) {
       logger.main.warn(`[AIService] ${source}: provider lookup failed before queued dispatch:`, lookupError);
     }
-    if (dispatchSession?.provider === 'claude-code-cli') {
+    if (dispatchSession && isTerminalCliProvider(dispatchSession.provider)) {
       return this.dispatchQueuedPromptToClaudeCliSession(sessionId, workspacePath, dispatchSession, source);
     }
 
@@ -1049,7 +1050,7 @@ export class AIService {
     return dispatchQueuedPromptToClaudeCli(
       {
         isTerminalActive: (id) => terminalManager.isTerminalActive(id),
-        ensureSession: (input) => ensureClaudeCliSession(input),
+        ensureSession: (input) => ensureTerminalCliSession(input),
         getLiveTurnState: (id) => terminalManager.getClaudeCliLiveTurnState(id),
         getSnapshotStatus: (id) => getSessionStateManager().getSessionState(id)?.status ?? null,
         flushNext: (id, ws) => flushNextClaudeCliQueuedPromptForSession(id, ws),

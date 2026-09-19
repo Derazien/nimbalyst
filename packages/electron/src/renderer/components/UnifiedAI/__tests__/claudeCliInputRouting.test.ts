@@ -10,13 +10,15 @@ import {
 // provider). These helpers encode that routing decision.
 describe('claudeCliInputRouting', () => {
   describe('isClaudeCliTerminalSession', () => {
-    it('is true only for the claude-code-cli provider', () => {
+    it('is true for both terminal CLI providers (Claude Code CLI and Kimi Code CLI)', () => {
       expect(isClaudeCliTerminalSession(CLAUDE_CLI_PROVIDER_ID)).toBe(true);
+      expect(isClaudeCliTerminalSession('kimi-code-cli')).toBe(true);
     });
 
-    it('is false for SDK-backed and other providers', () => {
+    it('is false for SDK-backed, ACP and other providers', () => {
       expect(isClaudeCliTerminalSession('claude')).toBe(false);
       expect(isClaudeCliTerminalSession('claude-code')).toBe(false);
+      expect(isClaudeCliTerminalSession('kimi-code')).toBe(false);
       expect(isClaudeCliTerminalSession('openai-codex')).toBe(false);
       expect(isClaudeCliTerminalSession('openai')).toBe(false);
     });

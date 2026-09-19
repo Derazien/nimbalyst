@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { isTerminalCliProvider } from '../../shared/terminalCliProviders';
 import { useAtomValue, useSetAtom } from 'jotai';
 import type { ContentMode } from '../types/WindowModeTypes';
 import {
@@ -320,7 +321,7 @@ export function useKeyboardShortcuts({
       if (workspaceMode && e.code === 'Backquote' && e.shiftKey && !e.altKey &&
           e.ctrlKey && !e.metaKey) {
         const activeSessionId = store.get(activeSessionIdAtom);
-        if (activeSessionId && store.get(sessionProviderAtom(activeSessionId)) === 'claude-code-cli') {
+        if (activeSessionId && isTerminalCliProvider(store.get(sessionProviderAtom(activeSessionId)))) {
           e.preventDefault();
           e.stopPropagation();
           store.set(toggleCliTerminalDrawerAtom, activeSessionId);

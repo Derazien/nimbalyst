@@ -1,4 +1,5 @@
 import { sessionInbox } from '../sessionInboxService';
+import { isTerminalCliProvider } from '../../../../shared/terminalCliProviders';
 import { safeHandle } from '../../../utils/ipcRegistry';
 import { logger } from '../../../utils/logger';
 import { getTerminalSessionManager } from '../../TerminalSessionManager';
@@ -47,20 +48,20 @@ export function registerTurnControlHandlers(ctx: AIServiceContext): void {
       logger.main.info(`[AIService] cancelRequest: stopping session ${sessionId} before its provider starts`);
     }
 
-    if (session.provider === 'claude-code-cli') {
+    if (isTerminalCliProvider(session.provider)) {
       const terminalManager = getTerminalSessionManager();
       if (!terminalManager.isTerminalActive(sessionId)) {
-        console.warn(`[AIService] Cancel failed - no active claude-code-cli terminal for session: ${sessionId}`);
+        console.warn(`[AIService] Cancel failed - no active ${session.provider} terminal for session: ${sessionId}`);
         return { success: false, error: 'No active terminal for session' };
       }
 
       terminalManager.writeToTerminal(sessionId, '\x03');
       ctx.analytics.sendEvent('ai_stream_interrupted', {
-        provider: 'claude-code-cli',
+        provider: session.provider,
         chunksReceived: chunksReceived || 0,
         reason: 'user_cancel'
       });
-      ctx.analytics.sendEvent('cancel_ai_request', { provider: 'claude-code-cli' });
+      ctx.analytics.sendEvent('cancel_ai_request', { provider: session.provider });
       return { success: true };
     }
 

@@ -133,6 +133,11 @@ export interface TerminalProcess {
    * watcher). Shell terminals leave this unset.
    */
   cleanup?: (exitCode: number) => void;
+  /**
+   * Live turn state for a CLI agent that reports it some other way than the
+   * Claude PID file (Kimi Code CLI reads its event log). Unset for claude.
+   */
+  readCliTurnState?: () => ClaudeTurnState | null;
 }
 
 export interface TerminalRestoreSnapshot {
@@ -979,10 +984,19 @@ export class TerminalSessionManager {
        * PID-watcher cleanup into the single `cleanup` hook.
        */
       onExit?: (exitCode: number) => void;
+      /** Which CLI agent this is. Defaults to the genuine `claude`. */
+      provider?: 'claude-code-cli' | 'kimi-code-cli';
+      /**
+       * Turn state from somewhere other than the Claude PID file. When set, no
+       * PID watcher runs and Stop / idle checks read this instead.
+       */
+      readTurnState?: () => ClaudeTurnState | null;
+      /** Every chunk of raw PTY output (Kimi reads its prompt box from it). */
+      onOutput?: (data: string) => void;
     }
   ): Promise<void> {
     if (this.terminals.has(terminalId)) {
-      console.log(`[TerminalSessionManager] Claude CLI terminal ${terminalId} already exists`);
+      console.log(`[TerminalSessionManager] CLI terminal ${terminalId} already exists`);
       return;
     }
 
@@ -994,11 +1008,12 @@ export class TerminalSessionManager {
 
     // Synthetic ShellInfo so the shared TerminalProcess shape is satisfied; the
     // CLI is not a shell, so there is no bootstrapMode / history handling.
+    const provider = options.provider ?? 'claude-code-cli';
     const shell: ShellInfo = {
       path: spawnConfig.executable,
-      name: 'claude',
+      name: provider === 'kimi-code-cli' ? 'kimi' : 'claude',
       args: spawnConfig.args,
-      provider: 'claude-code-cli',
+      provider,
     };
 
     console.log(`[TerminalSessionManager] Creating Claude CLI terminal ${terminalId}:`, {
@@ -1021,7 +1036,8 @@ export class TerminalSessionManager {
     // Throttled because a picker redraws on every keypress; reveal is idempotent.
     let lastPickerRevealAt = 0;
     ptyProcess.onData((data: string) => {
-      if (!detectCliPickerInChunk(data)) return;
+      options.onOutput?.(data);
+      if (provider !== 'claude-code-cli' || !detectCliPickerInChunk(data)) return;
       const now = Date.now();
       if (now - lastPickerRevealAt < 1500) return;
       lastPickerRevealAt = now;
@@ -1045,13 +1061,14 @@ export class TerminalSessionManager {
       pendingForcePersist: false,
       workspacePath: options.workspacePath,
       outputSequence: 0,
+      readCliTurnState: options.readTurnState,
     };
 
     // Drive turn-level state off the CLI's PID file. node-pty's `pid` is the
     // spawned `claude` process, which is the pid the CLI writes its state file
     // under (`~/.claude/sessions/{pid}.json`). Torn down on exit via `cleanup`.
     let stopPidWatcher: (() => void) | undefined;
-    if (options.onTurnState && typeof ptyProcess.pid === 'number') {
+    if (options.onTurnState && !options.readTurnState && typeof ptyProcess.pid === 'number') {
       stopPidWatcher = watchClaudePidState({
         pid: ptyProcess.pid,
         onTurnState: options.onTurnState,
@@ -1086,6 +1103,7 @@ export class TerminalSessionManager {
    */
   async getClaudeCliLiveTurnState(sessionId: string): Promise<ClaudeTurnState | null> {
     const terminal = this.terminals.get(sessionId);
+    if (terminal?.readCliTurnState) return terminal.readCliTurnState();
     if (!terminal || typeof terminal.pty.pid !== 'number') return null;
     return readClaudePidTurnState({ pid: terminal.pty.pid });
   }
@@ -1118,7 +1136,8 @@ export class TerminalSessionManager {
       const result = await escalateClaudeCliInterrupt({
         write: (data) => terminal.pty.write(data),
         kill: (signal) => terminal.pty.kill(signal),
-        readTurnState: () => readClaudePidTurnState({ pid: terminal.pty.pid }),
+        readTurnState: async () =>
+          terminal.readCliTurnState ? terminal.readCliTurnState() : readClaudePidTurnState({ pid: terminal.pty.pid }),
         log: (message) => console.log(`[TerminalSessionManager] interrupt ${sessionId}: ${message}`),
       });
       return { success: true, resolvedAfter: result.resolvedAfter };

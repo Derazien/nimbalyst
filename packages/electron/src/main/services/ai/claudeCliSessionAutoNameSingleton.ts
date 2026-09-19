@@ -30,7 +30,8 @@ async function getFirstUserPrompt(sessionId: string): Promise<string | null> {
     const parsed = JSON.parse(firstInput.content) as { prompt?: unknown };
     return typeof parsed?.prompt === 'string' ? parsed.prompt : null;
   } catch {
-    return null;
+    // Kimi Code CLI stores the prompt as plain text.
+    return firstInput.content.trim() || null;
   }
 }
 

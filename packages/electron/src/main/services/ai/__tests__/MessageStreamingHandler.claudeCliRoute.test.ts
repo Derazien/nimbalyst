@@ -310,6 +310,29 @@ describe("MessageStreamingHandler claude-code-cli routing", () => {
     expect(result).toEqual({ content: "" });
   });
 
+  it("hands a Kimi Code CLI prompt to the same terminal rails", async () => {
+    const provider = new RecordingProvider();
+    mocks.providerFactory.createProvider.mockReturnValue(provider);
+    const session = cliSession({ id: "kimi-cli-session", provider: "kimi-code-cli", model: "kimi-code-cli:k3" });
+    const service = makeService(session);
+
+    await new MessageStreamingHandler(service as never).handle(
+      senderEvent,
+      "Rename the helper",
+      undefined,
+      "kimi-cli-session",
+      "/workspace",
+    );
+
+    expect(provider.sendMessageCalls).toBe(0);
+    expect(service.deliverPromptToClaudeCliSession).toHaveBeenCalledWith({
+      sessionId: "kimi-cli-session",
+      workspacePath: "/workspace",
+      prompt: "Rename the helper",
+      queuedPromptId: undefined,
+    });
+  });
+
   it("does not re-queue a prompt the queue already claimed", async () => {
     const provider = new RecordingProvider();
     mocks.providerFactory.createProvider.mockReturnValue(provider);

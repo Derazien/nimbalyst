@@ -22,6 +22,7 @@
  * - Message reloads (ai:message-logged) for sessions not currently mounted
  */
 
+import { isTerminalCliProvider } from '../../shared/terminalCliProviders';
 import { canvasWorkingSetRegistry } from '@nimbalyst/runtime/canvas/canvasPresence';
 import { store } from '@nimbalyst/runtime/store';
 import {
@@ -408,7 +409,7 @@ export function initSessionStateListeners(): () => void {
         // (ai:askUserQuestion / ai:exitPlanModeConfirm / ai:toolPermission /
         // ai:requestUserInput), which set AND clear it explicitly. Keeping
         // sessionProcessingAtom true above means the indicator keeps showing.
-        if (sessionMeta?.provider !== 'claude-code-cli') {
+        if (!isTerminalCliProvider(sessionMeta?.provider)) {
           store.set(sessionHasPendingInteractivePromptAtom(sessionId), true);
         }
         // Treat "waiting on user" as still processing for rail badge purposes —

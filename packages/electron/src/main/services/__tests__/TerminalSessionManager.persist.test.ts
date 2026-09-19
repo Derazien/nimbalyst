@@ -82,3 +82,20 @@ it('does not block on a store write for each tick of live output, but does when 
   expect(storeWrites.mock.calls).toHaveLength(1);
   expect(cursorOnDisk()).toBe(6);
 });
+
+it('asks a Kimi Code CLI terminal for its turn state instead of a Claude PID file, so Stop reaches kimi', async () => {
+  const { TerminalSessionManager } = await import('../TerminalSessionManager');
+  const manager = new TerminalSessionManager();
+  const writes: string[] = [];
+  let state: 'running' | 'idle' = 'running';
+  // No Claude PID file exists for this pid; only the reader knows the state.
+  (manager as any).terminals.set('kimi', {
+    pty: { pid: 999_999_999, write: (d: string) => { writes.push(d); state = 'idle'; }, kill: () => {} },
+    readCliTurnState: () => state,
+  });
+
+  expect(await manager.getClaudeCliLiveTurnState('kimi')).toBe('running');
+  const result = await manager.interruptClaudeCliTurn('kimi');
+  expect(writes).toEqual(['\x03']);
+  expect(result).toEqual({ success: true, resolvedAfter: 'first-interrupt' });
+});

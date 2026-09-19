@@ -23,6 +23,7 @@ import { ClaudeSettingsManager } from '../ClaudeSettingsManager';
 import { getAttachmentStagingConfig } from '../../utils/store';
 import { closeSupersededQuestions, snapshotQuestionsToSupersede } from './supersedeOpenQuestions';
 import { claudeCliSubmitLatch } from './claudeCliSubmitLatch';
+import { isKimiCliTerminal } from './kimiCliRuntimes';
 
 /** Submit a CLI prompt using the real terminal/log/analytics deps. */
 export async function submitClaudeCliPromptProduction(
@@ -30,6 +31,9 @@ export async function submitClaudeCliPromptProduction(
 ): Promise<{ submitted: boolean }> {
   await claimExternalSessionForLocalExecution(input.sessionId);
   const manager = getTerminalSessionManager();
+  if (isKimiCliTerminal(input.sessionId)) {
+    return submitKimiCliPrompt(input);
+  }
   const supersedeSnapshot = await snapshotQuestionsToSupersede({
     sessionId: input.sessionId,
     provider: 'claude-code-cli',
@@ -139,4 +143,38 @@ export async function submitClaudeCliPromptProduction(
   }
 
   return result;
+}
+
+/**
+ * Kimi Code CLI: the same paste-then-Enter submit, confirmed against the turn
+ * state kimi's event log reports. No user row is written here: kimi records
+ * the prompt in its own log and the session runtime stores it from there,
+ * which also covers a prompt typed straight into the terminal.
+ */
+async function submitKimiCliPrompt(input: SubmitClaudeCliPromptInput): Promise<{ submitted: boolean }> {
+  const manager = getTerminalSessionManager();
+  return submitClaudeCliPrompt(input, {
+    writeToTerminal: (sessionId: string, data: string) => {
+      claudeCliSubmitLatch.mark(sessionId, data.length);
+      manager.writeToTerminal(sessionId, data);
+    },
+    logUserPrompt: async () => {},
+    sendAnalytics: ({ messageLength, hasAttachments, attachmentCount, hasDocumentContext }) => {
+      try {
+        AnalyticsService.getInstance().sendEvent('ai_message_sent', {
+          provider: 'kimi-code-cli',
+          hasDocumentContext,
+          hasAttachments,
+          attachmentCount,
+          messageLength: bucketMessageLength(messageLength),
+          contentMode: 'unknown',
+        });
+      } catch {
+        // analytics is best-effort; never block the send
+      }
+    },
+    delay: (ms: number) => new Promise((resolve) => setTimeout(resolve, ms)),
+    hasTurnStarted: async (sessionId: string) =>
+      (await manager.getClaudeCliLiveTurnState(sessionId)) === 'running',
+  });
 }

@@ -1,4 +1,5 @@
 import { safeHandle } from '../../../utils/ipcRegistry';
+import { isTerminalCliProvider } from '../../../../shared/terminalCliProviders';
 import { logger } from '../../../utils/logger';
 import { getTerminalSessionManager } from '../../TerminalSessionManager';
 import { AnalyticsService } from '../../analytics/AnalyticsService.ts';
@@ -194,7 +195,7 @@ export function registerQueuedPromptHandlers(ctx: AIServiceContext): void {
     // idle, state still 'running') skipped the kick with no future idle
     // transition ever coming. Either signal saying idle kicks the flush; the
     // claim is race-safe, so erring toward flushing is fine.
-    if (queuedSession?.provider === 'claude-code-cli') {
+    if (queuedSession && isTerminalCliProvider(queuedSession.provider)) {
       const terminalManager = getTerminalSessionManager();
       const state = getSessionStateManager().getSessionState(sessionId);
       const workspacePath = queuedSession.workspacePath ?? state?.workspacePath;

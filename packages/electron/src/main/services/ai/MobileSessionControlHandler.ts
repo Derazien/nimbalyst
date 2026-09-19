@@ -6,6 +6,7 @@
  * and dispatches to the appropriate AI session logic.
  */
 
+import { isTerminalCliProvider } from '../../../shared/terminalCliProviders';
 import type { SyncProvider, SessionControlMessage } from '@nimbalyst/runtime/sync';
 import {
   isAskUserQuestionProvider,
@@ -414,7 +415,7 @@ async function handleCancel(
   // abort it by sending Ctrl-C to the terminal PTY, mirroring the desktop
   // `ai:cancelRequest` handler (AIService.ts).
   const { providerType, provider } = await resolveSessionProvider(sessionId);
-  if (providerType === 'claude-code-cli') {
+  if (isTerminalCliProvider(providerType)) {
     const { getTerminalSessionManager } = await import('../TerminalSessionManager');
     const terminalManager = getTerminalSessionManager();
     if (!terminalManager.isTerminalActive(sessionId)) {

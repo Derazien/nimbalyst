@@ -1,4 +1,5 @@
 import type { OrchestrationMessageKind } from '@nimbalyst/runtime/ai/server/types';
+import { isTerminalCliProvider } from '../../shared/terminalCliProviders';
 import path from 'path';
 import { BrowserWindow } from 'electron';
 import { createUnderParentOrBeside } from './sessionHierarchy';
@@ -1117,7 +1118,7 @@ export class MetaAgentService {
     status: SessionStatusValue,
     provider: string | undefined,
   ): string | null {
-    if (provider === 'claude-code-cli') return 'terminal-session';
+    if (isTerminalCliProvider(provider)) return 'terminal-session';
     if (status === 'waiting_for_input') return 'waiting-for-input';
     if (status === 'idle' || status === 'interrupted' || status === 'error') return 'session-not-running';
     return null;
