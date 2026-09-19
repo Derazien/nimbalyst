@@ -866,7 +866,7 @@ export function SettingsView({
 
     // kimi-code-cli has no page of its own: like claude-code-cli inside
     // ClaudeCodePanel, the CLI sibling is configured from a section of the
-    // combined Kimi Code panel, so both sidebar routes render this.
+    // one Kimi Code panel, the only Kimi route in the sidebar.
     const renderKimiCodePanel = () => (
       <KimiCodePanel
         config={providers['kimi-code'] || { enabled: false, testStatus: 'idle' }}
@@ -946,7 +946,6 @@ export function SettingsView({
       case 'copilot-cli':
         return wrapWithOverride('copilot-cli', 'GitHub Copilot', <CopilotCLIPanel {...commonProps} />);
       case 'kimi-code':
-      case 'kimi-code-cli':
         return wrapWithOverride('kimi-code', 'Kimi Code', renderKimiCodePanel());
       case 'grok-build':
         return wrapWithOverride(

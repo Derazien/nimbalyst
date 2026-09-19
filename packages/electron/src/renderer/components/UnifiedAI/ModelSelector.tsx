@@ -230,9 +230,11 @@ export function ModelSelector({
       case 'cursor-agent':
       case 'antigravity-gemini-agent':
       case 'kimi-code':
-      case 'kimi-code-cli':
       case 'lmstudio':
         return provider;
+      case 'kimi-code-cli':
+        // Configured from a section of the Kimi Code panel.
+        return 'kimi-code';
       case 'openai-codex-acp':
         // Settings still live under the OpenAI Codex panel.
         return 'openai-codex';
