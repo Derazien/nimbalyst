@@ -536,6 +536,24 @@ describe('KimiACPRawParser', () => {
     });
   });
 
+  describe('turn/failed rows (Kimi Code CLI terminal mode)', () => {
+    it('shows a failed turn as an error message', async () => {
+      const parser = new KimiACPRawParser();
+      const msg = makeRawMessage({
+        source: 'kimi-code-cli',
+        content: JSON.stringify({ type: 'turn/failed', message: "403 You've reached your 5-hour usage limit." }),
+      });
+
+      const descriptors = await parser.parseMessage(msg, makeContext());
+      expect(descriptors).toEqual([{
+        type: 'system_message',
+        text: "403 You've reached your 5-hour usage limit.",
+        systemType: 'error',
+        createdAt: msg.createdAt,
+      }]);
+    });
+  });
+
   describe('plain text output and edge cases', () => {
     it('treats non-JSON output as assistant_message', async () => {
       const parser = new KimiACPRawParser();

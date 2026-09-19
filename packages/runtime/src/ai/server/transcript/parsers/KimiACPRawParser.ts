@@ -163,6 +163,12 @@ export class KimiACPRawParser implements IRawMessageParser {
       return this.parseItemCompleted(parsed.item as Record<string, unknown>, msg);
     }
 
+    // Kimi Code CLI terminal mode: a turn kimi reported as failed (quota,
+    // auth, provider error), with kimi's own message.
+    if (parsed.type === 'turn/failed' && typeof parsed.message === 'string') {
+      return [{ type: 'system_message', text: parsed.message, systemType: 'error', createdAt: msg.createdAt }];
+    }
+
     const event = parsed as KimiACPRawEvent;
 
     if (event.type === 'session/request_permission') {
