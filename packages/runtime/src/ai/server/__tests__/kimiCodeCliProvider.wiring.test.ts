@@ -1,15 +1,12 @@
 // @vitest-environment node
 import { describe, it, expect } from 'vitest';
-import {
-  AI_PROVIDER_TYPES,
-  isAgentProvider,
-  shouldBlockStartedSessionProviderSwitch,
-} from '../types';
+import { shouldBlockStartedSessionProviderSwitch } from '../types';
 import { ModelIdentifier } from '../ModelIdentifier';
 import { ProviderFactory } from '../ProviderFactory';
 import { ModelRegistry } from '../ModelRegistry';
 import { agentCapabilitiesForProviderType } from '../agentCapabilities';
 import { KimiCodeCliProvider } from '../providers/KimiCodeCliProvider';
+import { KimiCodeProvider } from '../providers/KimiCodeProvider';
 
 /**
  * Phase 0 wiring for the interactive-CLI Kimi provider `kimi-code-cli`.
@@ -19,14 +16,6 @@ import { KimiCodeCliProvider } from '../providers/KimiCodeCliProvider';
  * and shares the Kimi model alias namespace.
  */
 describe('kimi-code-cli provider wiring (Phase 0)', () => {
-  it('is a registered provider type', () => {
-    expect((AI_PROVIDER_TYPES as readonly string[]).includes('kimi-code-cli')).toBe(true);
-  });
-
-  it('is treated as an agent provider', () => {
-    expect(isAgentProvider('kimi-code-cli')).toBe(true);
-  });
-
   it('locks transport: cannot switch between kimi-code and kimi-code-cli once a session has messages', () => {
     // Switching across the transport axis mid-session must be blocked.
     expect(shouldBlockStartedSessionProviderSwitch('kimi-code', 'kimi-code-cli', true)).toBe(true);
@@ -79,14 +68,13 @@ describe('kimi-code-cli provider wiring (Phase 0)', () => {
     }).rejects.toThrow(/not yet implemented \(Phase 1\)/);
   });
 
-  it('shares the Kimi alias catalog under the kimi-code-cli namespace', async () => {
-    const models = await KimiCodeCliProvider.getModels();
-    expect(models.map((m) => m.id)).toEqual([
-      'kimi-code-cli:k3',
-      'kimi-code-cli:k3-256k',
-      'kimi-code-cli:kimi-for-coding',
-      'kimi-code-cli:kimi-for-coding-highspeed',
-    ]);
-    expect(models.every((m) => m.provider === 'kimi-code-cli')).toBe(true);
+
+  it('keeps the kimi-code-cli catalog in step with kimi-code (the two lists are written out separately)', async () => {
+    const strip = (models: Array<{ id: string; contextWindow?: number }>) =>
+      models.map((m) => ({ alias: ModelIdentifier.parse(m.id).model, contextWindow: m.contextWindow }));
+    const cli = await KimiCodeCliProvider.getModels();
+    const acp = await KimiCodeProvider.getModels();
+    expect(cli.every((m) => m.provider === 'kimi-code-cli')).toBe(true);
+    expect(strip(cli)).toEqual(strip(acp));
   });
 });

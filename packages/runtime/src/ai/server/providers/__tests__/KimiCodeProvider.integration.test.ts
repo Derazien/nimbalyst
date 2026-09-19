@@ -77,8 +77,16 @@ describe.runIf(RUN_CONFIG && !!kimiExecutable)('KimiCodeProvider live integratio
         expect(text.length).toBeGreaterThan(0);
         expect(chunks.some((c) => c.type === 'complete')).toBe(true);
 
-        const toolCalls = chunks.filter((c) => c.type === 'tool_call');
-        expect(toolCalls.length).toBeGreaterThan(0);
+        // The Write card must carry kimi's late-arriving arguments with an
+        // absolute path inside the workspace, or file tracking and the diff
+        // view get nothing (kimi's own rawInput path is cwd-relative).
+        const writeCall = chunks.find(
+          (c) => c.type === 'tool_call' && c.toolCall?.name === 'Write' && c.toolCall?.arguments
+        );
+        expect(writeCall, 'a Write card with arguments').toBeDefined();
+        const writePath = String(writeCall.toolCall.arguments.path ?? writeCall.toolCall.arguments.file_path);
+        expect(path.isAbsolute(writePath)).toBe(true);
+        expect(path.resolve(writePath)).toBe(path.resolve(probeFile));
 
         expect(fs.existsSync(probeFile), 'probe file should be written by the agent').toBe(true);
         expect(fs.readFileSync(probeFile, 'utf8')).toContain('kimi live ok');

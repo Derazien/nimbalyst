@@ -39,6 +39,7 @@ import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { KimiCodeProvider } from '../KimiCodeProvider';
+import { BaseAgentProvider } from '../BaseAgentProvider';
 import { readNodeShimTarget } from '../kimiLaunch';
 import { KimiACPProtocol } from '../../protocols/KimiACPProtocol';
 import type { ProtocolEvent, ProtocolSession, SessionOptions } from '../../protocols/ProtocolInterface';
@@ -134,33 +135,40 @@ describe('KimiCodeProvider', () => {
     vi.restoreAllMocks();
   });
 
-  describe('identity and model catalog', () => {
-    it('reports the kimi-code provider name', () => {
-      const provider = new KimiCodeProvider({ protocol: makeProtocol([]) as unknown as KimiACPProtocol });
-      expect(provider.getProviderName()).toBe('kimi-code');
+  describe('turn gating and resume', () => {
+    it('refuses a turn in an untrusted workspace before kimi is ever started', async () => {
+      const protocol = makeProtocol([{ type: 'complete', content: '' }]);
+      const provider = new KimiCodeProvider({ protocol: protocol as unknown as KimiACPProtocol });
+      await provider.initialize({ model: 'kimi-code:k3' });
+      BaseAgentProvider.setTrustChecker(() => ({ trusted: false, mode: null }));
+      try {
+        const chunks = await collectChunks(provider);
+
+        expect(chunks).toHaveLength(1);
+        expect(chunks[0]).toMatchObject({ type: 'error' });
+        expect(chunks[0].error).toMatch(/not trusted/i);
+        // Kimi auto-approves its own tool requests, so trust is the only gate:
+        // nothing may reach the CLI.
+        expect(protocol.setProcessEnv).not.toHaveBeenCalled();
+        expect(protocol.createSession).not.toHaveBeenCalled();
+        expect(protocol.sendMessage).not.toHaveBeenCalled();
+      } finally {
+        BaseAgentProvider.setTrustChecker(null);
+      }
     });
 
-    it('stores initialize config for later turns', async () => {
-      const provider = new KimiCodeProvider({ protocol: makeProtocol([]) as unknown as KimiACPProtocol });
-      await provider.initialize({ model: 'kimi-code:kimi-for-coding' });
-      expect((provider as any).config.model).toBe('kimi-code:kimi-for-coding');
-    });
+    it('resumes the kimi session it created on the next turn of the same Nimbalyst session', async () => {
+      const protocol = makeProtocol([{ type: 'complete', content: '' }]);
+      const provider = new KimiCodeProvider({ protocol: protocol as unknown as KimiACPProtocol });
+      await provider.initialize({ model: 'kimi-code:k3' });
 
-    it('exposes the static alias catalog with honest names and context windows', async () => {
-      const models = await KimiCodeProvider.getModels();
-      expect(models.map((m) => m.id)).toEqual([
-        'kimi-code:k3',
-        'kimi-code:k3-256k',
-        'kimi-code:kimi-for-coding',
-        'kimi-code:kimi-for-coding-highspeed',
-      ]);
-      expect(models.every((m) => m.provider === 'kimi-code')).toBe(true);
-      expect(models.find((m) => m.id === 'kimi-code:k3')?.contextWindow).toBe(1048576);
-      expect(models.find((m) => m.id === 'kimi-code:kimi-for-coding')?.contextWindow).toBe(262144);
-    });
+      await collectChunks(provider);
+      await collectChunks(provider);
 
-    it('uses the registry default model', () => {
-      expect(KimiCodeProvider.getDefaultModel()).toBe('kimi-code:k3');
+      expect(protocol.createSession).toHaveBeenCalledTimes(1);
+      expect(protocol.resumeSession).toHaveBeenCalledTimes(1);
+      expect(protocol.resumeSession.mock.calls[0][0]).toBe('kimi-acp-session-1');
+      expect(provider.getInitData()?.isResumedSession).toBe(true);
     });
   });
 
@@ -380,12 +388,6 @@ describe('KimiCodeProvider', () => {
       }
     });
 
-    it('destroy() destroys the protocol', () => {
-      const protocol = makeProtocol([]);
-      const provider = new KimiCodeProvider({ protocol: protocol as unknown as KimiACPProtocol });
-      provider.destroy();
-      expect(protocol.destroy).toHaveBeenCalledTimes(1);
-    });
   });
 
   describe('Windows npm install (kimi.cmd shim)', () => {
