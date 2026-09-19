@@ -6,6 +6,11 @@ import { AlphaBadge, SETTINGS_ALPHA_TOOLTIP } from '../../common/AlphaBadge';
 interface KimiCodePanelProps {
   config: ProviderConfig;
   onToggle: (enabled: boolean) => void;
+  /** The terminal provider (`kimi-code-cli`), toggled independently. */
+  cli?: {
+    config: ProviderConfig;
+    onToggle: (enabled: boolean) => void;
+  };
 }
 
 type CLIStatus = 'checking' | 'installed' | 'not-installed' | 'installing' | 'install-error';
@@ -13,6 +18,7 @@ type CLIStatus = 'checking' | 'installed' | 'not-installed' | 'installing' | 'in
 export function KimiCodePanel({
   config,
   onToggle,
+  cli,
 }: KimiCodePanelProps) {
   const [cliStatus, setCLIStatus] = useState<CLIStatus>('checking');
   const [cliVersion, setCLIVersion] = useState<string | null>(null);
@@ -155,18 +161,27 @@ export function KimiCodePanel({
         </>
       )}
 
-      {/* Kimi Code CLI -- a separate provider (`kimi-code-cli`) for the genuine
-          `kimi` binary in a terminal, placed like Claude Code CLI in the Claude
-          Agent panel. It cannot run a turn yet, so there is no enable toggle and
-          its models never reach the picker (modelEnablementFilter). */}
+      {/* Kimi Code CLI -- a separate provider (`kimi-code-cli`) that runs the
+          genuine `kimi` binary in a terminal, placed like Claude Code CLI in the
+          Claude Agent panel. Off by default: a workflow preference, enabled
+          independently of Kimi Code above. */}
       <div className="provider-panel-section py-4 mb-4 mt-2 border-t border-[var(--nim-border)] last:mb-0 last:pb-0">
         <h4 className="provider-panel-section-title text-base font-semibold mb-1 text-[var(--nim-text)] flex items-center gap-2">
           Kimi Code CLI
           <AlphaBadge size="sm" tooltip={SETTINGS_ALPHA_TOOLTIP} />
         </h4>
         <p className="text-xs leading-relaxed text-[var(--nim-text-muted)] mb-3">
-          Not available yet. This will run the <code className="text-xs bg-[var(--nim-bg-tertiary)] px-1 py-0.5 rounded">kimi</code> command-line tool itself in a terminal, for people who prefer working in it. You don&rsquo;t need it to use your Kimi membership: Kimi Code above already runs on it once you sign in with <code className="text-xs bg-[var(--nim-bg-tertiary)] px-1 py-0.5 rounded">kimi login</code>.
+          For people who prefer working in the <code className="text-xs bg-[var(--nim-bg-tertiary)] px-1 py-0.5 rounded">kimi</code> command-line tool itself. It runs the genuine CLI in a terminal instead of Kimi Code above: your prompts are typed into it and its replies and tool calls show in the transcript. Approvals happen in kimi&rsquo;s own terminal, and Nimbalyst&rsquo;s built-in tools are not available to it. You don&rsquo;t need this to use your Kimi membership: Kimi Code above already runs on it once you sign in with <code className="text-xs bg-[var(--nim-bg-tertiary)] px-1 py-0.5 rounded">kimi login</code>.
         </p>
+
+        {cli && (
+          <SettingsToggle
+            variant="enable"
+            name="Enable Kimi Code CLI"
+            checked={cli.config.enabled ?? false}
+            onChange={(checked) => cli.onToggle(checked)}
+          />
+        )}
       </div>
     </div>
   );

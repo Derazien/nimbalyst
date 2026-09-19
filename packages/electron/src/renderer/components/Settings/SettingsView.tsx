@@ -929,7 +929,17 @@ export function SettingsView({
       case 'copilot-cli':
         return wrapWithOverride('copilot-cli', 'GitHub Copilot', <CopilotCLIPanel {...commonProps} />);
       case 'kimi-code':
-        return wrapWithOverride('kimi-code', 'Kimi Code', <KimiCodePanel {...commonProps} />);
+        return wrapWithOverride(
+          'kimi-code',
+          'Kimi Code',
+          <KimiCodePanel
+            {...commonProps}
+            cli={{
+              config: providers['kimi-code-cli'] || { enabled: false, testStatus: 'idle' },
+              onToggle: (enabled: boolean) => handleProviderToggle('kimi-code-cli', enabled),
+            }}
+          />,
+        );
       case 'grok-build':
         return wrapWithOverride(
           'grok-build',

@@ -55,14 +55,6 @@ const DETECTED_DEFAULT_PROVIDERS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Registered providers that cannot run a turn yet, so they are off whatever
- * the saved setting says: a flag saved while a toggle existed must not put
- * models in the picker whose first send throws. `kimi-code-cli` is a Phase 0
- * identity until its terminal driving lands; remove it here when it does.
- */
-const NOT_YET_RUNNABLE_PROVIDERS: ReadonlySet<string> = new Set(['kimi-code-cli']);
-
-/**
  * Resolve a provider's enabled state, applying the default for an absent
  * setting. Shared by every "is this provider on?" read so the settings toggle
  * and the model picker cannot disagree about what "never configured" means.
@@ -71,7 +63,6 @@ export function resolveProviderEnabled(
   provider: string,
   config: { enabled?: boolean } | undefined,
 ): boolean {
-  if (NOT_YET_RUNNABLE_PROVIDERS.has(provider)) return false;
   if (config?.enabled !== undefined) return config.enabled;
   if (DETECTED_DEFAULT_PROVIDERS.has(provider)) return isHeadlessAgentAvailable(provider);
   return DEFAULT_ENABLED_PROVIDERS.has(provider);

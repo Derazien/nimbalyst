@@ -313,8 +313,8 @@ export const HelpContent: Record<string, HelpEntry> = {
     body: 'Moonshot\'s Kimi coding agent over ACP: streaming, file edits with diff review, and a read-only plan mode, running on your Kimi membership. Tool approvals are answered automatically inside a trusted workspace. Install the CLI (npm i -g @moonshot-ai/kimi-code or the native installer from kimi.com), then run kimi login once in a terminal. No API key needed.',
   },
   'model-picker-provider-kimi-code-cli': {
-    title: 'Kimi Code CLI (Terminal Mode, Phase 0)',
-    body: 'For people who prefer the command-line tool itself: runs the genuine kimi binary in a terminal. Phase 0: provider identity and model catalog only — interactive terminal sessions are coming soon. You do not need this to use your Kimi membership.',
+    title: 'Kimi Code CLI (Terminal Mode)',
+    body: 'For people who prefer the command-line tool itself: runs the genuine kimi binary in an embedded terminal, with its TUI in the Raw terminal drawer, while Nimbalyst mirrors the conversation into the rich transcript. Approvals happen in the kimi terminal and Nimbalyst tools are not available to it. You do not need this to use your Kimi membership.',
   },
   'action-prompts-dropdown': {
     title: 'Action Prompts',
