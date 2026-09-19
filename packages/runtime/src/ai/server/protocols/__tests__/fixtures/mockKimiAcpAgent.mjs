@@ -84,9 +84,15 @@ class MockKimiAcpAgent {
           options: MODEL_OPTIONS,
         },
       ],
+      // The four modes kimi 0.43.1 reports (recorded 2026-09-17).
       modes: {
         currentModeId: 'default',
-        availableModes: [{ id: 'default', name: 'Default' }],
+        availableModes: [
+          { id: 'default', name: 'Default', description: 'Manual approvals; tools execute normally.' },
+          { id: 'plan', name: 'Plan', description: 'Read-only planning; no tool execution.' },
+          { id: 'auto', name: 'Auto', description: 'Auto-approve safe operations.' },
+          { id: 'yolo', name: 'YOLO', description: 'Auto-approve everything.' },
+        ],
       },
     };
   }
@@ -125,7 +131,8 @@ class MockKimiAcpAgent {
     return {};
   }
 
-  async setSessionMode() {
+  async setSessionMode(params) {
+    audit('session/set_mode', { sessionId: params.sessionId, modeId: params.modeId });
     return {};
   }
 

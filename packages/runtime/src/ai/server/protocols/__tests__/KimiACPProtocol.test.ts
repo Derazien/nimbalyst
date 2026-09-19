@@ -313,6 +313,34 @@ describe('KimiACPProtocol', () => {
     }
   }, 15000);
 
+  it('puts the session in kimi plan mode for a planning turn and back to default for an agent turn', async () => {
+    const { protocol, workspacePath, auditPath, cleanup } = makeHarness();
+
+    try {
+      const session = await protocol.createSession({ workspacePath });
+      const drain = async (mode: 'planning' | 'agent') => {
+        for await (const event of protocol.sendMessage(session, { content: 'Apply the kimi edit', mode })) {
+          void event;
+        }
+      };
+      const setModes = () => auditRows(auditPath)
+        .filter((row) => row.method === 'session/set_mode')
+        .map((row) => row.params.modeId);
+
+      await drain('planning');
+      expect(setModes()).toEqual(['plan']);
+
+      await drain('agent');
+      expect(setModes()).toEqual(['plan', 'default']);
+
+      // Already in default: no extra round-trip.
+      await drain('agent');
+      expect(setModes()).toEqual(['plan', 'default']);
+    } finally {
+      cleanup();
+    }
+  }, 20000);
+
   it('never lets a provider API key reach the kimi child, whatever env it was handed', async () => {
     // These arrive through the last merge before spawn, the place the
     // provider-side deletes cannot reach.

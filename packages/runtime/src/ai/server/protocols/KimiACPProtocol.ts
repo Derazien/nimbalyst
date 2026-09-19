@@ -40,6 +40,7 @@ import type {
   RequestPermissionRequest,
   RequestPermissionResponse,
   SessionConfigOption,
+  SessionModeState,
   SessionNotification,
   SessionUpdate,
   ToolCallContent,
@@ -138,6 +139,19 @@ interface KimiSessionState {
   currentModel?: string;
   /** Aliases offered by the session/new configOptions model picker. */
   availableModels: string[];
+  /** Session mode kimi is currently in, when observed (default / plan / auto / yolo). */
+  currentMode?: string;
+  /** Mode ids kimi offered on session/new, load or fork. Empty means unknown. */
+  availableModes: string[];
+}
+
+/**
+ * kimi session mode for a Nimbalyst turn mode. Nimbalyst's planning mode maps
+ * onto kimi's read-only `plan` mode, so a planning turn cannot write files
+ * even though permission requests are answered automatically.
+ */
+function kimiModeForTurn(mode: ProtocolMessage['mode']): string {
+  return mode === 'planning' ? 'plan' : 'default';
 }
 
 type ACPClientConnection = InstanceType<typeof ClientSideConnection>;
@@ -257,6 +271,7 @@ export class KimiACPProtocol implements AgentProtocol {
 
       this.registerSession(result.sessionId);
       this.captureConfigOptions(result.sessionId, result.configOptions);
+      this.captureModes(result.sessionId, result.modes);
       const appliedModel = await this.applySessionModel(connection, result.sessionId, options.model);
 
       return this.buildProtocolSession(result.sessionId, options, appliedModel, convertedMcpServers.length);
@@ -276,11 +291,13 @@ export class KimiACPProtocol implements AgentProtocol {
         // before this call settles. They are dropped in handleSessionUpdate
         // because no turn is active for the session yet -- the same replay
         // gate CodexACPProtocol relies on.
-        await connection.loadSession({
+        const loaded = await connection.loadSession({
           sessionId,
           cwd: options.workspacePath,
           mcpServers: this.convertMcpServers(options.mcpServers),
         });
+        this.registerSession(sessionId);
+        this.captureModes(sessionId, loaded.modes);
         resumed = true;
       } catch (error) {
         if (this.isAuthError(error)) {
@@ -315,9 +332,14 @@ export class KimiACPProtocol implements AgentProtocol {
       this.registerSession(result.sessionId);
       const sourceState = this.sessionStates.get(sessionId);
       if (sourceState) {
-        this.sessionStates.set(result.sessionId, { ...sourceState, availableModels: [...sourceState.availableModels] });
+        this.sessionStates.set(result.sessionId, {
+          ...sourceState,
+          availableModels: [...sourceState.availableModels],
+          availableModes: [...sourceState.availableModes],
+        });
       }
       this.captureConfigOptions(result.sessionId, result.configOptions);
+      this.captureModes(result.sessionId, result.modes);
       const appliedModel = await this.applySessionModel(connection, result.sessionId, options.model);
 
       return this.buildProtocolSession(result.sessionId, options, appliedModel);
@@ -359,6 +381,9 @@ export class KimiACPProtocol implements AgentProtocol {
 
     const promptTask = (async () => {
       try {
+        // Before every turn, so a resumed session and a mode switch between
+        // turns both land on the right kimi mode.
+        await this.applySessionMode(connection, session.id, kimiModeForTurn(message.mode));
         const promptBlocks = await this.buildPromptBlocks(message);
         const response = await connection.prompt({
           sessionId: session.id,
@@ -456,7 +481,44 @@ export class KimiACPProtocol implements AgentProtocol {
       this.sessionTools.set(sessionId, new Map());
     }
     if (!this.sessionStates.has(sessionId)) {
-      this.sessionStates.set(sessionId, { availableModels: [] });
+      this.sessionStates.set(sessionId, { availableModels: [], availableModes: [] });
+    }
+  }
+
+  private captureModes(sessionId: string, modes: SessionModeState | null | undefined): void {
+    const state = this.sessionStates.get(sessionId);
+    if (!state || !modes) {
+      return;
+    }
+    state.currentMode = modes.currentModeId;
+    state.availableModes = modes.availableModes.map((mode) => mode.id);
+  }
+
+  /**
+   * Put the kimi session into `modeId` unless it is already there or kimi
+   * never offered that mode. A refused switch is logged, not fatal: the turn
+   * still runs, in whatever mode kimi is in.
+   */
+  private async applySessionMode(
+    connection: ACPClientConnection,
+    sessionId: string,
+    modeId: string
+  ): Promise<void> {
+    const state = this.sessionStates.get(sessionId);
+    if (state?.currentMode === modeId) {
+      return;
+    }
+    if (state && state.availableModes.length > 0 && !state.availableModes.includes(modeId)) {
+      console.warn(`[KimiACPProtocol] kimi offers no "${modeId}" session mode; leaving mode as is`);
+      return;
+    }
+    try {
+      await connection.setSessionMode({ sessionId, modeId });
+      if (state) {
+        state.currentMode = modeId;
+      }
+    } catch (error) {
+      console.warn('[KimiACPProtocol] session/set_mode failed:', this.formatError(error));
     }
   }
 
@@ -598,6 +660,15 @@ export class KimiACPProtocol implements AgentProtocol {
   }
 
   private handleSessionUpdate(params: SessionNotification): void {
+    if (params.update.sessionUpdate === 'current_mode_update') {
+      // Session state, not turn content: track it whether or not a turn is
+      // active so the next applySessionMode compares against the truth.
+      const state = this.sessionStates.get(params.sessionId);
+      if (state) {
+        state.currentMode = params.update.currentModeId;
+      }
+    }
+
     const turn = this.activeTurns.get(params.sessionId);
     if (!turn) {
       // No active turn for this session: either a session/load replay or an
