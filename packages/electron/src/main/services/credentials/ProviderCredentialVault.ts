@@ -14,6 +14,7 @@ import {
 import {
   normalizeCredentialWorkspace,
   readLegacySettings,
+  writeLegacySettings,
 } from "./legacyProviderCredentials";
 
 export interface CredentialEncryption {
@@ -309,10 +310,7 @@ export class ProviderCredentialVault {
             )
               record.remove();
           }
-          writePrivateFile(
-            source.file,
-            JSON.stringify(latest.data, null, "	")
-          );
+          writeLegacySettings(source.file, latest.data);
           if (readLegacySettings(this.directory, name).credentials.length)
             throw new Error("Legacy credentials changed during migration");
         }
@@ -467,7 +465,7 @@ export class ProviderCredentialVault {
         );
         if (!matches.length) continue;
         matches.forEach((r) => r.remove());
-        writePrivateFile(source.file, JSON.stringify(source.data, null, "	"));
+        writeLegacySettings(source.file, source.data);
       }
       this.dirty = true;
     });

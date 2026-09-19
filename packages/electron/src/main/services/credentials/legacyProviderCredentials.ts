@@ -1,6 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
-import { hardenPrivateFile } from "../../utils/privateFile";
+import { hardenPrivateFile, writePrivateFile } from "../../utils/privateFile";
+import {
+  currentSettings,
+  forgetSettings,
+  replaceSettings,
+} from "../../utils/settingsFiles";
 
 export interface LegacyCredential {
   name: string;
@@ -97,7 +102,13 @@ export function readLegacySettings(
   data: Record<string, any>;
   credentials: LegacyCredential[];
 } {
-  const file = path.join(directory, `${name}.json`);
+  // Resolved like conf resolves a store's path, so the held copy is found.
+  const file = path.resolve(directory, `${name}.json`);
+  const current = currentSettings(file);
+  if (current) {
+    const data = structuredClone(current);
+    return { file, data, credentials: visitLegacyCredentials(name, data) };
+  }
   if (hardenPrivateFile(file) === undefined)
     return { file, data: {}, credentials: [] };
   let data: Record<string, any>;
@@ -109,4 +120,14 @@ export function readLegacySettings(
   if (!data || typeof data !== "object" || Array.isArray(data))
     throw new Error("Invalid legacy settings");
   return { file, data, credentials: visitLegacyCredentials(name, data) };
+}
+
+/** Save a settings file after removing keys, through its held copy when it has one. */
+export function writeLegacySettings(
+  file: string,
+  data: Record<string, any>
+): void {
+  if (replaceSettings(file, data)) return;
+  writePrivateFile(file, JSON.stringify(data, null, "\t"));
+  forgetSettings(file);
 }

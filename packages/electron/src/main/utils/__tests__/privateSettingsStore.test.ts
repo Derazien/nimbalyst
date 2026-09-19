@@ -4,12 +4,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import Store from "../privateSettingsStore";
+import { flushSettingsSync, settingsWritesSettled } from "../settingsFiles";
 
 let dir: string;
 beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "private-settings-"));
 });
-afterEach(() => {
+afterEach(async () => {
+  await settingsWritesSettled();
   vi.restoreAllMocks();
   fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -42,6 +44,43 @@ it("rejects legacy credential writes and stale snapshots after migration", () =>
   expect(() => {
     store.store = { apiKeys: { openai: "dummy-legacy" } };
   }).toThrow("secure storage");
+});
+
+it("reads an unchanged settings file once and still sees another writer's change", () => {
+  const store = new Store({ cwd: dir, name: "nimbalyst-settings" });
+  store.set("theme", "dark");
+  const read = vi.spyOn(fs, "readFileSync");
+  try {
+    for (let i = 0; i < 5; i++) expect(store.get("theme")).toBe("dark");
+    expect(read.mock.calls.filter(([file]) => file === store.path)).toHaveLength(1);
+    fs.writeFileSync(store.path, JSON.stringify({ theme: "light" }));
+    expect(store.get("theme")).toBe("light");
+  } finally {
+    read.mockRestore();
+  }
+});
+
+it("saves busy settings files without touching the disk on the caller's path, then flushes them on exit", async () => {
+  const store = new Store({ cwd: dir, name: "workspace-settings" });
+  const disk = ["writeFileSync", "fsyncSync", "linkSync"].map((name) =>
+    vi.spyOn(fs, name as "writeFileSync")
+  );
+  try {
+    store.set("project", { sidebarWidth: 240 });
+    expect(store.get("project")).toEqual({ sidebarWidth: 240 });
+    for (const spy of disk) expect(spy).not.toHaveBeenCalled();
+  } finally {
+    for (const spy of disk) spy.mockRestore();
+  }
+  await settingsWritesSettled();
+  expect(JSON.parse(fs.readFileSync(store.path, "utf8"))).toEqual({
+    project: { sidebarWidth: 240 },
+  });
+  store.set("project", { sidebarWidth: 300 });
+  flushSettingsSync();
+  expect(JSON.parse(fs.readFileSync(store.path, "utf8")).project).toEqual({
+    sidebarWidth: 300,
+  });
 });
 
 it("refuses to follow a settings symlink or broaden a read-only owner mode", () => {

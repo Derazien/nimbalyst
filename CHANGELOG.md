@@ -285,7 +285,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Moving a local wiki to a team (`/nimbalyst-wiki:team` or `nim wiki move-to-team`) now also moves drawings, mind maps, spreadsheets and the other editor pages, plus the images and attachments pages link to, when `@nimbalyst/wiki-web` is installed. Before, they stayed in the local wiki and links to them broke.
 - Excalidraw diagrams drawn by the AI no longer clip or cram their labels: text wraps inside each box with padding, boxes grow to fit, and a cramped board can be repaired in one step.
 - Agent sessions in a project folder close to the drive root, such as `C:\work`, no longer fail on their first message.
-- Nimbalyst no longer stalls or stops responding while terminals and agent sessions are producing output.
+- Nimbalyst no longer stalls or stops responding while terminals and agent sessions are producing output or while the disk is busy, including when switching projects.
 - Excalidraw diagrams drawn by the AI no longer clip or cram their labels, even offline: text wraps inside each box with padding, boxes grow to fit, a cramped board can be repaired in one step, and Excalidraw's fonts ship with the app instead of loading from the internet.
 - Moves, alignments, grouping and other AI edits to an Excalidraw diagram that is not open are saved instead of silently lost.
 

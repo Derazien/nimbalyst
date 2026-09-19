@@ -133,6 +133,8 @@ describe('SettingsService', () => {
     }
     expect(events).toEqual([]);
     svc.set(key, true);
+    // App settings are saved in the background; a real restart flushes them on the way out.
+    (await import('../../utils/settingsFiles')).flushSettingsSync();
     expect(JSON.parse(fs.readFileSync(path.join(tmpDir, 'app-settings.json'), 'utf8')).externalSessionFollowEnabled).toBe(true);
     expect(events).toEqual([{ key, value: true }]);
     unsubscribe();
@@ -140,6 +142,7 @@ describe('SettingsService', () => {
     const reloaded = (await import('../SettingsService')).getSettingsService();
     expect(reloaded.get(key)).toBe(true);
     reloaded.set(key, false);
+    (await import('../../utils/settingsFiles')).flushSettingsSync();
     vi.resetModules();
     expect((await import('../SettingsService')).getSettingsService().get(key)).toBe(false);
   });

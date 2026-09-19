@@ -14,10 +14,13 @@ const WORKSPACE = path.join(os.tmpdir(), 'terminal-persist-workspace');
 const TERMINAL_ID = 'live';
 
 let terminals: typeof import('../../utils/terminalStore');
+let settings: typeof import('../../utils/settingsFiles');
 let persist: (terminal: Record<string, unknown>, options?: { force?: boolean }) => Promise<void>;
 let storeWrites: { mock: { calls: unknown[] } };
 
+/** What a restart would read back; quitting flushes background saves first. */
 const cursorOnDisk = () => {
+  settings.flushSettingsSync();
   const file = JSON.parse(fs.readFileSync(path.join(userData, 'terminal-store.json'), 'utf8'));
   const [workspace] = Object.values(file.workspaces) as Array<{ terminals: Record<string, any> }>;
   return workspace.terminals[TERMINAL_ID].cursorY;
@@ -27,6 +30,7 @@ beforeEach(async () => {
   userData = fs.mkdtempSync(path.join(os.tmpdir(), 'terminal-persist-'));
   vi.resetModules();
   terminals = await import('../../utils/terminalStore');
+  settings = await import('../../utils/settingsFiles');
   const { TerminalSessionManager } = await import('../TerminalSessionManager');
   const { default: Store } = await import('../../utils/privateSettingsStore');
   const manager = new TerminalSessionManager();
@@ -45,9 +49,10 @@ beforeEach(async () => {
   storeWrites = vi.spyOn(Store.prototype, 'store', 'set');
 });
 
-afterEach(() => {
+afterEach(async () => {
   terminals.flushTerminalStore();
   vi.restoreAllMocks();
+  await settings.settingsWritesSettled();
   fs.rmSync(userData, { recursive: true, force: true });
 });
 

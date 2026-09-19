@@ -334,6 +334,7 @@ import { installWindowOpenGuard } from './window/windowOpenGuard';
 import { openConsoleDeepLink } from './services/consoleLinks/consoleLinkHandlers';
 import { resolveClaudeConfigDir } from '@nimbalyst/runtime/ai/server/providers/claudeCode/claudeConfigDir';
 import { parseConversationDeepLink } from '../shared/conversationDeepLinks';
+import { flushSettingsSync } from './utils/settingsFiles';
 import {
     FEEDBACK_REQUEST_DEEP_LINK_HOST,
     parseFeedbackRequestDeepLink,
@@ -3928,6 +3929,8 @@ app.on('before-quit', async (event) => {
     setTimeout(() => {
         const t16 = Date.now();
         console.log(`[QUIT] [${t16}] Calling app.exit(0) (${t16-t15}ms after timeout set)`);
+        // Settings are saved in the background; store whatever is still pending.
+        flushSettingsSync();
         try { app.exit(0); } catch {}
     }, 50);
 });

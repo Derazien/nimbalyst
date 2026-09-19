@@ -39,6 +39,17 @@ vi.mock('electron-store', () => {
   return { default: FakeStore };
 });
 
+// The settings layer keeps its own copy of each file, which would hide the fake
+// backing store; these cases are about store.ts's cache above it.
+vi.mock('../settingsFiles', () => ({
+  currentSettings: () => undefined,
+  holdSettings: () => {},
+  forgetSettings: () => {},
+  isWrittenInBackground: () => false,
+  replaceSettings: () => false,
+  writeSettingsInBackground: () => {},
+}));
+
 const WORKSPACE = '/tmp/workspace-cache-fixture';
 
 describe('workspace store read-through cache', () => {

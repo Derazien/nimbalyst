@@ -9,6 +9,7 @@ vi.mock('electron', () => ({ app: { getPath: () => userData, isReady: () => true
 
 type TerminalStoreModule = typeof import('../terminalStore');
 let terminals: TerminalStoreModule;
+let settings: typeof import('../settingsFiles');
 let storeWrites: { mock: { calls: unknown[] } };
 
 const WORKSPACE = path.join(os.tmpdir(), 'terminal-store-workspace');
@@ -23,8 +24,9 @@ const instance = (id: string) => ({
   lastActiveAt: 1,
 });
 
-/** What a restart would actually read back. */
+/** What a restart would actually read back; quitting flushes background saves first. */
 const onDisk = (id: string) => {
+  settings.flushSettingsSync();
   const file = JSON.parse(fs.readFileSync(path.join(userData, 'terminal-store.json'), 'utf8'));
   const [workspace] = Object.values(file.workspaces) as Array<{ terminals: Record<string, any> }>;
   return workspace.terminals[id];
@@ -36,6 +38,7 @@ beforeEach(async () => {
   // terminalStore memoizes its store, so each test needs a fresh module.
   vi.resetModules();
   terminals = await import('../terminalStore');
+  settings = await import('../settingsFiles');
   const { default: Store } = await import('../privateSettingsStore');
   // conf funnels every set() through the `store` setter, so this counts real
   // full-file writes (each one a temp write + fsync + rename) without
@@ -43,9 +46,10 @@ beforeEach(async () => {
   storeWrites = vi.spyOn(Store.prototype, 'store', 'set');
 });
 
-afterEach(() => {
+afterEach(async () => {
   vi.useRealTimers();
   vi.restoreAllMocks();
+  await settings.settingsWritesSettled();
   fs.rmSync(userData, { recursive: true, force: true });
 });
 

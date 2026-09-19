@@ -11,6 +11,7 @@ import {
   type CredentialEncryption,
 } from "../ProviderCredentialVault";
 import PrivateSettingsStore from "../../../utils/privateSettingsStore";
+import { settingsWritesSettled } from "../../../utils/settingsFiles";
 import { withCredentialLock } from "../credentialLock";
 
 let dir: string;
@@ -38,7 +39,8 @@ beforeEach(() => {
     },
   };
 });
-afterEach(() => {
+afterEach(async () => {
+  await settingsWritesSettled();
   fs.rmSync(dir, { recursive: true, force: true });
 });
 const storeLegacy = (name: string, value: unknown) =>
@@ -327,6 +329,28 @@ it("reads keys after an unrelated settings save without locking, decrypting, or 
     chmod.mockRestore();
     decrypt.mockRestore();
   }
+});
+
+it("migrates a key out of workspace settings held in memory without saving it back", async () => {
+  storeLegacy("workspace-settings", {
+    project: {
+      workspacePath: "/project",
+      aiProviderOverrides: { providers: { openai: { apiKey: "dummy-held" } } },
+    },
+  });
+  const settings = new PrivateSettingsStore({
+    name: "workspace-settings",
+    cwd: dir,
+  });
+  settings.set("project.sidebarWidth", 240);
+  expect(vault().get("openai", { workspacePath: "/project" })).toBe(
+    "dummy-held"
+  );
+  settings.set("project.sidebarWidth", 300);
+  await settingsWritesSettled();
+  const json = fs.readFileSync(settings.path, "utf8");
+  expect(json.includes("dummy-")).toBe(false);
+  expect(JSON.parse(json).project.sidebarWidth).toBe(300);
 });
 
 it("retains the prior credential and cleans encrypted temporary files after publication fails", () => {

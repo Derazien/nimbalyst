@@ -78,6 +78,7 @@ import {
 import { purgeOfflineCollabAccounts } from '../services/CollabOfflineAccountLifecycle';
 import { listPersonalSyncDevices, updatePersonalSyncDevices } from '../services/PersonalSyncDevicesService';
 import { recordProjectWalkOriginator } from '../services/ProjectWalkClaim';
+import { flushSettingsSync } from '../utils/settingsFiles';
 
 // Track if we've subscribed to sync status changes
 let syncStatusListenerSetup = false;
@@ -936,6 +937,7 @@ export function registerSettingsHandlers() {
             return { success: true, mode: 'dev' };
         } else {
             // In production, use the standard relaunch mechanism
+            flushSettingsSync();
             app.relaunch();
             app.exit(0);
 

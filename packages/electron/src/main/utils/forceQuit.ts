@@ -1,6 +1,7 @@
 import { app, BrowserWindow } from 'electron';
 import { appendFileSync } from 'fs';
 import { join } from 'path';
+import { flushSettingsSync } from './settingsFiles';
 
 let forceQuitTimer: NodeJS.Timeout | null = null;
 let isForceQuitting = false;
@@ -82,6 +83,11 @@ export function setupForceQuit(delay: number = 2000) {
         }
         
         // Multiple escalating attempts to quit
+        try {
+            flushSettingsSync();
+        } catch (e) {
+            logToDebugFile(`Settings flush failed: ${e}`);
+        }
         logToDebugFile('Attempting app.exit(0)');
         try {
             app.exit(0);

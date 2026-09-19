@@ -2,12 +2,41 @@ import ElectronStore from "electron-store";
 import { app } from "electron";
 import fs from "node:fs";
 import path from "node:path";
-import { assertPrivateFileWritable, hardenPrivateFile } from "./privateFile";
+import {
+  assertPrivateFileWritable,
+  hardenPrivateFile,
+  privateFileSignature,
+} from "./privateFile";
 import {
   readLegacySettings,
   visitLegacyCredentials,
 } from "../services/credentials/legacyProviderCredentials";
 import { withCredentialLock } from "../services/credentials/credentialLock";
+import {
+  currentSettings,
+  forgetSettings,
+  holdSettings,
+  isWrittenInBackground,
+  replaceSettings,
+  writeSettingsInBackground,
+} from "./settingsFiles";
+
+/** Saved several times a minute, so saving them must never wait on the disk. */
+const BACKGROUND_WRITES = new Set([
+  "app-settings",
+  "workspace-settings",
+  "terminal-store",
+]);
+
+interface ConfInternals<T> {
+  _validate(value: T): void;
+  _serialize(value: T): string;
+  _deserialize(text: string): T;
+}
+
+/** A copy the caller may change, shaped like conf's own reads. */
+const copy = <T>(data: T): T =>
+  Object.assign(Object.create(null), structuredClone(data));
 
 const EMPTY_READ_RETRIES = 3;
 const preservedUnreadable = new Set<string>();
@@ -59,22 +88,42 @@ export default class PrivateSettingsStore<
   // Mode, NIM-3963), and a `set` during that read writes `{ key }` over the
   // whole file. An empty result is only trusted when the file is really empty.
   override get store(): T {
+    const current = currentSettings(this.path);
+    if (current) return copy(current as T);
+    const signature = privateFileSignature(this.path);
     let value = super.store;
     for (let attempt = 1; attempt <= EMPTY_READ_RETRIES && isEmptyObject(value); attempt++) {
       const raw = readRaw(this.path);
-      if (raw === null || isEmptyJsonObject(raw)) return value;
+      if (raw === null || isEmptyJsonObject(raw)) break;
       console.warn(
         `[PrivateSettingsStore] ${path.basename(this.path)} read as empty but holds ${raw.length} bytes; retrying (${attempt}/${EMPTY_READ_RETRIES})`
       );
       value = super.store;
     }
-    if (isEmptyObject(value)) preserveUnreadable(this.path);
+    if (isEmptyObject(value)) {
+      const raw = readRaw(this.path);
+      if (raw !== null && !isEmptyJsonObject(raw)) {
+        // Never hold an unreadable read in memory: the next access retries the disk.
+        preserveUnreadable(this.path);
+        return value;
+      }
+    }
+    holdSettings(this.path, copy(value), signature);
     return value;
   }
   override set store(value: T) {
+    if (isWrittenInBackground(this.path)) {
+      const conf = this as unknown as ConfInternals<T>;
+      conf._validate(value);
+      // Serializing runs the credential guard, so a refused save still throws here.
+      replaceSettings(this.path, conf._deserialize(conf._serialize(value)));
+      this.events.emit("change");
+      return;
+    }
     withCredentialLock(path.dirname(this.path), () => {
       super.store = value;
     });
+    forgetSettings(this.path);
   }
   constructor(options: ElectronStore.Options<T> = {}) {
     const cwd = options.cwd ?? app.getPath("userData");
@@ -124,6 +173,8 @@ export default class PrivateSettingsStore<
         return serialize(value);
       },
     });
+    if (BACKGROUND_WRITES.has(name))
+      writeSettingsInBackground(this.path, (data) => serialize(data as T));
   }
 }
 

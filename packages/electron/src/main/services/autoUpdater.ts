@@ -21,6 +21,7 @@ import {
 import { installAtomFeedFilter } from './electronUpdaterPatch';
 import { createWindowsSignatureVerifier } from './windowsSignatureVerifier';
 import type { NsisUpdater } from 'electron-updater';
+import { flushSettingsSync } from '../utils/settingsFiles';
 
 // Install the atom-feed filter before any AutoUpdaterService is constructed
 // (which is the first thing that triggers electron-updater to read the feed).
@@ -401,12 +402,14 @@ export class AutoUpdaterService {
         AutoUpdaterService.isUpdating = true;
         app.removeAllListeners('before-quit');
         app.removeAllListeners('window-all-closed');
+        flushSettingsSync();
         autoUpdater.quitAndInstall(true, true);
       } catch (error) {
         log.error('Failed to quit and install:', error);
         AutoUpdaterService.isUpdating = true;
         app.removeAllListeners('before-quit');
         app.removeAllListeners('window-all-closed');
+        flushSettingsSync();
         app.relaunch();
         app.exit(0);
       }
