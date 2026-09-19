@@ -70,7 +70,7 @@ Thirteen built-in provider lanes, plus any agent an extension contributes. Every
 - Cursor Agent
 - Gemini via Google Antigravity (Connect-RPC over the user's Antigravity login; reports no usage numbers, so context and cost display as unavailable rather than guessed)
 - OpenCode, with slash commands, Compact, agent roles, and a model picker populated from the user's connected accounts
-- Kimi Code over ACP (alpha, off by default; runs on the user's own `kimi login` and only in trusted workspaces, where tool approvals are answered automatically; planning turns run in kimi's read-only plan mode; static model list, no usage or context meter, and kimi's slash commands are not surfaced; on Windows it needs kimi's native installer, not the npm package)
+- Kimi Code over ACP (alpha, off by default; runs on the user's own `kimi login` and only in trusted workspaces, where tool approvals are answered automatically; planning turns run in kimi's read-only plan mode; static model list, no usage or context meter, and kimi's slash commands are not surfaced; works with kimi's native installer or its npm package)
 
 **Cross-provider behavior**
 
