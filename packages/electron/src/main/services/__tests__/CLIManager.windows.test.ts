@@ -4,6 +4,7 @@ const {
   execSyncMock,
   execMock,
   spawnMock,
+  execFileMock,
   safeHandleMock,
   findExecutableInWindowsPathMock,
   getEnhancedWindowsPathMock,
@@ -14,6 +15,7 @@ const {
     callback(new Error('offline'), '', '');
   }),
   spawnMock: vi.fn(),
+  execFileMock: vi.fn(),
   safeHandleMock: vi.fn(),
   findExecutableInWindowsPathMock: vi.fn(),
   getEnhancedWindowsPathMock: vi.fn(),
@@ -31,6 +33,7 @@ vi.mock('child_process', () => ({
   spawn: spawnMock,
   exec: execMock,
   execSync: execSyncMock,
+  execFile: execFileMock,
 }));
 
 vi.mock('../WindowsPathResolver', () => ({
@@ -75,6 +78,7 @@ describe('CLIManager.checkClaudeCodeWindowsInstallation', () => {
       version: vi.fn().mockResolvedValue({ installed: false }),
     });
     execSyncMock.mockReset();
+    execFileMock.mockReset();
     execMock.mockClear();
     spawnMock.mockReset();
     safeHandleMock.mockReset();
@@ -87,17 +91,28 @@ describe('CLIManager.checkClaudeCodeWindowsInstallation', () => {
     }
   });
 
-  it('detects a Windows npm installation exposed as claude.cmd on PATH', async () => {
-    execSyncMock.mockImplementation((command: string, options?: { env?: Record<string, string> }) => {
-      if (command === '"C:\\Users\\test\\AppData\\Roaming\\npm\\claude.cmd" --version') {
-        expect(options?.env?.PATH).toBe('C:\\Users\\test\\AppData\\Roaming\\npm;C:\\Program Files\\nodejs');
-        return '1.2.3\n';
-      }
-      throw new Error(`Unexpected command: ${command}`);
+  /** Answer a candidate's version query without blocking the caller. */
+  const answerExecFile = (versionOf: (command: string) => string | undefined) => {
+    execFileMock.mockImplementation((command: string, _args: unknown, options: any, callback?: any) => {
+      const done = typeof options === 'function' ? options : callback;
+      const answer = versionOf(command);
+      if (answer === undefined) done(new Error(`not found: ${command}`), '', '');
+      else done(null, answer, '');
+      return { kill: vi.fn() };
     });
+  };
+
+  it('detects a Windows npm installation exposed as claude.cmd on PATH, without blocking', async () => {
+    answerExecFile((command) =>
+      command === 'C:\\Users\\test\\AppData\\Roaming\\npm\\claude.cmd' ? '1.2.3\n' : undefined,
+    );
 
     const manager = new CLIManager();
     const result = await manager.checkClaudeCodeWindowsInstallation();
+
+    // A synchronous child process here froze the whole app for 5 s per project switch.
+    expect(execSyncMock).not.toHaveBeenCalled();
+    expect(execFileMock.mock.calls.some(([command]) => command === 'C:\\Users\\test\\AppData\\Roaming\\npm\\claude.cmd')).toBe(true);
 
     expect(findExecutableInWindowsPathMock).toHaveBeenCalledWith(
       ['claude.cmd', 'claude.exe'],
@@ -108,6 +123,25 @@ describe('CLIManager.checkClaudeCodeWindowsInstallation', () => {
       gitVersion: undefined,
       claudeCodeVersion: '1.2.3',
     });
+  });
+
+  it('answers a repeat check from the last result instead of probing again', async () => {
+    answerExecFile((command) =>
+      command === 'C:\\Users\\test\\AppData\\Roaming\\npm\\claude.cmd' ? '1.2.3\n' : undefined,
+    );
+    const manager = new CLIManager();
+
+    const [first, second] = await Promise.all([
+      manager.checkClaudeCodeWindowsInstallation(),
+      manager.checkClaudeCodeWindowsInstallation(),
+    ]);
+    const probesSoFar = execFileMock.mock.calls.length;
+    const third = await manager.checkClaudeCodeWindowsInstallation();
+
+    expect(second).toEqual(first);
+    expect(third).toEqual(first);
+    // The renderer asks again on every workspace change; only the first may probe.
+    expect(execFileMock.mock.calls.length).toBe(probesSoFar);
   });
 
   it('detects a Windows Codex installation exposed as codex.cmd on PATH', async () => {
