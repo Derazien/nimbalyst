@@ -18,6 +18,7 @@ import {
   waitUntilElementMeasurable,
   waitUntilTerminalPainted,
 } from './terminalVisibility';
+import { setTerminalPainting } from './terminalRenderGate';
 import { canPersistTerminalRenderState } from './terminalRenderState';
 
 // Type for terminal API is defined in electron.d.ts
@@ -148,6 +149,18 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
 
   const terminalRef = useRef<HTMLDivElement>(null);
   const terminalInstanceRef = useRef<Terminal | null>(null);
+
+  /**
+   * Ghostty repaints on every animation frame whether or not the terminal is on
+   * screen, so a hidden one (a collapsed CLI drawer, a hidden panel) burns the
+   * renderer thread for nothing. Tie painting to having a visible box.
+   */
+  const syncTerminalPainting = useCallback(() => {
+    const container = terminalRef.current;
+    const terminal = terminalInstanceRef.current;
+    if (!container || !terminal) return;
+    setTerminalPainting(terminal, isElementMeasurable(container));
+  }, []);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const [isInitialized, setIsInitialized] = useState(false);
   const [hasExited, setHasExited] = useState(false);
@@ -740,6 +753,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
           };
           resizeObserver = new ResizeObserver(() => {
             if (disposed) return;
+            syncTerminalPainting();
             if (resizeDebounceTimer) clearTimeout(resizeDebounceTimer);
             resizeDebounceTimer = setTimeout(() => {
               resizeDebounceTimer = null;
@@ -755,6 +769,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
           // observer. For the CLI it also delivers a SIGWINCH that makes the
           // live TUI repaint after a snapshot-only restore.
           applyResize();
+          syncTerminalPainting();
 
           // Register link providers that open URLs in the default browser
           const wrapProvider = (provider: ILinkProvider): ILinkProvider => ({
@@ -881,7 +896,8 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
       // Panel hidden - blur terminal
       terminalInstanceRef.current.blur();
     }
-  }, [isActive, panelVisible, autoFocus]);
+    syncTerminalPainting();
+  }, [isActive, panelVisible, autoFocus, syncTerminalPainting]);
 
   // Imperative focus pulse (NIM-810): the reveal listener bumps `focusNonce` when
   // the CLI opens a native picker so keyboard nav reaches it. Skip the initial
