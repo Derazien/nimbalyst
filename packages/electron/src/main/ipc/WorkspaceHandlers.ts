@@ -33,7 +33,7 @@ import {
 import { loadFileIntoWindow } from '../file/FileOperations';
 import { getRecentItems } from '../utils/store';
 import { resolveActiveWorkspacePathForWindowId, getWindowIdForWindow, listOpenWorkspacePaths } from '../window/windowState';
-import { locatePathAmongProjects, type KnownProject } from '../../shared/projectLocator';
+import { locatePathAmongProjects, locatePathsAmongProjects, type KnownProject } from '../../shared/projectLocator';
 import { safeHandle, safeOn } from '../utils/ipcRegistry';
 import {
     getLocalKeyPrefixConfig,
@@ -880,10 +880,8 @@ export function registerWorkspaceHandlers() {
      * list, so a file an agent edited in another checkout gets that project's badge, and a
      * file in a directory nobody registered is still marked as not from here.
      */
-    safeHandle('workspace:locate-path', async (event, args: { filePath?: string }) => {
-        const filePath = typeof args?.filePath === 'string' ? args.filePath.trim() : '';
-        if (!filePath) return null;
-        const window = BrowserWindow.fromWebContents(event.sender);
+    const knownProjectsFor = (sender: Electron.WebContents) => {
+        const window = BrowserWindow.fromWebContents(sender);
         const activeWorkspace = resolveActiveWorkspacePathForWindowId(getWindowIdForWindow(window)) ?? null;
         const open = new Set(listOpenWorkspacePaths());
         const known = new Map<string, KnownProject>();
@@ -894,7 +892,27 @@ export function registerWorkspaceHandlers() {
             if (!recent?.path || known.has(recent.path)) continue;
             known.set(recent.path, { path: recent.path, name: recent.name || basename(recent.path) || recent.path, isOpen: false });
         }
-        return locatePathAmongProjects(filePath, [...known.values()], activeWorkspace);
+        return { projects: [...known.values()], activeWorkspace };
+    };
+
+    safeHandle('workspace:locate-path', async (event, args: { filePath?: string }) => {
+        const filePath = typeof args?.filePath === 'string' ? args.filePath.trim() : '';
+        if (!filePath) return null;
+        const { projects, activeWorkspace } = knownProjectsFor(event.sender);
+        return locatePathAmongProjects(filePath, projects, activeWorkspace);
+    });
+
+    /**
+     * The same question for many paths in one round trip, answered in the order asked.
+     *
+     * A file list is not bounded: a project with a large untracked folder lists tens of
+     * thousands of files, and one call per badge meant that many round trips, each rebuilding
+     * the project list. The list is built once here.
+     */
+    safeHandle('workspace:locate-paths', async (event, args: { filePaths?: unknown }) => {
+        const filePaths = Array.isArray(args?.filePaths) ? args.filePaths : [];
+        const { projects, activeWorkspace } = knownProjectsFor(event.sender);
+        return locatePathsAmongProjects(filePaths, projects, activeWorkspace);
     });
 
     /**

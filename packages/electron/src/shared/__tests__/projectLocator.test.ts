@@ -8,7 +8,7 @@
  * the renderer never compares paths itself.
  */
 import { describe, expect, it } from 'vitest';
-import { locatePathAmongProjects, locateSessionProject, pathsEqual } from '../projectLocator';
+import { locatePathAmongProjects, locatePathsAmongProjects, locateSessionProject, pathsEqual } from '../projectLocator';
 
 const WORK = 'C:/work';
 const ARTINC = 'C:/work/artificial.inc';
@@ -91,5 +91,17 @@ describe('locatePathAmongProjects', () => {
       project: ARTINC,
       foreign: true,
     });
+  });
+});
+
+describe('locatePathsAmongProjects', () => {
+  it('answers a whole file list in the order asked, keeping the slot of an entry that is not a path', () => {
+    const answers = locatePathsAmongProjects([`${ARTINC}/docs/plan.md`, '', `${WORK}/notes.md`, 42], projects, WORK);
+    expect(answers.map((answer) => answer && { project: answer.project, foreign: answer.foreign })).toEqual([
+      { project: ARTINC, foreign: true },
+      null,
+      { project: WORK, foreign: false },
+      null,
+    ]);
   });
 });

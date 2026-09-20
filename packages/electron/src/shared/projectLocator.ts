@@ -91,3 +91,18 @@ export function locatePathAmongProjects(
     : true;
   return { project: best.path, name: best.name, isOpen: best.isOpen, foreign };
 }
+
+/**
+ * `locatePathAmongProjects` for a whole file list, answered in the order asked. An entry that is
+ * not a usable path answers `null` and keeps its slot, so the caller can index by position.
+ */
+export function locatePathsAmongProjects(
+  filePaths: readonly unknown[],
+  projects: readonly KnownProject[],
+  activeWorkspace: string | null | undefined,
+): Array<PathProjectLocation | null> {
+  return filePaths.map((candidate) => {
+    const filePath = typeof candidate === 'string' ? candidate.trim() : '';
+    return filePath ? locatePathAmongProjects(filePath, projects, activeWorkspace) : null;
+  });
+}

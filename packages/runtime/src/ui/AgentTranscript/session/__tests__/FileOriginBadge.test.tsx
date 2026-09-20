@@ -8,7 +8,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as rtl from '@testing-library/react';
 import { createStore, Provider as JotaiProvider } from 'jotai';
 import { FileOriginBadge } from '../FileOriginBadge';
-import { fileOriginResolverAtom, type FileOrigin } from '../fileOriginAtoms';
+import {
+  clearFileOriginsAtom,
+  fileOriginResolverAtom,
+  lookupFileOriginAtom,
+  resolvedFileOriginsAtom,
+  type FileOrigin,
+} from '../fileOriginAtoms';
 
 const { render, screen, fireEvent, cleanup } = rtl;
 
@@ -81,6 +87,75 @@ describe('FileOriginBadge', () => {
       </JotaiProvider>,
     );
     expect(document.querySelector('.file-origin-badge')).toBeNull();
+  });
+});
+
+/**
+ * A project whose file list holds tens of thousands of paths mounts that many badges in one
+ * commit. Asking and answering one path at a time copied the whole answers map per path and
+ * woke every mounted badge each time: quadratic, a window frozen for minutes (66,909 files in
+ * an untracked .pnpm-store, 2026-09-20). The cost that matters is writes and round trips per
+ * burst, so that is what these pin, not a timing.
+ */
+describe('file origin lookups for a burst of paths', () => {
+  const burst = (count: number) => Array.from({ length: count }, (_, i) => `C:/work/big/.pnpm-store/files/${i}`);
+
+  it('answers the whole burst with one host round trip and one store write', async () => {
+    const store = createStore();
+    const resolve = vi.fn(async () => HOME);
+    const resolveMany = vi.fn(async (paths: string[]) => paths.map(() => HOME));
+    store.set(fileOriginResolverAtom, { resolve, resolveMany });
+    let writes = 0;
+    const unsubscribe = store.sub(resolvedFileOriginsAtom, () => {
+      writes += 1;
+    });
+
+    for (const filePath of burst(2000)) void store.set(lookupFileOriginAtom, filePath);
+
+    await vi.waitFor(() => expect(store.get(resolvedFileOriginsAtom).size).toBe(2000));
+    expect(resolveMany).toHaveBeenCalledTimes(1);
+    expect(resolve).not.toHaveBeenCalled();
+    expect(writes).toBe(1);
+    unsubscribe();
+  });
+
+  it('still writes once for the burst on a host that can only answer one path at a time', async () => {
+    const store = createStore();
+    const resolve = vi.fn(async () => HOME);
+    store.set(fileOriginResolverAtom, { resolve });
+    let writes = 0;
+    const unsubscribe = store.sub(resolvedFileOriginsAtom, () => {
+      writes += 1;
+    });
+
+    for (const filePath of burst(500)) void store.set(lookupFileOriginAtom, filePath);
+
+    await vi.waitFor(() => expect(store.get(resolvedFileOriginsAtom).size).toBe(500));
+    expect(resolve).toHaveBeenCalledTimes(500);
+    expect(writes).toBe(1);
+    unsubscribe();
+  });
+
+  it('drops answers that land after the window switched project, and lets the path be asked again', async () => {
+    const store = createStore();
+    let release: (answers: Array<FileOrigin | null>) => void = () => undefined;
+    const resolveMany = vi.fn(
+      () =>
+        new Promise<Array<FileOrigin | null>>((done) => {
+          release = done;
+        }),
+    );
+    store.set(fileOriginResolverAtom, { resolve: vi.fn(async () => ARTINC), resolveMany });
+
+    void store.set(lookupFileOriginAtom, 'C:/work/artificial.inc/docs/plan.md');
+    await vi.waitFor(() => expect(resolveMany).toHaveBeenCalledTimes(1));
+    store.set(clearFileOriginsAtom); // "foreign" is relative to the project on screen
+    release([ARTINC]);
+    await new Promise((settle) => setTimeout(settle, 0));
+    expect(store.get(resolvedFileOriginsAtom).size).toBe(0);
+
+    void store.set(lookupFileOriginAtom, 'C:/work/artificial.inc/docs/plan.md');
+    await vi.waitFor(() => expect(resolveMany).toHaveBeenCalledTimes(2));
   });
 });
 

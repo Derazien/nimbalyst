@@ -260,20 +260,25 @@ export function initSessionListListeners(): () => void {
 
   // The same for files a transcript names: main says which known project owns the path, and
   // the badge's click opens the file in that project's window.
+  type LocatedPath = { project: string | null; name: string | null; isOpen: boolean; foreign: boolean } | null;
+  const toFileOrigin = (located: LocatedPath) => {
+    if (!located) return null;
+    const badge = located.project ? projectBadgeFor(located.project, located.name ?? undefined) : null;
+    return {
+      project: located.project,
+      name: badge?.name ?? null,
+      initials: badge?.initials ?? null,
+      color: badge?.color ?? null,
+      foreign: located.foreign,
+    };
+  };
   store.set(fileOriginResolverAtom, {
-    resolve: async (filePath: string) => {
-      const located = (await window.electronAPI.invoke('workspace:locate-path', { filePath })) as
-        | { project: string | null; name: string | null; isOpen: boolean; foreign: boolean }
-        | null;
-      if (!located) return null;
-      const badge = located.project ? projectBadgeFor(located.project, located.name ?? undefined) : null;
-      return {
-        project: located.project,
-        name: badge?.name ?? null,
-        initials: badge?.initials ?? null,
-        color: badge?.color ?? null,
-        foreign: located.foreign,
-      };
+    resolve: async (filePath: string) =>
+      toFileOrigin((await window.electronAPI.invoke('workspace:locate-path', { filePath })) as LocatedPath),
+    // One round trip for every badge of a commit: a file list can run to tens of thousands.
+    resolveMany: async (filePaths: string[]) => {
+      const located = (await window.electronAPI.invoke('workspace:locate-paths', { filePaths })) as LocatedPath[] | null;
+      return filePaths.map((_, index) => toFileOrigin(located?.[index] ?? null));
     },
     openInProject: (filePath: string, project: string) =>
       window.electronAPI.invoke('workspace:open-file-in-project', { workspacePath: project, filePath }),
