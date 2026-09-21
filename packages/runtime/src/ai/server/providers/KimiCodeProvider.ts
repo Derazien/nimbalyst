@@ -379,6 +379,9 @@ export class KimiCodeProvider extends BaseAgentProvider {
         systemPrompt,
         mcpServers,
         ...(permissionResult.permissionMode ? { permissionMode: permissionResult.permissionMode } : {}),
+        // Rebuilt every turn, so a change in the composer's effort selector
+        // reaches kimi's `thinking` picker on the next message.
+        ...(this.config?.effortLevel ? { raw: { effortLevel: this.config.effortLevel } } : {}),
       };
 
       const session = isResumedSession

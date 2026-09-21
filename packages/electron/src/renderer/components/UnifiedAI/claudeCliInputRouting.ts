@@ -18,8 +18,9 @@ export const CLAUDE_CLI_PROVIDER_ID = 'claude-code-cli';
 
 /**
  * True when the session's provider is a genuine terminal-backed CLI: Claude
- * Code CLI or Kimi Code CLI. Both ride the same terminal rails; Claude-only
- * extras (effort, /btw side notes, sub-agent transcripts) check the provider id.
+ * Code CLI or Kimi Code CLI. Both ride the same terminal rails, including the
+ * model and effort switches; Claude-only extras (/btw side notes, sub-agent
+ * transcripts) check the provider id.
  */
 export function isClaudeCliTerminalSession(provider: string | null | undefined): boolean {
   return isTerminalCliProvider(provider);

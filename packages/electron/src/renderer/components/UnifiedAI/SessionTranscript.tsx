@@ -1703,8 +1703,9 @@ const LocalSessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscrip
     // command typed into its PTY, the same way the model picker uses `/model`.
     // `--effort` is fixed at spawn, so without this the selector could only
     // apply to the NEXT session. Mirrors handleModelChange: PTY first, so a
-    // failed switch leaves the persisted value untouched.
-    if (provider === 'claude-code-cli' && cliSessionCommitted) {
+    // failed switch leaves the persisted value untouched. Kimi Code CLI goes
+    // through the same call; main walks kimi's own effort picker instead.
+    if (isClaudeCliTerminalSession(provider) && cliSessionCommitted) {
       try {
         await window.electronAPI.terminal.setClaudeCliEffort(sessionId, level);
       } catch (error) {

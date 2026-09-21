@@ -54,6 +54,37 @@ describe('KimiCliSessionRuntime', () => {
     runtime.stop();
   });
 
+  it('reads the thinking effort and the open effort picker off the terminal, where kimi shows them before any session exists', () => {
+    // Screen text as kimi 2.0.2 drew it (recorded 2026-09-21).
+    const { runtime } = harness();
+    runtime.start();
+    runtime.noteTerminalOutput(' Ask When Needed  K3-256k thinking: high  C:\\ws\r\ncontext: 0% (0/256k) ');
+    expect(runtime.getThinkingEffort()).toBe('high');
+    expect(runtime.getEffortPickerLevels()).toBeNull();
+
+    runtime.noteTerminalOutput('\r\n  Select thinking effort\r\n  \u2190\u2192 switch \u00b7 Enter select \u00b7 Alt+S session-only \u00b7 Esc cancel\r\n\r\n     Low    [ High ]    Max\r\n');
+    expect(runtime.getEffortPickerLevels()).toEqual(['low', 'high', 'max']);
+
+    runtime.noteTerminalOutput('\r\n   Thinking set to max for this session only.\r\n \u2502 >  \u2502 \r\n Ask When Needed  K3-256k thinking: max  C:\\ws\r\ncontext: 0% (0/256k) ');
+    expect(runtime.getThinkingEffort()).toBe('max');
+    // The picker is gone once kimi is back at its prompt.
+    expect(runtime.getEffortPickerLevels()).toBeNull();
+    runtime.stop();
+  });
+
+  it('takes the thinking effort from the event log once the session has one', () => {
+    const { runtime } = harness();
+    runtime.start();
+    runtime.noteTerminalOutput(' K3 thinking: high  C:\\ws \r\ncontext: 0% (0/1M)');
+    makeSession('session_mine', 'C:/ws', [
+      JSON.stringify({ type: 'profile.bind', modelAlias: 'kimi-code/k3', thinkingEffort: 'high', time: 1 }),
+      JSON.stringify({ type: 'config.update', thinkingEffort: 'low', time: 2 }),
+    ]);
+    runtime.poll();
+    expect(runtime.getThinkingEffort()).toBe('low');
+    runtime.stop();
+  });
+
   it('finds the session kimi creates on the first prompt, claims it, and follows it from the start', () => {
     makeSession('session_before', 'C:/ws', [started(0)]);
     const { runtime, log } = harness({ claimed: ['session_taken'] });

@@ -207,7 +207,7 @@ function enqueueSync<T>(task: () => Promise<T>): Promise<T> {
  * `preserveMode` carries the target's existing permissions across the rename:
  * without it every write would reset the user's file to the temp file's 0600.
  */
-async function writeFileAtomic(
+export async function writeFileAtomic(
   filePath: string,
   contents: string,
   preserveMode: number | null,
@@ -229,7 +229,7 @@ async function writeFileAtomic(
 }
 
 /** Structural comparison, so an unchanged config is never rewritten. */
-function deepEqual(a: unknown, b: unknown): boolean {
+export function deepEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true;
   if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false;
   if (Array.isArray(a) !== Array.isArray(b)) return false;

@@ -70,8 +70,8 @@ Thirteen built-in provider lanes, plus any agent an extension contributes. Every
 - Cursor Agent
 - Gemini via Google Antigravity (Connect-RPC over the user's Antigravity login; reports no usage numbers, so context and cost display as unavailable rather than guessed)
 - OpenCode, with slash commands, Compact, agent roles, and a model picker populated from the user's connected accounts
-- Kimi Code over ACP (alpha, off by default; runs on the user's own `kimi login` and only in trusted workspaces, where tool approvals are answered automatically; planning turns run in kimi's read-only plan mode; static model list, no usage or context meter, and kimi's slash commands are not surfaced; works with kimi's native installer or its npm package)
-- Kimi Code CLI (alpha, off by default; the genuine `kimi` terminal app with its conversation mirrored into the transcript and its approvals answered in a drawer; switching models relaunches the session while idle; Nimbalyst's MCP tools, plan-mode toggle, effort, slash-command picker, sub-agent transcripts and context meter are not available in this mode)
+- Kimi Code over ACP (alpha, off by default; runs on the user's own `kimi login` and only in trusted workspaces, where tool approvals are answered automatically; gets Nimbalyst's MCP tools and the MCP servers from app and project settings, and the composer's effort selector sets kimi's thinking effort (low, high or max) for the session; planning turns run in kimi's read-only plan mode; static model list, no usage or context meter, and kimi's slash commands are not surfaced; works with kimi's native installer or its npm package)
+- Kimi Code CLI (alpha, off by default; the genuine `kimi` terminal app with its conversation mirrored into the transcript and its approvals answered in a drawer; gets the same MCP tools as Kimi Code over ACP, named in `~/.kimi-code/mcp.json` while a session runs and resolved per session; the model and the thinking effort switch in place, for that session only; plan-mode toggle, slash-command picker, sub-agent transcripts and context meter are not available in this mode)
 
 **Cross-provider behavior**
 

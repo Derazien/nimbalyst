@@ -8,7 +8,7 @@
 import { getTerminalSessionManager } from '../services/TerminalSessionManager';
 import { isClaudeCliInstalled } from '../services/ai/claudeCliLauncherSingleton';
 import { ensureTerminalCliSession } from '../services/ai/terminalCliSessionRouter';
-import { setKimiCliSessionModel } from '../services/ai/kimiCliLauncherSingleton';
+import { setKimiCliSessionEffort, setKimiCliSessionModel } from '../services/ai/kimiCliLauncherSingleton';
 import { isKimiCliTerminal } from '../services/ai/kimiCliRuntimes';
 import { submitClaudeCliPromptProduction } from '../services/ai/claudeCliSubmitSingleton';
 import { switchClaudeCliModel } from '../services/ai/claudeCliModelSwitch';
@@ -432,6 +432,15 @@ export function registerTerminalHandlers(): void {
       }
       if (!payload?.effortLevel || typeof payload.effortLevel !== 'string') {
         throw new Error('effortLevel is required and must be a string');
+      }
+      if (isKimiCliTerminal(payload.sessionId)) {
+        // kimi has no `/effort <level>` that leaves its global default alone;
+        // its picker is walked instead (kimiCliEffortSwitch.ts).
+        const kimiResult = await setKimiCliSessionEffort(payload.sessionId, payload.effortLevel);
+        if (!kimiResult.switched) {
+          throw new Error(`Effort "${payload.effortLevel}" could not be applied to the Kimi Code CLI session`);
+        }
+        return { success: true, level: kimiResult.effort };
       }
       const result = await switchClaudeCliEffort(payload, {
         writeToTerminal: (sessionId: string, data: string) =>

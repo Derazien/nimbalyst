@@ -41,6 +41,7 @@ import { fileURLToPath } from 'url';
 import { KimiCodeProvider } from '../KimiCodeProvider';
 import { BaseAgentProvider } from '../BaseAgentProvider';
 import { readNodeShimTarget } from '../kimiLaunch';
+import { toKimiSpawnableCommand } from '../kimiMcpCommand';
 import { KimiACPProtocol } from '../../protocols/KimiACPProtocol';
 import type { ProtocolEvent, ProtocolSession, SessionOptions } from '../../protocols/ProtocolInterface';
 import type { StreamChunk } from '../../types';
@@ -227,6 +228,19 @@ describe('KimiCodeProvider', () => {
       expect(options.workspacePath).toBe(WORKSPACE);
       // The protocol's applied model wins over the requested one.
       expect(provider.getInitData()?.model).toBe('kimi-code/kimi-for-coding');
+    });
+
+    it('hands the effort picked in the composer to the ACP session on every turn', async () => {
+      const protocol = makeProtocol([]);
+      const provider = new KimiCodeProvider({ protocol: protocol as unknown as KimiACPProtocol });
+      await provider.initialize({ model: 'kimi-code:k3', effortLevel: 'max' });
+      await collectChunks(provider);
+      // The composer selection changed between turns.
+      await provider.initialize({ model: 'kimi-code:k3', effortLevel: 'low' });
+      await collectChunks(provider);
+
+      expect(protocol.createSession.mock.calls[0][0].raw).toMatchObject({ effortLevel: 'max' });
+      expect(protocol.resumeSession.mock.calls[0][1].raw).toMatchObject({ effortLevel: 'low' });
     });
 
     it('consults the MCP config service and delivers servers to the ACP session', async () => {
@@ -449,6 +463,67 @@ describe('KimiCodeProvider', () => {
         fs.rmSync(workspacePath, { recursive: true, force: true });
       }
     }, 15000);
+
+    // kimi starts MCP servers without a shell, and Nimbalyst's MCP config turns
+    // `npx` into `npx.cmd` on Windows, so every npx-based server the user had
+    // configured died in kimi with "spawn EINVAL" (seen live on kimi 2.0.2).
+    describe('MCP servers that are batch files', () => {
+      // What Node's installer ships as npx.cmd (npm 10).
+      const npxBatch = [
+        ':: Created by npm, please don\'t edit manually.', '@ECHO OFF', '', 'SETLOCAL', '',
+        'SET "NODE_EXE=%~dp0\\node.exe"', 'IF NOT EXIST "%NODE_EXE%" (', '  SET "NODE_EXE=node"', ')', '',
+        'SET "NPM_PREFIX_JS=%~dp0\\node_modules\\npm\\bin\\npm-prefix.js"',
+        'SET "NPX_CLI_JS=%~dp0\\node_modules\\npm\\bin\\npx-cli.js"',
+        'FOR /F "delims=" %%F IN (\'CALL "%NODE_EXE%" "%NPM_PREFIX_JS%"\') DO (',
+        '  SET "NPM_PREFIX_NPX_CLI_JS=%%F\\node_modules\\npm\\bin\\npx-cli.js"', ')',
+        'IF EXIST "%NPM_PREFIX_NPX_CLI_JS%" (', '  SET "NPX_CLI_JS=%NPM_PREFIX_NPX_CLI_JS%"', ')', '',
+        '"%NODE_EXE%" "%NPX_CLI_JS%" %*', '',
+      ].join('\r\n');
+      const files: Record<string, string> = {
+        'C:\\nodejs\\node.exe': '',
+        'C:\\nodejs\\npx.cmd': npxBatch,
+        'C:\\nodejs\\node_modules\\npm\\bin\\npx-cli.js': '',
+        'C:\\npm\\gmail-mcp.cmd': npmShim('node_modules\\gmail-mcp\\dist\\index.js'),
+        'C:\\npm\\node_modules\\gmail-mcp\\dist\\index.js': '',
+        'C:\\tools\\uvx.exe': '',
+        'C:\\tools\\legacy.bat': '@echo off\r\n"%~dp0\\legacy-server.exe" %*\r\n',
+      };
+      const deps = {
+        platform: 'win32' as const,
+        pathValue: 'C:\\nodejs;C:\\npm;C:\\tools',
+        comSpec: 'C:\\Windows\\System32\\cmd.exe',
+        exists: (file: string) => file in files,
+        readFile: (file: string) => {
+          if (!(file in files)) throw new Error(`ENOENT ${file}`);
+          return files[file];
+        },
+      };
+
+      it('runs npx.cmd and an npm-installed server as node plus the script they launch', () => {
+        expect(toKimiSpawnableCommand('npx.cmd', ['-y', 'chrome-devtools-mcp@latest'], deps)).toEqual({
+          command: 'C:\\nodejs\\node.exe',
+          args: ['C:\\nodejs\\node_modules\\npm\\bin\\npx-cli.js', '-y', 'chrome-devtools-mcp@latest'],
+        });
+        // No extension, and only a .cmd by that name on PATH: plain spawn says ENOENT.
+        expect(toKimiSpawnableCommand('gmail-mcp', [], deps)).toEqual({
+          command: 'C:\\nodejs\\node.exe',
+          args: ['C:\\npm\\node_modules\\gmail-mcp\\dist\\index.js'],
+        });
+      });
+
+      it('leaves real executables and other platforms as they are', () => {
+        expect(toKimiSpawnableCommand('uvx', ['mcp-server-git'], deps)).toEqual({ command: 'uvx', args: ['mcp-server-git'] });
+        expect(toKimiSpawnableCommand('npx.cmd', ['-y', 'x'], { ...deps, platform: 'darwin' }))
+          .toEqual({ command: 'npx.cmd', args: ['-y', 'x'] });
+      });
+
+      it('runs a batch file that launches no node script through cmd.exe', () => {
+        expect(toKimiSpawnableCommand('C:\\tools\\legacy.bat', ['--port', '9'], deps)).toEqual({
+          command: 'C:\\Windows\\System32\\cmd.exe',
+          args: ['/d', '/s', '/c', 'C:\\tools\\legacy.bat', '--port', '9'],
+        });
+      });
+    });
   });
 
   describe('against the mock kimi agent', () => {

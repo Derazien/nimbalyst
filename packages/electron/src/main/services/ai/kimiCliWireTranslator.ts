@@ -22,6 +22,8 @@ export type KimiWireAction =
   | { kind: 'turn-state'; state: ClaudeTurnState; endReason?: KimiTurnEndReason }
   /** The model kimi is on now, spelled `kimi-code/<alias>`. */
   | { kind: 'model'; alias: string }
+  /** The thinking effort kimi is on now (`low`, `high`, `max`, `on`, `off`). */
+  | { kind: 'thinking'; effort: string }
   | {
       kind: 'row';
       direction: 'input' | 'output';
@@ -75,7 +77,15 @@ export class KimiCliWireTranslator {
 
       case 'profile.bind':
       case 'config.update':
-        return typeof event.modelAlias === 'string' ? [{ kind: 'model', alias: event.modelAlias }] : [];
+        return [
+          ...(typeof event.modelAlias === 'string' ? [{ kind: 'model' as const, alias: event.modelAlias }] : []),
+          ...(typeof event.thinkingEffort === 'string' ? [{ kind: 'thinking' as const, effort: event.thinkingEffort }] : []),
+        ];
+
+      case 'llm.request':
+        // What the request really ran at, which is the only place a
+        // session-only pick made before the first prompt is recorded.
+        return typeof event.thinkingEffort === 'string' ? [{ kind: 'thinking', effort: event.thinkingEffort }] : [];
 
       case 'turn.prompt':
       case 'turn.steer':

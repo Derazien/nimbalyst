@@ -17,6 +17,7 @@ import path from 'path';
 const LIVE = process.env.KIMI_LIVE === '1';
 const h = vi.hoisted(() => ({
   userData: '',
+  packageRoot: '',
   rows: [] as Array<{ direction: 'input' | 'output'; content: string; createdAt: Date; metadata?: Record<string, unknown> }>,
   statuses: [] as string[],
   session: { id: 'nim-kimi-1', provider: 'kimi-code-cli', model: 'kimi-code-cli:k3', providerSessionId: undefined as string | undefined },
@@ -24,7 +25,8 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock('electron', () => ({
-  app: { getPath: () => h.userData, isReady: () => true, isPackaged: false },
+  // getAppPath: the package root, where resources/kimiCliMcpLauncher.cjs lives in development.
+  app: { getPath: () => h.userData, getAppPath: () => h.packageRoot, isReady: () => true, isPackaged: false },
   BrowserWindow: { getAllWindows: () => [] },
 }));
 vi.mock('@nimbalyst/runtime', () => ({
@@ -60,7 +62,8 @@ vi.mock('../claudeCliSessionAutoNameSingleton', () => ({ maybeAutoNameClaudeCliS
 vi.mock('../../../window/WindowManager', () => ({ findWindowByWorkspace: () => null }));
 vi.mock('../../analytics/AnalyticsService', () => ({ AnalyticsService: { getInstance: () => ({ sendEvent: () => {} }) } }));
 vi.mock('../../ClaudeSettingsManager', () => ({ ClaudeSettingsManager: { getInstance: () => ({}) } }));
-vi.mock('../../../utils/store', () => ({ getAttachmentStagingConfig: () => ({ mode: 'workspace' }) }));
+// The app-wide effort default. kimi's own is "high", so a launch has to walk its picker to get here.
+vi.mock('../../../utils/store', () => ({ getAttachmentStagingConfig: () => ({ mode: 'workspace' }), getDefaultEffortLevel: () => 'max' }));
 
 const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 async function waitFor(what: string, pred: () => boolean | Promise<boolean>, timeoutMs = 90_000): Promise<void> {
@@ -94,8 +97,17 @@ async function transcript(rows: typeof h.rows): Promise<string[]> {
   return lines;
 }
 
+function wireRecords(kimiSessionId: string): Array<Record<string, unknown>> {
+  const index = fs.readFileSync(path.join(os.homedir(), '.kimi-code', 'session_index.jsonl'), 'utf8')
+    .split(/\r?\n/).filter(Boolean).map((l) => JSON.parse(l) as { sessionId: string; sessionDir: string });
+  const sessionDir = index.find((entry) => entry.sessionId === kimiSessionId)!.sessionDir;
+  return fs.readFileSync(path.join(sessionDir, 'agents', 'main', 'wire.jsonl'), 'utf8')
+    .split(/\r?\n/).filter(Boolean).map((l) => JSON.parse(l));
+}
+
 describe.skipIf(!LIVE)('Kimi Code CLI app wiring, live', () => {
   it('launches, submits, persists the transcript, switches model and resumes through the production launcher', async () => {
+    h.packageRoot = path.resolve(__dirname, '../../../../..');
     h.userData = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-app-userdata-'));
     const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-app-ws-')).replace(/\\/g, '/');
     const { ensureKimiCliSession, setKimiCliSessionModel } = await import('../kimiCliLauncherSingleton');
@@ -126,6 +138,11 @@ describe.skipIf(!LIVE)('Kimi Code CLI app wiring, live', () => {
     expect(turn1.some((l) => l.startsWith('tool Write'))).toBe(true);
     expect(turn1.at(-1)).toMatch(/^assistant: .*done/i);
     expect(h.flushes).toBeGreaterThan(flushesAtReady); // idle drains the queue
+    // kimi takes no effort on its command line: the launcher walked kimi's
+    // picker when the prompt box came up, ahead of this first prompt.
+    const firstRequest = wireRecords(h.session.providerSessionId!).find((r) => r.type === 'llm.request');
+    record('app turn 1 ran at effort:', firstRequest?.thinkingEffort);
+    expect(firstRequest?.thinkingEffort).toBe('max');
 
     // Model switch, through the same function the set-model IPC calls.
     const switched = await setKimiCliSessionModel(sessionId, 'kimi-code-cli:kimi-for-coding-highspeed');
@@ -150,5 +167,74 @@ describe.skipIf(!LIVE)('Kimi Code CLI app wiring, live', () => {
     expect(turn2).toEqual(['user: Reply with the single word: pong', expect.stringMatching(/^assistant: .*pong/i)]);
 
     await manager.destroyTerminal(sessionId);
+  }, 300_000);
+
+  // The one proof that writes where the app writes: the real ~/.kimi-code/mcp.json.
+  // It adds one launcher entry and takes it back out, and leaves everything else
+  // in that file as it found it. Off unless KIMI_LIVE_HOME=1 as well, because
+  // that file is the user's own kimi setup.
+  it.skipIf(process.env.KIMI_LIVE_HOME !== '1')('names a server in kimi\'s own mcp.json for the launch and takes it back out after', async () => {
+    h.packageRoot = path.resolve(__dirname, '../../../../..');
+    h.userData = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-app-userdata-'));
+    h.session = { id: 'nim-kimi-home-1', provider: 'kimi-code-cli', model: 'kimi-code-cli:k3-256k', providerSessionId: undefined };
+    h.rows.length = 0;
+    h.statuses.length = 0;
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-app-ws-')).replace(/\\/g, '/');
+    const homeFile = path.join(os.homedir(), '.kimi-code', 'mcp.json');
+    const before = fs.existsSync(homeFile) ? JSON.parse(fs.readFileSync(homeFile, 'utf8')) : null;
+    const script = path.join(workspace, 'probe-server.cjs');
+    fs.writeFileSync(script, `
+      let buffer = '';
+      process.stdin.on('data', (chunk) => {
+        buffer += chunk;
+        for (let at = buffer.indexOf('\\n'); at >= 0; at = buffer.indexOf('\\n')) {
+          const m = JSON.parse(buffer.slice(0, at)); buffer = buffer.slice(at + 1);
+          if (m.id === undefined) continue;
+          const result = m.method === 'tools/list' ? { tools: [{ name: 'echo_home', description: 'Returns its text prefixed with HOME-OK', inputSchema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] } }] }
+            : m.method === 'tools/call' ? { content: [{ type: 'text', text: 'HOME-OK ' + m.params.arguments.text }] }
+            : { protocolVersion: m.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: 'probe', version: '1' } };
+          process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: m.id, result }) + '\\n');
+        }
+      });
+    `);
+    const { ensureKimiCliSession, KimiCliLauncherConfig } = await import('../kimiCliLauncherSingleton');
+    const { submitClaudeCliPromptProduction } = await import('../claudeCliSubmitSingleton');
+    const { getTerminalSessionManager } = await import('../../TerminalSessionManager');
+    const manager = getTerminalSessionManager();
+    const sessionId = h.session.id;
+    const state = () => manager.getClaudeCliLiveTurnState(sessionId);
+    KimiCliLauncherConfig.setMcpConfigLoader(async () => ({
+      'nimbalyst-live-probe': { type: 'stdio', command: process.execPath, args: [script] },
+    }));
+
+    try {
+      expect(await ensureKimiCliSession({ sessionId, workspacePath: workspace, cwd: workspace, model: h.session.model })).toEqual({ success: true });
+      const during = JSON.parse(fs.readFileSync(homeFile, 'utf8'));
+      record('home entry during the session:', during.mcpServers['nimbalyst-live-probe']);
+      expect(JSON.stringify(during.mcpServers['nimbalyst-live-probe'])).toContain('kimiCliMcpLauncher.cjs');
+
+      await waitFor('trust picker or prompt box', async () =>
+        (manager.getScrollbackBuffer(sessionId) ?? '').includes('Trust this folder') || (await state()) === 'idle');
+      if ((await state()) !== 'idle') manager.writeToTerminal(sessionId, '\r');
+      await waitFor('kimi idle at its prompt', async () => (await state()) === 'idle');
+      await submitClaudeCliPromptProduction({ sessionId, workspacePath: workspace, prompt: 'Call the tool echo_home with the text "x", then reply with the single word: done' });
+      await waitFor('the turn to finish', async () => {
+        if ((await state()) === 'waiting_for_input') manager.writeToTerminal(sessionId, '\r');
+        return h.statuses.includes('running') && h.statuses.at(-1) === 'idle' && h.rows.some((r) => r.content.includes('output_text'));
+      }, 180_000);
+      const lines = await transcript(h.rows);
+      record('home-file turn transcript:', lines);
+      expect(lines.some((l) => l.startsWith('tool mcp__nimbalyst-live-probe__echo_home'))).toBe(true);
+      expect(lines.some((l) => l.includes('HOME-OK x'))).toBe(true);
+    } finally {
+      await manager.destroyTerminal(sessionId);
+      KimiCliLauncherConfig.setMcpConfigLoader(null);
+      await waitFor('the entry to be taken back out', () => {
+        const now = fs.existsSync(homeFile) ? JSON.parse(fs.readFileSync(homeFile, 'utf8')) : null;
+        return !now?.mcpServers?.['nimbalyst-live-probe'];
+      }, 15_000);
+    }
+    const after = JSON.parse(fs.readFileSync(homeFile, 'utf8'));
+    expect(after).toEqual(before ?? { mcpServers: {} });
   }, 300_000);
 });

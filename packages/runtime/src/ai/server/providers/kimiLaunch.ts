@@ -40,7 +40,7 @@ export function readNodeShimTarget(shim: string, shimPath: string): string | und
   return path.win32.join(path.win32.dirname(shimPath), match[1]);
 }
 
-function findNodeOnPath(pathValue: string | undefined): string | undefined {
+export function findNodeOnPath(pathValue: string | undefined): string | undefined {
   for (const entry of (pathValue ?? '').split(path.delimiter)) {
     const dir = entry.trim().replace(/^"(.*)"$/, '$1');
     if (!dir) continue;

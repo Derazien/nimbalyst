@@ -7,6 +7,7 @@ import {
   parseThinkingMode,
   resolveEffortCeiling,
   resolveEffortLevel,
+  resolveKimiEffortLevels,
   resolveThinkingMode,
 } from '../effortLevels';
 
@@ -122,5 +123,33 @@ describe('per-model effort ceilings', () => {
     expect(getAvailableEffortLevels('gpt-5.4').map((l) => l.key)).toEqual([
       'low', 'medium', 'high', 'xhigh',
     ]);
+  });
+});
+
+describe('kimi effort levels', () => {
+  // kimi 2.0.2 lists `support_efforts = ["low", "high", "max"]` for these models
+  // and rejects anything else, so the set has gaps a ceiling cannot describe.
+  it.each(['kimi-code:k3', 'kimi-code-cli:k3-256k', 'kimi-code/kimi-for-coding'])(
+    'offers only low, high and max for %s',
+    (model) => {
+      expect(getAvailableEffortLevels(model).map((l) => l.key)).toEqual(['low', 'high', 'max']);
+    },
+  );
+
+  it('moves a level kimi does not have down to the nearest one it has', () => {
+    expect(clampEffortLevel('medium', 'kimi-code:k3')).toBe('low');
+    expect(clampEffortLevel('xhigh', 'kimi-code-cli:k3')).toBe('high');
+    expect(clampEffortLevel('ultra', 'kimi-code:k3')).toBe('max');
+    expect(clampEffortLevel('high', 'kimi-code:k3')).toBe('high');
+  });
+
+  it('offers nothing for a kimi model whose thinking has no levels', () => {
+    expect(getAvailableEffortLevels('kimi-code:kimi-for-coding-highspeed')).toEqual([]);
+    expect(resolveKimiEffortLevels('kimi-code-cli:kimi-for-coding-highspeed')).toEqual([]);
+  });
+
+  it('leaves every other provider on its ceiling', () => {
+    expect(resolveKimiEffortLevels('claude-code:opus')).toBeUndefined();
+    expect(resolveKimiEffortLevels(undefined)).toBeUndefined();
   });
 });

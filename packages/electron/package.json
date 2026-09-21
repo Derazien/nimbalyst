@@ -397,6 +397,10 @@
         "to": "claudeCliPermissionHook.cjs"
       },
       {
+        "from": "resources/kimiCliMcpLauncher.cjs",
+        "to": "kimiCliMcpLauncher.cjs"
+      },
+      {
         "from": "resources/tutorial-project",
         "to": "tutorial-project"
       },

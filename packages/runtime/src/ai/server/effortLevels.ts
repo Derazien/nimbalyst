@@ -63,6 +63,31 @@ function stripProviderPrefix(modelId: string): string {
   return (separator === -1 ? modelId : modelId.slice(separator + 1)).trim().toLowerCase();
 }
 
+/**
+ * The thinking efforts each Kimi model takes, as kimi's own catalog lists them
+ * (`support_efforts` in ~/.kimi-code/config.toml, kimi 2.0.2). The set has gaps
+ * (no medium, no xhigh), so it is a list rather than a ceiling. A model that is
+ * absent thinks at one fixed depth and gets no selector.
+ */
+const KIMI_EFFORT_LEVELS: Readonly<Record<string, readonly EffortLevel[]>> = {
+  'k3': ['low', 'high', 'max'],
+  'k3-256k': ['low', 'high', 'max'],
+  'kimi-for-coding': ['low', 'high', 'max'],
+};
+
+/**
+ * The efforts a Kimi model takes, empty when it has none, undefined for a model
+ * that is not Kimi's. Accepts `kimi-code:k3`, `kimi-code-cli:k3` and kimi's own
+ * `kimi-code/k3` spelling.
+ */
+export function resolveKimiEffortLevels(modelId?: string): readonly EffortLevel[] | undefined {
+  const match = /^kimi-code(?:-cli)?[:/](.+)$/i.exec(modelId?.trim() ?? '');
+  if (!match) {
+    return undefined;
+  }
+  return KIMI_EFFORT_LEVELS[match[1].trim().toLowerCase()] ?? [];
+}
+
 /** Highest effort a Codex model accepts. Takes a bare or provider-prefixed id. */
 export function resolveCodexEffortCeiling(modelId?: string): EffortLevel {
   if (!modelId) {
@@ -88,12 +113,23 @@ export function resolveEffortCeiling(modelId?: string): EffortLevel {
 
 /** Clamp a requested effort level down to what the model actually accepts. */
 export function clampEffortLevel(level: EffortLevel, modelId?: string): EffortLevel {
+  const kimiLevels = resolveKimiEffortLevels(modelId);
+  if (kimiLevels && kimiLevels.length > 0) {
+    // Never above what was asked for: the nearest level kimi has at or below
+    // it, or kimi's lowest when the request sits under all of them.
+    const atOrBelow = kimiLevels.filter((entry) => EFFORT_RANK[entry] <= EFFORT_RANK[level]);
+    return atOrBelow.length > 0 ? atOrBelow[atOrBelow.length - 1] : kimiLevels[0];
+  }
   const ceiling = resolveEffortCeiling(modelId);
   return EFFORT_RANK[level] > EFFORT_RANK[ceiling] ? ceiling : level;
 }
 
 /** The effort levels to offer for a model, for the composer's effort selector. */
 export function getAvailableEffortLevels(modelId?: string): { key: EffortLevel; label: string }[] {
+  const kimiLevels = resolveKimiEffortLevels(modelId);
+  if (kimiLevels) {
+    return EFFORT_LEVELS.filter((entry) => kimiLevels.includes(entry.key));
+  }
   const ceiling = resolveEffortCeiling(modelId);
   return EFFORT_LEVELS.filter((entry) => EFFORT_RANK[entry.key] <= EFFORT_RANK[ceiling]);
 }

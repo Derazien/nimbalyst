@@ -48,6 +48,12 @@ const ANSI = /\x1b\[[0-9;?<>=]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1
 const READY = /context:\s*\d+%/;
 const TRUST = /Trust this folder\?/;
 const OUTPUT_TAIL = 2000;
+// kimi 2.0.2: the status line reads `K3-256k thinking: high`, and the `/effort`
+// picker draws `Low  [ High ]  Max` under its title until the prompt box
+// (`│ >`) or "Thinking set to ..." replaces it.
+const THINKING = /thinking:\s*([a-z]+)/g;
+const EFFORT_PICKER = 'Select thinking effort';
+const EFFORT_PICKER_CLOSED = /Thinking set to|[│|]\s*>\s/;
 
 function lastIndexOf(text: string, pattern: RegExp): number {
   const global = new RegExp(pattern.source, 'g');
@@ -63,9 +69,12 @@ export class KimiCliSessionRuntime {
   private sessionId: string | null = null;
   private turnState: ClaudeTurnState | null = null;
   private outputTail = '';
+  /** Kept apart from `outputTail`, which every turn-state change clears. */
+  private screenTail = '';
   private trustShown = false;
   private timer: NodeJS.Timeout | null = null;
   private model: string | null;
+  private thinking: string | null = null;
 
   constructor(private readonly options: KimiCliSessionRuntimeOptions) {
     this.model = options.launchModel ?? null;
@@ -82,6 +91,26 @@ export class KimiCliSessionRuntime {
   /** The model the event log last reported (`kimi-code/<alias>`), or the launch model until then. */
   getModel(): string | null {
     return this.model;
+  }
+
+  /**
+   * The thinking effort kimi last showed on its status line or wrote to the
+   * event log. The status line matters: before the first prompt there is no
+   * session and no log, and that is when a launch applies the effort.
+   */
+  getThinkingEffort(): string | null {
+    return this.thinking;
+  }
+
+  /** The levels in kimi's `/effort` picker, left to right, while it is on screen. */
+  getEffortPickerLevels(): string[] | null {
+    const at = this.screenTail.lastIndexOf(EFFORT_PICKER);
+    if (at === -1) return null;
+    const after = this.screenTail.slice(at + EFFORT_PICKER.length);
+    if (EFFORT_PICKER_CLOSED.test(after)) return null;
+    const line = after.split(/\r?\n/).filter((text) => /\[\s*[A-Za-z]+\s*\]/.test(text)).pop();
+    if (!line) return null;
+    return line.replace(/[[\]]/g, ' ').trim().split(/\s+/).map((level) => level.toLowerCase());
   }
 
   start(pollMs = 200): void {
@@ -122,7 +151,15 @@ export class KimiCliSessionRuntime {
 
   /** Raw PTY output, for the states the event log cannot report. */
   noteTerminalOutput(chunk: string): void {
-    this.outputTail = (this.outputTail + chunk.replace(ANSI, '')).slice(-OUTPUT_TAIL);
+    const text = chunk.replace(ANSI, '');
+    this.outputTail = (this.outputTail + text).slice(-OUTPUT_TAIL);
+    // Only what this chunk completed: an older status line still in the tail
+    // must not overwrite a newer value the event log reported.
+    const carry = this.screenTail.slice(-40);
+    for (const match of (carry + text).matchAll(THINKING)) {
+      if ((match.index ?? 0) + match[0].length > carry.length) this.thinking = match[1];
+    }
+    this.screenTail = (this.screenTail + text).slice(-OUTPUT_TAIL);
     // The picker's text can still be in the tail when the prompt box replaces
     // it, so whichever was drawn last decides.
     if (lastIndexOf(this.outputTail, TRUST) > lastIndexOf(this.outputTail, READY)) {
@@ -144,6 +181,7 @@ export class KimiCliSessionRuntime {
         for (const action of this.translator.translateLine(line)) {
           if (action.kind === 'turn-state') this.setTurnState(action.state, action.endReason);
           else if (action.kind === 'model') this.model = action.alias;
+          else if (action.kind === 'thinking') this.thinking = action.effort;
           else this.options.onRow(action);
         }
       },

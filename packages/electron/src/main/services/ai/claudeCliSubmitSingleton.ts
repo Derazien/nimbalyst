@@ -23,7 +23,7 @@ import { ClaudeSettingsManager } from '../ClaudeSettingsManager';
 import { getAttachmentStagingConfig } from '../../utils/store';
 import { closeSupersededQuestions, snapshotQuestionsToSupersede } from './supersedeOpenQuestions';
 import { claudeCliSubmitLatch } from './claudeCliSubmitLatch';
-import { isKimiCliTerminal } from './kimiCliRuntimes';
+import { isKimiCliTerminal, typeIntoKimiCliTerminal } from './kimiCliRuntimes';
 
 /** Submit a CLI prompt using the real terminal/log/analytics deps. */
 export async function submitClaudeCliPromptProduction(
@@ -153,7 +153,9 @@ export async function submitClaudeCliPromptProduction(
  */
 async function submitKimiCliPrompt(input: SubmitClaudeCliPromptInput): Promise<{ submitted: boolean }> {
   const manager = getTerminalSessionManager();
-  return submitClaudeCliPrompt(input, {
+  // Queued behind the effort or model picker when one is being walked, so the
+  // prompt never lands inside it.
+  return typeIntoKimiCliTerminal(input.sessionId, () => submitClaudeCliPrompt(input, {
     writeToTerminal: (sessionId: string, data: string) => {
       claudeCliSubmitLatch.mark(sessionId, data.length);
       manager.writeToTerminal(sessionId, data);
@@ -176,5 +178,5 @@ async function submitKimiCliPrompt(input: SubmitClaudeCliPromptInput): Promise<{
     delay: (ms: number) => new Promise((resolve) => setTimeout(resolve, ms)),
     hasTurnStarted: async (sessionId: string) =>
       (await manager.getClaudeCliLiveTurnState(sessionId)) === 'running',
-  });
+  }));
 }

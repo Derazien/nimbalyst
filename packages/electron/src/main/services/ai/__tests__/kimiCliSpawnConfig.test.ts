@@ -36,6 +36,23 @@ describe('buildKimiCliSpawnConfig', () => {
     expect(config.env).toEqual({ PATH: 'C:/bin', ELECTRON_RUN_AS_NODE: '1' });
   });
 
+  it('tells kimi where this session\'s MCP servers are, and nothing outside the launch can override it', () => {
+    const config = buildKimiCliSpawnConfig({
+      launch: { command: 'C:/kimi/kimi.exe', prefixArgs: [], env: {} },
+      // A variable left in the shell by another session must not win.
+      baseEnv: { PATH: 'C:/bin', NIMBALYST_KIMI_MCP_CONFIG: 'C:/tmp/another-session.mcp.json' },
+      extraEnv: { NIMBALYST_KIMI_MCP_CONFIG: 'C:/tmp/this-session.mcp.json' },
+    });
+    expect(config.env).toEqual({ PATH: 'C:/bin', NIMBALYST_KIMI_MCP_CONFIG: 'C:/tmp/this-session.mcp.json' });
+
+    // No servers for this launch: kimi must not find another session's either.
+    const bare = buildKimiCliSpawnConfig({
+      launch: { command: 'C:/kimi/kimi.exe', prefixArgs: [], env: {} },
+      baseEnv: { PATH: 'C:/bin', NIMBALYST_KIMI_MCP_CONFIG: 'C:/tmp/another-session.mcp.json' },
+    });
+    expect(bare.env).toEqual({ PATH: 'C:/bin' });
+  });
+
   it('starts a fresh session with no resume flag and asks for approvals by default', () => {
     const config = buildKimiCliSpawnConfig({
       launch: { command: 'C:/kimi/kimi.exe', prefixArgs: [], env: {} },

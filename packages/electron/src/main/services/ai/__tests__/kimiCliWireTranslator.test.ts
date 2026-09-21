@@ -121,16 +121,22 @@ describe('KimiCliWireTranslator', () => {
   });
 });
 
-describe('KimiCliWireTranslator model tracking', () => {
-  it('reports the model kimi binds and switches to', () => {
-    const models = [
+describe('KimiCliWireTranslator model and effort tracking', () => {
+  it('reports the model and the thinking effort kimi binds, switches to, and actually sends', () => {
+    const actions = [
       '{"type":"profile.bind","agentId":"main","modelAlias":"kimi-code/k3","time":1}',
-      '{"type":"config.update","agentId":"main","thinkingEffort":"high","time":2}',
+      '{"type":"config.update","agentId":"main","thinkingEffort":"max","time":2}',
       '{"type":"config.update","agentId":"main","modelAlias":"kimi-code/k3-256k","thinkingEffort":"high","time":3}',
+      // What a request really ran at; a session-only pick made before the
+      // first prompt shows up here and nowhere earlier.
+      '{"type":"llm.request","modelAlias":"kimi-code/k3-256k","thinkingEffort":"low","time":4}',
     ].flatMap((l) => new KimiCliWireTranslator().translateLine(l));
-    expect(models).toEqual([
+    expect(actions).toEqual([
       { kind: 'model', alias: 'kimi-code/k3' },
+      { kind: 'thinking', effort: 'max' },
       { kind: 'model', alias: 'kimi-code/k3-256k' },
+      { kind: 'thinking', effort: 'high' },
+      { kind: 'thinking', effort: 'low' },
     ]);
   });
 });

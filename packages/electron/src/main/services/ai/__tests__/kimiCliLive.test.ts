@@ -1,8 +1,8 @@
 // @vitest-environment node
 /**
  * Live proof for Kimi Code CLI terminal mode against the REAL `kimi` app.
- * Skipped unless KIMI_LIVE=1: it runs three tiny turns that bill the Kimi
- * account, in a throwaway temp folder (kimi runs tools on its own in --yolo).
+ * Skipped unless KIMI_LIVE=1: it runs five tiny turns that bill the Kimi
+ * account, in throwaway temp folders (kimi runs tools on its own in --yolo).
  *
  * It drives kimi with the same modules the app uses: the spawn config, the
  * session runtime (session discovery + event log + translator), Nimbalyst's
@@ -11,8 +11,10 @@
  */
 import { describe, it, expect } from 'vitest';
 import fs from 'fs';
+import http from 'http';
 import os from 'os';
 import path from 'path';
+import type { AddressInfo } from 'net';
 import * as pty from 'node-pty';
 import { resolveKimiLaunch } from '@nimbalyst/runtime/ai/server/providers/kimiLaunch';
 import { KimiACPRawParser } from '@nimbalyst/runtime/ai/server/transcript/parsers/KimiACPRawParser';
@@ -22,6 +24,7 @@ import { findKimiSessionDir, kimiSessionIndexPath, kimiWirePath } from '../kimiC
 import { submitClaudeCliPrompt } from '../claudeCliSubmit';
 import { escalateClaudeCliInterrupt } from '../claudeCliInterrupt';
 import { switchKimiCliModel } from '../kimiCliModelSwitch';
+import { switchKimiCliEffort } from '../kimiCliEffortSwitch';
 
 const LIVE = process.env.KIMI_LIVE === '1';
 const KIMI = process.env.KIMI_PATH || path.join(os.homedir(), '.kimi-code', 'bin', 'kimi.exe');
@@ -41,7 +44,7 @@ async function waitFor(what: string, pred: () => boolean, timeoutMs = 90_000): P
   }
 }
 
-function launch(workDir: string, opts: { resume?: { kimiSessionId: string; sessionDir: string }; model?: string }) {
+function launch(workDir: string, opts: { resume?: { kimiSessionId: string; sessionDir: string }; model?: string; extraEnv?: Record<string, string> }) {
   const kimiLaunch = resolveKimiLaunch(KIMI)!;
   const spawnConfig = buildKimiCliSpawnConfig({
     launch: kimiLaunch,
@@ -49,6 +52,7 @@ function launch(workDir: string, opts: { resume?: { kimiSessionId: string; sessi
     model: opts.model,
     resumeKimiSessionId: opts.resume?.kimiSessionId,
     yolo: true,
+    extraEnv: opts.extraEnv,
   });
   const log: string[] = [];
   const rows: KimiCliRow[] = [];
@@ -170,7 +174,112 @@ describe.skipIf(!LIVE)('Kimi Code CLI terminal mode, live', () => {
     record('live model switch:', switched, second.runtime.getModel());
     expect(switched).toEqual({ switched: true, cliArg: 'kimi-code/k3-256k' });
     expect(fs.readFileSync(configPath, 'utf8')).toBe(configBefore);
+
+    // 5. Take a thinking effort for this session only, through kimi's own picker.
+    const effort = await switchKimiCliEffort({ effort: 'low', model: 'kimi-code-cli:k3-256k' }, {
+      write: (d) => second.proc.write(d), delay,
+      currentEffort: () => second.runtime.getThinkingEffort(),
+      pickerLevels: () => second.runtime.getEffortPickerLevels(),
+    });
+    record('live effort switch:', effort, second.runtime.getThinkingEffort());
+    expect(effort).toEqual({ switched: true, effort: 'low' });
+    expect(fs.readFileSync(configPath, 'utf8')).toBe(configBefore);
+    const idleBefore = second.log.filter((l) => l.startsWith('state idle (')).length;
+    await second.submit('Reply with the single word: ping');
+    await waitFor('effort turn to end', () => second.log.filter((l) => l.startsWith('state idle (')).length > idleBefore);
+    const requests = fs.readFileSync(kimiWirePath(sessionDir), 'utf8').split(/\r?\n/).filter(Boolean)
+      .map((l) => JSON.parse(l)).filter((r) => r.type === 'llm.request');
+    record('effort the last request ran at:', requests.at(-1)?.thinkingEffort);
+    expect(requests.at(-1)?.thinkingEffort).toBe('low');
     second.runtime.stop();
     second.proc.kill();
+  }, 300_000);
+
+  it('gives the terminal kimi its MCP servers through the launcher and the private session file', async () => {
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-cli-live-mcp-')).replace(/\\/g, '/');
+    const launcher = path.resolve(__dirname, '../../../../../resources/kimiCliMcpLauncher.cjs');
+
+    // One stdio server and one shaped like Nimbalyst's own: SSE, bearer token, session in the address.
+    const stdioScript = path.join(workDir, 'stdio-server.cjs');
+    fs.writeFileSync(stdioScript, `
+      let buffer = '';
+      process.stdin.on('data', (chunk) => {
+        buffer += chunk;
+        for (let at = buffer.indexOf('\\n'); at >= 0; at = buffer.indexOf('\\n')) {
+          const m = JSON.parse(buffer.slice(0, at)); buffer = buffer.slice(at + 1);
+          if (m.id === undefined) continue;
+          const result = m.method === 'tools/list' ? { tools: [{ name: 'echo_stdio', description: 'Returns its text prefixed with STDIO-OK', inputSchema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] } }] }
+            : m.method === 'tools/call' ? { content: [{ type: 'text', text: 'STDIO-OK ' + m.params.arguments.text }] }
+            : { protocolVersion: m.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: 'probe-stdio', version: '1' } };
+          process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: m.id, result }) + '\\n');
+        }
+      });
+    `);
+    const seen: string[] = [];
+    const streams = new Map<string, http.ServerResponse>();
+    const sse = http.createServer((req, res) => {
+      const url = new URL(req.url!, 'http://127.0.0.1');
+      seen.push(`${req.method} ${url.search} ${req.headers.authorization}`);
+      if (req.headers.authorization !== 'Bearer live-token') { res.writeHead(401).end(); return; }
+      if (req.method === 'GET') {
+        res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        res.write('event: endpoint\ndata: /messages?stream=1\n\n');
+        streams.set('1', res);
+        return;
+      }
+      let body = '';
+      req.on('data', (c) => { body += c; });
+      req.on('end', () => {
+        res.writeHead(202).end();
+        const m = JSON.parse(body);
+        if (m.id === undefined) return;
+        const result = m.method === 'tools/list' ? { tools: [{ name: 'echo_sse', description: 'Returns its text prefixed with SSE-OK', inputSchema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] } }] }
+          : m.method === 'tools/call' ? { content: [{ type: 'text', text: `SSE-OK ${m.params.arguments.text}` }] }
+          : { protocolVersion: m.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: 'probe-sse', version: '1' } };
+        streams.get('1')!.write(`event: message\ndata: ${JSON.stringify({ jsonrpc: '2.0', id: m.id, result })}\n\n`);
+      });
+    });
+    await new Promise<void>((resolve) => sse.listen(0, '127.0.0.1', resolve));
+    const port = (sse.address() as AddressInfo).port;
+
+    const sessionFile = path.join(workDir, 'session.mcp.json');
+    fs.writeFileSync(sessionFile, JSON.stringify({ mcpServers: {
+      'probe-stdio': { type: 'stdio', command: process.execPath, args: [stdioScript] },
+      'probe-sse': { type: 'sse', url: `http://127.0.0.1:${port}/mcp?sessionId=nimbalyst-live`, headers: { Authorization: 'Bearer live-token' } },
+    } }));
+    // The app names these in ~/.kimi-code/mcp.json. A test must not write
+    // there, so it uses the file kimi reads for this one folder instead. The
+    // entries are the same: a server name and the launcher, nothing else.
+    fs.mkdirSync(path.join(workDir, '.kimi-code'));
+    fs.writeFileSync(path.join(workDir, '.kimi-code', 'mcp.json'), JSON.stringify({ mcpServers: {
+      'probe-stdio': { command: process.execPath, args: [launcher, 'probe-stdio'] },
+      'probe-sse': { command: process.execPath, args: [launcher, 'probe-sse'] },
+    } }));
+
+    const kimi = launch(workDir, { model: 'kimi-code-cli:k3-256k', extraEnv: { NIMBALYST_KIMI_MCP_CONFIG: sessionFile } });
+    try {
+      await waitFor('kimi prompt box', () => kimi.runtime.getTurnState() === 'idle');
+      // kimi connects a folder's servers once the folder is trusted.
+      await waitFor('kimi to list the SSE server\'s tools', () => seen.filter((l) => l.startsWith('POST')).length >= 3, 60_000);
+      await kimi.submit('Call the tool echo_stdio with the text "a", then the tool echo_sse with the text "b", then reply with the single word: done');
+      await waitFor('the MCP turn to end', () => {
+        // An approval prompt for an MCP tool: answer it as the person would.
+        if (kimi.runtime.getTurnState() === 'waiting_for_input') kimi.proc.write('\r');
+        return kimi.log.some((l) => l.startsWith('state idle ('));
+      }, 180_000);
+      await waitFor('rows to settle', () => kimi.rows.some((r) => r.content.includes('output_text')), 10_000);
+      const lines = await transcript(kimi.rows);
+      record('mcp turn transcript:', lines);
+      record('what the SSE server saw:', seen.slice(0, 4));
+      expect(lines.some((l) => l.startsWith('tool mcp__probe-stdio__echo_stdio'))).toBe(true);
+      expect(lines.some((l) => l.startsWith('tool mcp__probe-sse__echo_sse'))).toBe(true);
+      expect(lines.some((l) => l.includes('STDIO-OK a'))).toBe(true);
+      expect(lines.some((l) => l.includes('SSE-OK b'))).toBe(true);
+      expect(seen[0]).toBe('GET ?sessionId=nimbalyst-live Bearer live-token');
+    } finally {
+      kimi.runtime.stop();
+      kimi.proc.kill();
+      sse.close();
+    }
   }, 300_000);
 });

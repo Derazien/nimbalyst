@@ -28,6 +28,7 @@ import {
   claudeCustomModelNameFromId,
   getClaudeCustomModelOption,
 } from '@nimbalyst/runtime/ai/claudeCustomModels';
+import { resolveKimiEffortLevels } from '@nimbalyst/runtime/ai/server/effortLevels';
 
 export {
   type EffortLevel,
@@ -286,7 +287,8 @@ export function getModelShortName(provider: string, modelId: string): string {
 /**
  * Check if a model supports effort level configuration.
  * Supported: Claude Code Fable, Opus, Sonnet, and Haiku 5.5 variants, including retained
- * pinned versions, plus OpenAI Codex models.
+ * pinned versions, plus OpenAI Codex models and the Kimi Code models that list
+ * thinking efforts.
  */
 export function supportsEffortLevel(modelId?: string): boolean {
   if (!modelId) return false;
@@ -308,6 +310,9 @@ export function supportsEffortLevel(modelId?: string): boolean {
   const parsed = ModelIdentifier.tryParse(modelId);
   if (parsed?.provider === 'openai-codex' || parsed?.provider === 'openai-codex-acp') return true;
   if (modelId.startsWith('openai-codex:') || modelId.startsWith('openai-codex-acp:')) return true;
+  // Kimi Code (ACP and terminal) models that list thinking efforts to choose from.
+  const kimiLevels = resolveKimiEffortLevels(modelId);
+  if (kimiLevels) return kimiLevels.length > 0;
   return false;
 }
 

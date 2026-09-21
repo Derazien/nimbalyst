@@ -133,6 +133,79 @@ describe('KimiACPProtocol', () => {
     }
   }, 15000);
 
+  it('puts the selected effort on the session after the model, and only when it changes', async () => {
+    const { protocol, workspacePath, auditPath, cleanup } = makeHarness();
+    const thinkingCalls = () => auditRows(auditPath)
+      .filter((row) => row.method === 'session/set_config_option' && row.params.configId === 'thinking')
+      .map((row) => row.params.value);
+
+    try {
+      // kimi puts a session back on the model's default effort when the model
+      // changes, so the effort has to land after set_model.
+      const session = await protocol.createSession({
+        workspacePath,
+        model: 'kimi-code:kimi-for-coding',
+        raw: { effortLevel: 'max' },
+      });
+      const methods = auditRows(auditPath).map((row) => row.method);
+      expect(methods.indexOf('session/set_model')).toBeLessThan(methods.indexOf('session/set_config_option'));
+      expect(thinkingCalls()).toEqual(['max']);
+
+      // Same effort on the next turn: nothing to send.
+      await protocol.resumeSession(session.id, { workspacePath, model: 'kimi-code:kimi-for-coding', raw: { effortLevel: 'max' } });
+      expect(thinkingCalls()).toEqual(['max']);
+
+      // xhigh is not a level kimi has; it runs at the nearest one below.
+      await protocol.resumeSession(session.id, { workspacePath, model: 'kimi-code:kimi-for-coding', raw: { effortLevel: 'xhigh' } });
+      expect(thinkingCalls()).toEqual(['max', 'high']);
+    } finally {
+      cleanup();
+    }
+  }, 15000);
+
+  it('leaves kimi on its own effort when none is selected or the model has no levels', async () => {
+    const { protocol, workspacePath, auditPath, cleanup } = makeHarness();
+
+    try {
+      await protocol.createSession({ workspacePath, model: 'kimi-code:k3' });
+      // The composer shows no effort selector for this model, so an app-wide
+      // default must not reach it either.
+      await protocol.createSession({
+        workspacePath,
+        model: 'kimi-code:kimi-for-coding-highspeed',
+        raw: { effortLevel: 'max' },
+      });
+      expect(auditRows(auditPath).some((row) => row.method === 'session/set_config_option')).toBe(false);
+    } finally {
+      cleanup();
+    }
+  }, 15000);
+
+  it.runIf(process.platform === 'win32')('hands kimi a batch-file MCP server as node plus its script, never the .cmd', async () => {
+    // kimi starts MCP servers without a shell; on Windows a .cmd then fails
+    // with EINVAL, which took out every npx-based server the user configured.
+    const { protocol, workspacePath, auditPath, cleanup } = makeHarness();
+    const shimDir = path.join(workspacePath, 'npm');
+    fs.mkdirSync(path.join(shimDir, 'node_modules', 'some-mcp'), { recursive: true });
+    fs.writeFileSync(path.join(shimDir, 'node_modules', 'some-mcp', 'cli.js'), '');
+    fs.writeFileSync(path.join(shimDir, 'some-mcp.cmd'), '@ECHO off\r\n"%_prog%"  "%dp0%\\node_modules\\some-mcp\\cli.js" %*\r\n');
+
+    try {
+      await protocol.createSession({
+        workspacePath,
+        mcpServers: { 'some-mcp': { command: path.join(shimDir, 'some-mcp.cmd'), args: ['--stdio'], env: { TOKEN: 't' } } },
+      });
+      const delivered = auditRows(auditPath).find((row) => row.method === 'session/new')?.params.mcpServers as
+        Array<{ name: string; command: string; args: string[]; env: Array<{ name: string; value: string }> }>;
+      expect(delivered).toHaveLength(1);
+      expect(delivered[0].command.toLowerCase().endsWith('.cmd')).toBe(false);
+      expect(delivered[0].args).toEqual([path.win32.join(shimDir, 'node_modules', 'some-mcp', 'cli.js'), '--stdio']);
+      expect(delivered[0].env).toContainEqual({ name: 'TOKEN', value: 't' });
+    } finally {
+      cleanup();
+    }
+  }, 15000);
+
   it('streams text, tool_call, tool_result, usage, and complete in order, and round-trips the permission choice', async () => {
     const { protocol, workspacePath, auditPath, cleanup } = makeHarness({
       onPermissionRequest: async () => ({ decision: 'allow', scope: 'session' }),
@@ -413,6 +486,10 @@ describe('KimiACPProtocol', () => {
         KIMI_API_KEY: null,
         ANTHROPIC_API_KEY: null,
         KIMI_ACP_TEST_MARKER: 'kept',
+        // kimi drops a tool call after 60 seconds (measured on 2.0.2), which is
+        // shorter than a person takes to answer AskUserQuestion or a commit
+        // proposal. ACP has no per-server timeout, so it is set for the process.
+        KIMI_MCP_TOOL_TIMEOUT_MS: '604800000',
       });
     } finally {
       cleanup();

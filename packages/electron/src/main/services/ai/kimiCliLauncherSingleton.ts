@@ -15,8 +15,12 @@ import { getSessionStateManager } from '@nimbalyst/runtime/ai/server/SessionStat
 import { AISessionsRepository } from '@nimbalyst/runtime/storage/repositories/AISessionsRepository';
 import { TranscriptMigrationRepository } from '@nimbalyst/runtime/storage/repositories/TranscriptMigrationRepository';
 import { claimExternalSessionForLocalExecution } from '../externalSessions/ExternalSessionService';
+import { getMcpConfigService } from '@nimbalyst/runtime/ai/server/services/mcpServerConfig';
+import { toKimiSpawnableCommand } from '@nimbalyst/runtime/ai/server/providers/kimiMcpCommand';
+import { resolveEffortLevel, resolveKimiEffortLevels } from '@nimbalyst/runtime/ai/server/effortLevels';
+import { getDefaultEffortLevel } from '../../utils/store';
 import { getTerminalSessionManager } from '../TerminalSessionManager';
-import { getEnhancedPath } from '../shellEnvironment';
+import { getEnhancedPath, getShellEnvironment } from '../shellEnvironment';
 import { getPermissionService } from '../PermissionService';
 import { resolveAttachmentStagingAllowDirectories } from '../attachments/attachmentStagingRoot';
 import { HooklessAgentFileWatcher } from './HooklessAgentFileWatcher';
@@ -30,8 +34,50 @@ import { buildKimiCliSpawnConfig, kimiCliModelArg } from './kimiCliSpawnConfig';
 import { findKimiSessionDir, kimiSessionIndexPath } from './kimiCliSessionFiles';
 import { KimiCliSessionRuntime, type KimiCliRow } from './kimiCliSessionRuntime';
 import { switchKimiCliModel } from './kimiCliModelSwitch';
-import { kimiCliRuntimes } from './kimiCliRuntimes';
+import { switchKimiCliEffort, type SwitchKimiCliEffortResult } from './kimiCliEffortSwitch';
+import { resolveClaudeCliEffort } from './claudeCliEffort';
+import { kimiCliRuntimes, typeIntoKimiCliTerminal } from './kimiCliRuntimes';
+import { KimiCliMcpConfigService, type PreparedKimiCliMcp } from './kimiCliMcpConfig';
+import { resolveKimiCliMcpLauncher } from './kimiCliMcpLauncherPath';
 import type { EnsureClaudeCliSessionInput, EnsureClaudeCliSessionResult } from './claudeCliLauncherSingleton';
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type McpConfigLoader = (workspacePath?: string) => Promise<Record<string, any>>;
+const launcherConfig: { mcpConfigLoader: McpConfigLoader | null } = { mcpConfigLoader: null };
+
+/** Static setters, wired from `index.ts` beside the `kimi-code` provider's. */
+export const KimiCliLauncherConfig = {
+  setMcpConfigLoader: (loader: McpConfigLoader | null) => { launcherConfig.mcpConfigLoader = loader; },
+};
+
+const mcpConfig = new KimiCliMcpConfigService({
+  launcher: () => resolveKimiCliMcpLauncher(getEnhancedPath()),
+  // The same PATH kimi itself is started with, so `npx.cmd` resolves the same way in both lanes.
+  toSpawnable: (command, args) => toKimiSpawnableCommand(command, args, { pathValue: getEnhancedPath() }),
+});
+
+/**
+ * The servers the ACP `kimi-code` provider would hand this session (Nimbalyst's
+ * own plus the user's from app and project settings), made reachable for the
+ * terminal kimi. Never throws: kimi without MCP beats no kimi.
+ */
+async function prepareMcp(sessionId: string, workspacePath: string): Promise<PreparedKimiCliMcp | null> {
+  try {
+    const servers = await getMcpConfigService({
+      mcpConfigLoader: launcherConfig.mcpConfigLoader,
+      claudeSettingsEnvLoader: null,
+      shellEnvironmentLoader: () => getShellEnvironment(),
+    }).getMcpServersConfig({ sessionId, workspacePath });
+    const prepared = await mcpConfig.prepare(sessionId, servers);
+    if (prepared?.skipped.length) {
+      console.log(`[KimiCliLauncher] kept the user's own kimi MCP servers named: ${prepared.skipped.join(', ')}`);
+    }
+    return prepared;
+  } catch (error) {
+    console.warn('[KimiCliLauncher] could not load MCP servers; kimi starts without them:', error);
+    return null;
+  }
+}
 
 const runtimes = kimiCliRuntimes;
 const launchInFlight = new Map<string, Promise<EnsureClaudeCliSessionResult>>();
@@ -132,6 +178,11 @@ export async function ensureKimiCliSession(
 
       const model = input.model ?? session?.model ?? undefined;
       const permissionMode = getPermissionService().getPermissionMode(input.workspacePath);
+      const mcp = await prepareMcp(input.sessionId, input.workspacePath);
+      // Resolved now so the first idle below can queue it without awaiting,
+      // which is what keeps it ahead of the first prompt.
+      const launchEffort = await resolveLaunchEffort(input);
+      let launchEffortQueued = false;
       const spawnConfig = buildKimiCliSpawnConfig({
         launch: kimiLaunch,
         baseEnv: KimiCodeProvider.buildKimiEnvironment() ?? { ...process.env },
@@ -139,6 +190,7 @@ export async function ensureKimiCliSession(
         resumeKimiSessionId: resume?.kimiSessionId,
         yolo: permissionMode === 'allow-all' || permissionMode === 'bypass-all',
         additionalDirectories: attachmentDirs(input.workspacePath),
+        extraEnv: mcp?.env,
       });
 
       await stateManager.startSession({
@@ -166,6 +218,22 @@ export async function ensureKimiCliSession(
             void stateManager.updateActivity({ sessionId: input.sessionId, status: 'idle', isStreaming: false });
             fileWatcher.scheduleStop(input.sessionId, 500);
             void maybeAutoNameClaudeCliSessionProduction(input.sessionId);
+            // kimi takes no effort on its command line, so the first time its
+            // prompt box is up the selection goes in through its picker. Typing
+            // is queued per session, and this is queued before the flush below,
+            // so the first prompt waits for it.
+            // The same goes for a level picked while a turn was running.
+            const effort = effortsWaitingForIdle.get(input.sessionId) ?? (launchEffortQueued ? undefined : launchEffort);
+            launchEffortQueued = true;
+            effortsWaitingForIdle.delete(input.sessionId);
+            if (effort) {
+              void setKimiCliSessionEffort(input.sessionId, effort).then((result) => {
+                // A model with no levels is left alone on purpose; only a real miss is worth a line.
+                if (!result.switched && resolveKimiEffortLevels(runtime.getModel() ?? undefined)?.length) {
+                  console.warn(`[KimiCliLauncher] kimi stayed on "${runtime.getThinkingEffort()}" thinking instead of "${effort}"`);
+                }
+              }).catch((error) => console.warn('[KimiCliLauncher] could not apply the effort:', error));
+            }
             void flushNextClaudeCliQueuedPromptForSession(input.sessionId, input.workspacePath);
           } else if (state === 'running') {
             void stateManager.updateActivity({ sessionId: input.sessionId, status: 'running', isStreaming: true });
@@ -196,6 +264,8 @@ export async function ensureKimiCliSession(
           // A relaunch may already own this session id; leave it alone.
           if (runtimes.get(input.sessionId) !== runtime) return;
           runtimes.delete(input.sessionId);
+          effortsWaitingForIdle.delete(input.sessionId);
+          void mcpConfig.release(input.sessionId);
           void fileWatcher.stopForSession(input.sessionId).catch(() => {});
           void stateManager.endSession(input.sessionId).catch(() => {});
         },
@@ -206,6 +276,7 @@ export async function ensureKimiCliSession(
       console.error('[KimiCliLauncher] Failed to ensure session:', error);
       runtimes.get(input.sessionId)?.stop();
       runtimes.delete(input.sessionId);
+      void mcpConfig.release(input.sessionId);
       void stateManager.endSession(input.sessionId).catch(() => {});
       return { success: false, error: String(error) };
     } finally {
@@ -222,9 +293,52 @@ export async function setKimiCliSessionModel(sessionId: string, model: string): 
   const runtime = runtimes.get(sessionId);
   if (!runtime) return { switched: false };
   const manager = getTerminalSessionManager();
-  return switchKimiCliModel({ model }, {
+  return typeIntoKimiCliTerminal(sessionId, () => switchKimiCliModel({ model }, {
     write: (data) => manager.writeToTerminal(sessionId, data),
     delay: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     currentModel: () => runtime.getModel(),
-  });
+  }));
+}
+
+/** Efforts picked while kimi was busy, applied the next time it is idle. */
+const effortsWaitingForIdle = new Map<string, string>();
+
+/**
+ * Put the composer's effort on a running Kimi Code CLI session, for that
+ * session only. While a turn runs nothing is typed: the picker would not open,
+ * and the Esc that backs out of it is what stops a turn in kimi. The level is
+ * kept and goes in when the turn ends, ahead of the next prompt.
+ */
+export async function setKimiCliSessionEffort(sessionId: string, effort: string): Promise<SwitchKimiCliEffortResult> {
+  const runtime = runtimes.get(sessionId);
+  if (!runtime) return { switched: false };
+  if (runtime.getTurnState() !== 'idle') {
+    effortsWaitingForIdle.set(sessionId, effort);
+    return { switched: true, effort };
+  }
+  const manager = getTerminalSessionManager();
+  return typeIntoKimiCliTerminal(sessionId, () => switchKimiCliEffort({ effort, model: runtime.getModel() }, {
+    write: (data) => manager.writeToTerminal(sessionId, data),
+    delay: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    currentEffort: () => runtime.getThinkingEffort(),
+    pickerLevels: () => runtime.getEffortPickerLevels(),
+  }));
+}
+
+/**
+ * The effort this session should run at: what the launch was given, else the
+ * session's own selection, else the app default the selector shows. Undefined
+ * leaves kimi on its own default.
+ */
+async function resolveLaunchEffort(input: EnsureClaudeCliSessionInput): Promise<string | undefined> {
+  return resolveClaudeCliEffort(
+    { explicit: input.effortLevel, sessionId: input.sessionId },
+    {
+      getSessionEffortLevel: async (sessionId) =>
+        ((await AISessionsRepository.get(sessionId))?.metadata as { effortLevel?: string } | undefined)?.effortLevel,
+      getDefaultEffortLevel,
+      resolveEffortLevel,
+      logWarn: (message, err) => console.warn(message, err),
+    },
+  );
 }

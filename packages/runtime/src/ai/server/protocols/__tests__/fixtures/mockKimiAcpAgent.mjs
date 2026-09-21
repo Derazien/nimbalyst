@@ -37,6 +37,33 @@ const MODEL_OPTIONS = [
   { value: 'kimi-code/k3', name: 'K3' },
 ];
 
+// The thinking picker kimi 2.0.2 reports (recorded 2026-09-21). A model switch
+// puts the session back on the model's default effort, and an unknown value is
+// refused with "Unknown thinking value".
+const THINKING_VALUES = ['low', 'high', 'max'];
+const DEFAULT_THINKING = 'high';
+
+function configOptionsFor(session) {
+  return [
+    {
+      type: 'select',
+      id: 'model',
+      name: 'Model',
+      category: 'model',
+      currentValue: session.model,
+      options: MODEL_OPTIONS,
+    },
+    {
+      type: 'select',
+      id: 'thinking',
+      name: 'Thinking',
+      category: 'thought_level',
+      currentValue: session.thinking,
+      options: THINKING_VALUES.map((value) => ({ value, name: `Thinking ${value}` })),
+    },
+  ];
+}
+
 class MockKimiAcpAgent {
   constructor(connection) {
     this.connection = connection;
@@ -60,10 +87,12 @@ class MockKimiAcpAgent {
 
   async newSession(params) {
     const sessionId = `session_${randomUUID()}`;
-    this.sessions.set(sessionId, { cwd: params.cwd, model: 'kimi-code/k3', cancelled: false });
+    const created = { cwd: params.cwd, model: 'kimi-code/k3', thinking: DEFAULT_THINKING, cancelled: false };
+    this.sessions.set(sessionId, created);
     audit('session/new', {
       sessionId,
       cwd: params.cwd,
+      mcpServers: params.mcpServers ?? [],
       // What the child actually received: the scrub must hold on the final
       // spawn env, not on some intermediate map.
       env: {
@@ -71,19 +100,12 @@ class MockKimiAcpAgent {
         KIMI_API_KEY: process.env.KIMI_API_KEY ?? null,
         ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? null,
         KIMI_ACP_TEST_MARKER: process.env.KIMI_ACP_TEST_MARKER ?? null,
+        KIMI_MCP_TOOL_TIMEOUT_MS: process.env.KIMI_MCP_TOOL_TIMEOUT_MS ?? null,
       },
     });
     return {
       sessionId,
-      configOptions: [
-        {
-          type: 'select',
-          id: 'model',
-          name: 'Model',
-          currentValue: 'kimi-code/k3',
-          options: MODEL_OPTIONS,
-        },
-      ],
+      configOptions: configOptionsFor(created),
       // The four modes kimi 0.43.1 reports (recorded 2026-09-17).
       modes: {
         currentModeId: 'default',
@@ -146,6 +168,7 @@ class MockKimiAcpAgent {
       throw new Error(`Unknown session: ${params.sessionId}`);
     }
     session.model = params.modelId;
+    session.thinking = DEFAULT_THINKING;
     return {};
   }
 
@@ -158,8 +181,15 @@ class MockKimiAcpAgent {
     const session = this.sessions.get(params.sessionId);
     if (session && params.configId === 'model') {
       session.model = params.value;
+      session.thinking = DEFAULT_THINKING;
     }
-    return {};
+    if (session && params.configId === 'thinking') {
+      if (!THINKING_VALUES.includes(params.value)) {
+        throw new Error(`Unknown thinking value: ${params.value}`);
+      }
+      session.thinking = params.value;
+    }
+    return session ? { configOptions: configOptionsFor(session) } : {};
   }
 
   async prompt(params) {

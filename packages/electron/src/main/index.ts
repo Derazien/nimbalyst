@@ -151,6 +151,7 @@ import { MCPConfigService, loadTrustGatedMcpServers } from './services/MCPConfig
 import { compressImage, shouldCompress } from './services/ImageCompressor';
 import { setMcpConfigServiceGetter } from './mcpConfigServiceRef';
 import { ClaudeCliLauncherConfig } from './services/ai/claudeCliLauncherSingleton';
+import { KimiCliLauncherConfig } from './services/ai/kimiCliLauncherSingleton';
 import { registerDatabaseBrowserHandlers } from './ipc/DatabaseBrowserHandlers';
 import { registerDatabaseBrowserSqliteHandlers } from './ipc/DatabaseBrowserSqliteHandlers';
 import { registerMigrationHandlers } from './ipc/MigrationHandlers';
@@ -2083,6 +2084,12 @@ app.whenReady().then(async () => {
     // nothing is written to disk for it.
     KimiCodeProvider.setMCPConfigLoader(
         (workspacePath?: string) => loadEnabledMcpServersFor(MCP_PROVIDER_IDS.KIMI, 'Kimi', workspacePath),
+    );
+    // The terminal kimi takes no server list at all, so its launcher names the
+    // same set in ~/.kimi-code/mcp.json and keeps the servers themselves in a
+    // private file per session; see kimiCliMcpConfig.ts.
+    KimiCliLauncherConfig.setMcpConfigLoader(
+        (workspacePath?: string) => loadEnabledMcpServersFor(MCP_PROVIDER_IDS.KIMI, 'Kimi CLI', workspacePath),
     );
 
     // Claude CLI (subscription) launcher shares the Claude Agent MCP filter —

@@ -27,10 +27,19 @@ describe('supportsEffortLevel', () => {
   });
 
   it.each([
+    'kimi-code:k3',
+    'kimi-code-cli:k3-256k',
+  ])('supports effort for both Kimi Code providers: %s', (modelId) => {
+    expect(supportsEffortLevel(modelId)).toBe(true);
+  });
+
+  it.each([
     undefined,
     'claude-code:haiku-4-5',
     'claude-code:unknown',
     'claude:claude-fable-5',
+    // Thinks at one fixed depth, so kimi offers no levels to choose from.
+    'kimi-code-cli:kimi-for-coding-highspeed',
   ])('does not expose effort for unsupported models: %s', (modelId) => {
     expect(supportsEffortLevel(modelId)).toBe(false);
   });

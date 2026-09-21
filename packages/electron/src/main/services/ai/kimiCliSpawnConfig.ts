@@ -1,15 +1,20 @@
 /**
  * The command line for the genuine `kimi` terminal app in a Kimi Code CLI
- * session. Flags as `kimi --help` 0.43.1 lists them:
+ * session. Flags as `kimi --help` lists them (0.43.1 and 2.0.2 alike):
  *   -S <id>          resume a kimi session (it must already exist)
  *   -m <model>       model, spelled as config.toml names it (`kimi-code/k3`)
  *   --yolo           "Ask When Needed": routine edits and commands run on their own
  *   --add-dir <dir>  another folder kimi may read
+ *
+ * There is no flag for MCP servers or for the thinking effort. The servers
+ * arrive through the environment (kimiCliMcpConfig.ts) and the effort through
+ * kimi's own `/effort` picker once it is up (kimiCliEffortSwitch.ts).
  */
 
 import type { KimiLaunch } from '@nimbalyst/runtime/ai/server/providers/kimiLaunch';
 import { scrubProviderApiKeys } from '@nimbalyst/runtime/ai/server/providerApiKeyScrub';
 import type { ClaudeCliSpawnConfig } from './claudeCliSpawnConfig';
+import { KIMI_MCP_CONFIG_ENV } from './kimiCliMcpConfig';
 
 /** `kimi-code-cli:k3`, `kimi-code:k3`, `k3` or `kimi-code/k3` -> `kimi-code/k3`. */
 export function kimiCliModelArg(model: string | null | undefined): string | undefined {
@@ -32,6 +37,8 @@ export interface KimiCliSpawnInput {
   resumeKimiSessionId?: string;
   yolo?: boolean;
   additionalDirectories?: string[];
+  /** Set for this launch only: where this session's MCP servers are (kimiCliMcpConfig.ts). */
+  extraEnv?: Record<string, string>;
 }
 
 export function buildKimiCliSpawnConfig(input: KimiCliSpawnInput): ClaudeCliSpawnConfig {
@@ -46,6 +53,10 @@ export function buildKimiCliSpawnConfig(input: KimiCliSpawnInput): ClaudeCliSpaw
   for (const [key, value] of Object.entries({ ...input.baseEnv, ...input.launch.env })) {
     if (value !== undefined) env[key] = value;
   }
+  // Every MCP server kimi starts reads this to find its session's servers, so
+  // a value inherited from somewhere else would hand it another session's.
+  delete env[KIMI_MCP_CONFIG_ENV];
+  Object.assign(env, input.extraEnv);
   // kimi signs in with `kimi login`; an API key in the environment must never
   // reach it and bill another account.
   return { executable: input.launch.command, args, env: scrubProviderApiKeys(env) };

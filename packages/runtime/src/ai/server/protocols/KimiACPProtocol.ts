@@ -19,6 +19,16 @@
  *   - Gated calls fail with JSON-RPC error -32000 when the user is logged
  *     out; surfaced as an error that names `kimi login`.
  *   - Permission options use the ids approve_once / approve_always / reject.
+ *
+ * Verified against kimi CLI 2.0.2:
+ *   - `session/new` also returns a `thinking` picker (low / high / max for the
+ *     K3 models). `session/set_config_option` {configId: "thinking"} sets it,
+ *     an unknown value is refused, and a model switch puts it back on the
+ *     model's default.
+ *   - MCP servers are started without a shell, so a Windows `.cmd` fails with
+ *     EINVAL (see providers/kimiMcpCommand.ts), and a tool call is dropped
+ *     after 60 seconds unless KIMI_MCP_TOOL_TIMEOUT_MS says otherwise.
+ *   - SSE and HTTP servers with headers work natively (`mcpCapabilities`).
  */
 
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
@@ -61,8 +71,11 @@ import {
   ToolResult,
 } from './ProtocolInterface';
 import { appendBoundedTail } from './CodexACPProtocol';
+import { clampEffortLevel, parseEffortLevel, resolveKimiEffortLevels } from '../effortLevels';
 import { scrubProviderApiKeys } from '../providerApiKeyScrub';
 import { buildDocumentAttachmentPromptText } from '../providers/codex/documentAttachmentPrompt';
+import { toKimiSpawnableCommand } from '../providers/kimiMcpCommand';
+import { INTERACTIVE_TOOL_TIMEOUT_SEC } from '../services/McpConfigService';
 import type { ToolPermissionScope } from '../providers/ProviderPermissionMixin';
 
 interface KimiACPToolPermissionRequest {
@@ -145,6 +158,10 @@ interface KimiSessionState {
   currentMode?: string;
   /** Mode ids kimi offered on session/new, load or fork. Empty means unknown. */
   availableModes: string[];
+  /** Thinking effort kimi reports for the session, when observed. */
+  currentThinking?: string;
+  /** Efforts the session's `thinking` picker offers. Empty means unknown. */
+  availableThinking: string[];
 }
 
 /**
@@ -282,7 +299,7 @@ export class KimiACPProtocol implements AgentProtocol {
       this.registerSession(result.sessionId);
       this.captureConfigOptions(result.sessionId, result.configOptions);
       this.captureModes(result.sessionId, result.modes);
-      const appliedModel = await this.applySessionModel(connection, result.sessionId, options.model);
+      const appliedModel = await this.applyModelAndThinking(connection, result.sessionId, options);
 
       return this.buildProtocolSession(result.sessionId, options, appliedModel, convertedMcpServers.length);
     } catch (error) {
@@ -307,6 +324,7 @@ export class KimiACPProtocol implements AgentProtocol {
           mcpServers: this.convertMcpServers(options.mcpServers),
         });
         this.registerSession(sessionId);
+        this.captureConfigOptions(sessionId, loaded.configOptions);
         this.captureModes(sessionId, loaded.modes);
         resumed = true;
       } catch (error) {
@@ -322,7 +340,7 @@ export class KimiACPProtocol implements AgentProtocol {
     }
 
     this.registerSession(sessionId);
-    const appliedModel = await this.applySessionModel(connection, sessionId, options.model);
+    const appliedModel = await this.applyModelAndThinking(connection, sessionId, options);
 
     return this.buildProtocolSession(sessionId, options, appliedModel);
   }
@@ -346,11 +364,12 @@ export class KimiACPProtocol implements AgentProtocol {
           ...sourceState,
           availableModels: [...sourceState.availableModels],
           availableModes: [...sourceState.availableModes],
+          availableThinking: [...sourceState.availableThinking],
         });
       }
       this.captureConfigOptions(result.sessionId, result.configOptions);
       this.captureModes(result.sessionId, result.modes);
-      const appliedModel = await this.applySessionModel(connection, result.sessionId, options.model);
+      const appliedModel = await this.applyModelAndThinking(connection, result.sessionId, options);
 
       return this.buildProtocolSession(result.sessionId, options, appliedModel);
     } catch (error) {
@@ -491,7 +510,7 @@ export class KimiACPProtocol implements AgentProtocol {
       this.sessionTools.set(sessionId, new Map());
     }
     if (!this.sessionStates.has(sessionId)) {
-      this.sessionStates.set(sessionId, { availableModels: [], availableModes: [] });
+      this.sessionStates.set(sessionId, { availableModels: [], availableModes: [], availableThinking: [] });
     }
   }
 
@@ -583,7 +602,15 @@ export class KimiACPProtocol implements AgentProtocol {
     this.processExitError = null;
     // Scrub after the final merge, never before: a key deleted upstream is
     // merely absent, and absence cannot mask the spread of the parent env.
-    const env = scrubProviderApiKeys({ ...(this.processEnv ?? process.env), ...this.launchEnv, ...this.extraEnv });
+    const env = scrubProviderApiKeys({
+      ...(this.processEnv ?? process.env),
+      // kimi drops an MCP tool call after 60 seconds (measured on 2.0.2), less
+      // than a person takes to answer AskUserQuestion or a commit proposal.
+      // ACP's McpServer has no timeout field, so it is raised for the process.
+      KIMI_MCP_TOOL_TIMEOUT_MS: String(INTERACTIVE_TOOL_TIMEOUT_SEC * 1000),
+      ...this.launchEnv,
+      ...this.extraEnv,
+    });
 
     const child = this.spawnProcess(this.command, this.args, {
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -1259,8 +1286,9 @@ export class KimiACPProtocol implements AgentProtocol {
   }
 
   /**
-   * Record the model picker kimi reports in session/new (and fork) so model
-   * application can tell "already on it" from "needs a set_model call".
+   * Record the model and thinking pickers kimi reports (session/new, load,
+   * fork, a set_config_option answer, a config_option_update) so applying
+   * either can tell "already on it" from "needs a call".
    */
   private captureConfigOptions(
     sessionId: string,
@@ -1273,16 +1301,23 @@ export class KimiACPProtocol implements AgentProtocol {
     if (!state) {
       return;
     }
-    const modelOption = configOptions.find(
-      (option) => option.id === 'model' && option.type === 'select'
-    );
-    if (!modelOption || modelOption.type !== 'select') {
-      return;
+    const valuesOf = (option: Extract<SessionConfigOption, { type: 'select' }>): string[] =>
+      option.options
+        .map((entry) => ('value' in entry ? entry.value : undefined))
+        .filter((value): value is string => typeof value === 'string');
+
+    for (const option of configOptions) {
+      if (option.type !== 'select') {
+        continue;
+      }
+      if (option.id === 'model') {
+        state.currentModel = option.currentValue;
+        state.availableModels = valuesOf(option);
+      } else if (option.id === 'thinking') {
+        state.currentThinking = option.currentValue;
+        state.availableThinking = valuesOf(option);
+      }
     }
-    state.currentModel = modelOption.currentValue;
-    state.availableModels = modelOption.options
-      .map((entry) => ('value' in entry ? entry.value : undefined))
-      .filter((value): value is string => typeof value === 'string');
   }
 
   /**
@@ -1355,6 +1390,62 @@ export class KimiACPProtocol implements AgentProtocol {
     } catch (configError) {
       console.warn('[KimiACPProtocol] Failed to apply session model:', this.formatError(configError));
       return undefined;
+    }
+  }
+
+  /**
+   * The model first, then the effort: kimi puts a session back on the model's
+   * default effort whenever the model changes, so an effort applied before a
+   * switch is lost, and after a switch it is sent even when it looks current.
+   */
+  private async applyModelAndThinking(
+    connection: ACPClientConnection,
+    sessionId: string,
+    options: SessionOptions
+  ): Promise<string | undefined> {
+    const modelBefore = this.sessionStates.get(sessionId)?.currentModel;
+    const appliedModel = await this.applySessionModel(connection, sessionId, options.model);
+    const modelNow = this.sessionStates.get(sessionId)?.currentModel;
+    await this.applySessionThinking(connection, sessionId, options.raw?.effortLevel, modelNow !== modelBefore);
+    return appliedModel;
+  }
+
+  /**
+   * Put Nimbalyst's effort selection onto the session's `thinking` picker
+   * (kimi 2.0.2: low / high / max per model). Nothing selected leaves kimi on
+   * its own default. A level kimi lacks runs at the nearest one below it, and
+   * a model with no such level is left alone. A refusal is logged, not fatal.
+   */
+  private async applySessionThinking(
+    connection: ACPClientConnection,
+    sessionId: string,
+    requested: unknown,
+    modelChanged: boolean
+  ): Promise<void> {
+    if (typeof requested !== 'string' || !requested) {
+      return;
+    }
+    const state = this.sessionStates.get(sessionId);
+    if (resolveKimiEffortLevels(state?.currentModel)?.length === 0) {
+      // No levels to choose from, so the composer offers no selector either.
+      return;
+    }
+    const effort = clampEffortLevel(parseEffortLevel(requested), state?.currentModel);
+    if (state && state.availableThinking.length > 0 && !state.availableThinking.includes(effort)) {
+      console.warn(`[KimiACPProtocol] kimi offers no "${effort}" thinking effort for ${state.currentModel ?? 'this model'}; leaving it as is`);
+      return;
+    }
+    if (!modelChanged && state?.currentThinking === effort) {
+      return;
+    }
+    try {
+      const result = await connection.setSessionConfigOption({ sessionId, configId: 'thinking', value: effort });
+      this.captureConfigOptions(sessionId, result?.configOptions);
+      if (state) {
+        state.currentThinking = effort;
+      }
+    } catch (error) {
+      console.warn('[KimiACPProtocol] Failed to apply the thinking effort:', this.formatError(error));
     }
   }
 
@@ -1444,11 +1535,16 @@ export class KimiACPProtocol implements AgentProtocol {
         continue;
       }
 
+      // kimi starts these without a shell, which on Windows cannot run the
+      // `npx.cmd` Nimbalyst's config hands out (EINVAL).
+      const spawnable = toKimiSpawnableCommand(config.command ?? '', config.args ?? [], {
+        pathValue: this.processEnv?.PATH,
+      });
       servers.push({
         name,
-        command: config.command,
-        args: config.args ?? [],
-        env: Object.entries(config.env ?? {})
+        command: spawnable.command,
+        args: spawnable.args,
+        env: Object.entries({ ...(config.env ?? {}), ...(spawnable.env ?? {}) })
           .filter(([, value]) => typeof value === 'string')
           .map(([envName, value]) => ({
             name: envName,
