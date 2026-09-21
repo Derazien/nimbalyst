@@ -512,7 +512,10 @@ export class KimiCodeProvider extends BaseAgentProvider {
 
     return buildClaudeCodeSystemPrompt({
       hasSessionNaming,
-      toolReferenceStyle: 'codex',
+      // kimi names MCP tools `mcp__<server>__<tool>`, as Claude Code does. The
+      // Codex style spells them differently and adds advice about Codex's own
+      // exec cells.
+      toolReferenceStyle: 'claude',
       worktreePath,
       isVoiceMode: false,
       enableAgentTeams: false,

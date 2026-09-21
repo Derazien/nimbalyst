@@ -6,9 +6,10 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-const { execFileSyncMock, getMcpServersConfigMock } = vi.hoisted(() => ({
+const { execFileSyncMock, getMcpServersConfigMock, internalMcp } = vi.hoisted(() => ({
   execFileSyncMock: vi.fn(),
   getMcpServersConfigMock: vi.fn(),
+  internalMcp: { enabled: false },
 }));
 
 vi.mock('child_process', async (importOriginal) => {
@@ -29,7 +30,7 @@ vi.mock('../workspacePreconditions', () => ({
 
 vi.mock('../../services/mcpServerConfig', () => ({
   getMcpConfigService: () => ({ getMcpServersConfig: getMcpServersConfigMock }),
-  isInternalMcpServerEnabled: () => false,
+  isInternalMcpServerEnabled: () => internalMcp.enabled,
   areTrackerToolsEnabled: () => false,
   resolveTrackersWorkspacePath: () => undefined,
 }));
@@ -228,6 +229,24 @@ describe('KimiCodeProvider', () => {
       expect(options.workspacePath).toBe(WORKSPACE);
       // The protocol's applied model wins over the requested one.
       expect(provider.getInitData()?.model).toBe('kimi-code/kimi-for-coding');
+    });
+
+    it('tells kimi to keep the session name, tags and phase current, naming the tool as kimi names it', async () => {
+      internalMcp.enabled = true;
+      try {
+        const protocol = makeProtocol([]);
+        const provider = new KimiCodeProvider({ protocol: protocol as unknown as KimiACPProtocol });
+        await provider.initialize({ model: 'kimi-code:k3' });
+        await collectChunks(provider);
+
+        const instructions = String(protocol.createSession.mock.calls[0][0].systemPrompt);
+        // kimi exposes MCP tools as mcp__<server>__<tool>, the same as Claude Code.
+        expect(instructions).toContain('mcp__nimbalyst__update_session_meta');
+        // Codex-only advice about its exec cells has no meaning for kimi.
+        expect(instructions).not.toContain('functions.exec');
+      } finally {
+        internalMcp.enabled = false;
+      }
     });
 
     it('hands the effort picked in the composer to the ACP session on every turn', async () => {

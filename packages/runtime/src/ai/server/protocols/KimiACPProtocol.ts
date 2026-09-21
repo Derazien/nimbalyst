@@ -158,6 +158,8 @@ interface KimiSessionState {
   currentMode?: string;
   /** Mode ids kimi offered on session/new, load or fork. Empty means unknown. */
   availableModes: string[];
+  /** Nimbalyst's instructions as kimi last received them for this session. */
+  sentInstructions?: string;
   /** Thinking effort kimi reports for the session, when observed. */
   currentThinking?: string;
   /** Efforts the session's `thinking` picker offers. Empty means unknown. */
@@ -413,11 +415,17 @@ export class KimiACPProtocol implements AgentProtocol {
         // Before every turn, so a resumed session and a mode switch between
         // turns both land on the right kimi mode.
         await this.applySessionMode(connection, session.id, kimiModeForTurn(message.mode));
-        const promptBlocks = await this.buildPromptBlocks(message);
+        const instructions = this.instructionsToSend(session);
+        const promptBlocks = await this.buildPromptBlocks(message, instructions);
         const response = await connection.prompt({
           sessionId: session.id,
           prompt: promptBlocks,
         });
+        // Only now are they in kimi's history; a prompt that threw sends them again.
+        const state = this.sessionStates.get(session.id);
+        if (instructions && state) {
+          state.sentInstructions = instructions;
+        }
 
         const usage = this.normalizeUsage(response);
         queue.push({
@@ -1230,11 +1238,35 @@ export class KimiACPProtocol implements AgentProtocol {
     };
   }
 
-  private async buildPromptBlocks(message: ProtocolMessage) {
+  /**
+   * Nimbalyst's instructions for this turn, or undefined when kimi already has
+   * exactly this text in the session's history. ACP has no system-prompt field,
+   * so they ride in the prompt (as Codex ACP and Grok ACP send theirs); sending
+   * them every turn would pile a copy into kimi's context each time.
+   */
+  private instructionsToSend(session: ProtocolSession): string | undefined {
+    const instructions = (session.raw?.options as SessionOptions | undefined)?.systemPrompt?.trim();
+    if (!instructions || this.sessionStates.get(session.id)?.sentInstructions === instructions) {
+      return undefined;
+    }
+    return instructions;
+  }
+
+  private async buildPromptBlocks(message: ProtocolMessage, instructions?: string) {
     const blocks: Array<
       | { type: 'text'; text: string }
       | { type: 'image'; data: string; mimeType: string; uri?: string }
+      | { type: 'resource'; resource: { uri: string; text: string; mimeType: string } }
     > = [];
+
+    // kimi 2.0.2 hands the model a resource block as
+    // `<resource uri="...">text</resource>` ahead of the message (verified live).
+    if (instructions) {
+      blocks.push({
+        type: 'resource',
+        resource: { uri: 'nimbalyst://system-instructions', text: instructions, mimeType: 'text/plain' },
+      });
+    }
 
     blocks.push({
       type: 'text',

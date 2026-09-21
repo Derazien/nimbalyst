@@ -163,6 +163,40 @@ describe('KimiACPProtocol', () => {
     }
   }, 15000);
 
+  it('gives kimi Nimbalyst\'s instructions ahead of the message, again only when they change', async () => {
+    // ACP has no system-prompt field. Without this the prompt Nimbalyst builds
+    // (session naming, its question tools, trackers) was shown in the UI as sent
+    // and never reached kimi, so no Kimi session ever named or tagged itself.
+    const { protocol, workspacePath, auditPath, cleanup } = makeHarness();
+    const prompts = () => auditRows(auditPath).filter((row) => row.method === 'session/prompt');
+    const drain = async (session: Awaited<ReturnType<typeof protocol.createSession>>, content: string) => {
+      for await (const _event of protocol.sendMessage(session, { content, sessionId: 'nim-1', mode: 'agent' })) { /* drain */ }
+    };
+
+    try {
+      const first = await protocol.createSession({ workspacePath, systemPrompt: 'Call update_session_meta early.' });
+      await drain(first, 'hello');
+      expect(prompts()[0].params.blocks).toEqual(['resource', 'text']);
+      expect(prompts()[0].params.resources).toEqual([
+        { uri: 'nimbalyst://system-instructions', text: 'Call update_session_meta early.' },
+      ]);
+
+      // Same instructions on the next turn: they are already in kimi's history.
+      const same = await protocol.resumeSession(first.id, { workspacePath, systemPrompt: 'Call update_session_meta early.' });
+      await drain(same, 'again');
+      expect(prompts()[1].params.blocks).toEqual(['text']);
+
+      // Changed (trackers switched on, say): kimi gets the new text once.
+      const changed = await protocol.resumeSession(first.id, { workspacePath, systemPrompt: 'Call update_session_meta early. Trackers are on.' });
+      await drain(changed, 'third');
+      expect(prompts()[2].params.resources).toEqual([
+        { uri: 'nimbalyst://system-instructions', text: 'Call update_session_meta early. Trackers are on.' },
+      ]);
+    } finally {
+      cleanup();
+    }
+  }, 20000);
+
   it('leaves kimi on its own effort when none is selected or the model has no levels', async () => {
     const { protocol, workspacePath, auditPath, cleanup } = makeHarness();
 

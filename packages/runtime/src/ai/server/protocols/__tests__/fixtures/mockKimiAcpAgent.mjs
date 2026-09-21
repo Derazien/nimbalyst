@@ -199,7 +199,14 @@ class MockKimiAcpAgent {
     }
 
     const text = (params.prompt ?? []).find((block) => block.type === 'text')?.text ?? '';
-    audit('session/prompt', { sessionId: params.sessionId, text });
+    audit('session/prompt', {
+      sessionId: params.sessionId,
+      text,
+      // Block kinds in the order they arrived, and any embedded resource's text.
+      blocks: (params.prompt ?? []).map((block) => block.type),
+      resources: (params.prompt ?? []).filter((block) => block.type === 'resource')
+        .map((block) => ({ uri: block.resource?.uri, text: block.resource?.text })),
+    });
 
     if (text.includes('never finish')) {
       await this.connection.sessionUpdate({

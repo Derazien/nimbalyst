@@ -41,7 +41,16 @@ export function deriveSessionTitleFromPrompt(rawPrompt: string | null | undefine
   return truncated ? `${title}…` : title;
 }
 
-export type AutoNameOutcome = 'named' | 'already-named' | 'no-usable-prompt';
+export type AutoNameOutcome = 'named' | 'already-named' | 'no-usable-prompt' | 'no-prompt-yet';
+
+/**
+ * Whether an outcome settles the session for good. "Nothing typed yet" does
+ * not: kimi reports idle the moment its prompt box is up, before any prompt
+ * exists, and giving up there left every Kimi Code CLI session on "New Session".
+ */
+export function isFinalAutoNameOutcome(outcome: AutoNameOutcome): boolean {
+  return outcome !== 'no-prompt-yet';
+}
 
 export interface AutoNameDeps {
   /** Whether the session already carries an agent/user-chosen name. */
@@ -59,7 +68,11 @@ export async function maybeAutoNameClaudeCliSession(
   if (await deps.isAlreadyNamed(sessionId)) {
     return 'already-named';
   }
-  const title = deriveSessionTitleFromPrompt(await deps.getFirstUserPrompt(sessionId));
+  const prompt = await deps.getFirstUserPrompt(sessionId);
+  if (prompt === null) {
+    return 'no-prompt-yet';
+  }
+  const title = deriveSessionTitleFromPrompt(prompt);
   if (!title) {
     return 'no-usable-prompt';
   }

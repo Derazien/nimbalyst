@@ -9,7 +9,7 @@
  */
 
 import { AISessionsRepository, AgentMessagesRepository } from '@nimbalyst/runtime';
-import { maybeAutoNameClaudeCliSession } from './claudeCliSessionAutoName';
+import { isFinalAutoNameOutcome, maybeAutoNameClaudeCliSession } from './claudeCliSessionAutoName';
 
 type ApplyTitleFn = (sessionId: string, title: string) => Promise<void>;
 
@@ -56,6 +56,8 @@ export async function maybeAutoNameClaudeCliSessionProduction(sessionId: string)
       getFirstUserPrompt,
       applyTitle: apply,
     });
+    // Nothing typed yet is not an answer: try again on the next idle.
+    if (!isFinalAutoNameOutcome(outcome)) attempted.delete(sessionId);
     console.log(`[ClaudeCliAutoName] ${sessionId}: ${outcome}`);
   } catch (err) {
     // Allow a retry on the next idle transition.

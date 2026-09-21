@@ -23,7 +23,8 @@ import { ClaudeSettingsManager } from '../ClaudeSettingsManager';
 import { getAttachmentStagingConfig } from '../../utils/store';
 import { closeSupersededQuestions, snapshotQuestionsToSupersede } from './supersedeOpenQuestions';
 import { claudeCliSubmitLatch } from './claudeCliSubmitLatch';
-import { isKimiCliTerminal, typeIntoKimiCliTerminal } from './kimiCliRuntimes';
+import { isKimiCliTerminal, kimiCliRuntimes, kimiCliSessionsWithNimbalystTools, typeIntoKimiCliTerminal } from './kimiCliRuntimes';
+import { kimiCliPromptForSubmit } from './kimiCliPromptNote';
 
 /** Submit a CLI prompt using the real terminal/log/analytics deps. */
 export async function submitClaudeCliPromptProduction(
@@ -151,11 +152,24 @@ export async function submitClaudeCliPromptProduction(
  * the prompt in its own log and the session runtime stores it from there,
  * which also covers a prompt typed straight into the terminal.
  */
+/** Sessions whose first prompt already carried Nimbalyst's note. */
+const kimiCliNoted = new Set<string>();
+
 async function submitKimiCliPrompt(input: SubmitClaudeCliPromptInput): Promise<{ submitted: boolean }> {
   const manager = getTerminalSessionManager();
+  // kimi takes no instructions on its command line, so the first prompt of a
+  // fresh kimi session carries Nimbalyst's one note (kimiCliPromptNote.ts). A
+  // resumed kimi session already has it in its history.
+  const isFirstPrompt = !kimiCliRuntimes.get(input.sessionId)?.kimiSessionId && !kimiCliNoted.has(input.sessionId);
+  const prompt = kimiCliPromptForSubmit(input.prompt, {
+    isFirstPrompt,
+    hasNimbalystTools: kimiCliSessionsWithNimbalystTools.has(input.sessionId),
+  });
+  const noted = prompt !== input.prompt;
+  if (noted) kimiCliNoted.add(input.sessionId);
   // Queued behind the effort or model picker when one is being walked, so the
   // prompt never lands inside it.
-  return typeIntoKimiCliTerminal(input.sessionId, () => submitClaudeCliPrompt(input, {
+  const result = await typeIntoKimiCliTerminal(input.sessionId, () => submitClaudeCliPrompt({ ...input, prompt }, {
     writeToTerminal: (sessionId: string, data: string) => {
       claudeCliSubmitLatch.mark(sessionId, data.length);
       manager.writeToTerminal(sessionId, data);
@@ -179,4 +193,7 @@ async function submitKimiCliPrompt(input: SubmitClaudeCliPromptInput): Promise<{
     hasTurnStarted: async (sessionId: string) =>
       (await manager.getClaudeCliLiveTurnState(sessionId)) === 'running',
   }));
+  // Never reached kimi, so the next prompt is still the first.
+  if (noted && !result.submitted) kimiCliNoted.delete(input.sessionId);
+  return result;
 }

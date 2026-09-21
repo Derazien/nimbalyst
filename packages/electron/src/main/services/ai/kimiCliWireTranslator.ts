@@ -15,6 +15,7 @@
  */
 
 import type { ClaudeTurnState } from './claudeCliPidState';
+import { stripNimbalystNote } from './kimiCliPromptNote';
 
 export type KimiTurnEndReason = 'completed' | 'cancelled' | 'failed';
 
@@ -136,7 +137,8 @@ export class KimiCliWireTranslator {
     // Only what a person typed. kimi also injects reminders and skill text
     // through the same events, with another origin.
     if (!isObject(event.origin) || event.origin.kind !== 'user') return [];
-    const text = textOf(event.input).trim();
+    // Without the note Nimbalyst itself added to the session's first prompt.
+    const text = stripNimbalystNote(textOf(event.input)).trim();
     if (!text) return [];
     return [{ kind: 'row', direction: 'input', content: text, createdAt: at }];
   }

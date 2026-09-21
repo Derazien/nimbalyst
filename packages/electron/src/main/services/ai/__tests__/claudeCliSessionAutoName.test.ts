@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   deriveSessionTitleFromPrompt,
+  isFinalAutoNameOutcome,
   maybeAutoNameClaudeCliSession,
 } from '../claudeCliSessionAutoName';
 
@@ -68,5 +69,16 @@ describe('maybeAutoNameClaudeCliSession', () => {
     const result = await maybeAutoNameClaudeCliSession('s1', d);
     expect(result).toBe('no-usable-prompt');
     expect(d.applyTitle).not.toHaveBeenCalled();
+  });
+
+  it('tells "nothing typed yet" apart from "typed something unusable", so the first can be tried again', async () => {
+    // kimi is idle as soon as its prompt box is up, before any prompt exists.
+    // Treating that as final left every Kimi Code CLI session on "New Session".
+    const d = deps({ getFirstUserPrompt: vi.fn(async () => null) });
+    const result = await maybeAutoNameClaudeCliSession('s1', d);
+    expect(result).toBe('no-prompt-yet');
+    expect(isFinalAutoNameOutcome(result)).toBe(false);
+    expect(isFinalAutoNameOutcome('no-usable-prompt')).toBe(true);
+    expect(isFinalAutoNameOutcome('named')).toBe(true);
   });
 });

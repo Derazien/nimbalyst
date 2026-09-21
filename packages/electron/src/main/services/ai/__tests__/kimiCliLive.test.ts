@@ -25,6 +25,7 @@ import { submitClaudeCliPrompt } from '../claudeCliSubmit';
 import { escalateClaudeCliInterrupt } from '../claudeCliInterrupt';
 import { switchKimiCliModel } from '../kimiCliModelSwitch';
 import { switchKimiCliEffort } from '../kimiCliEffortSwitch';
+import { kimiCliPromptForSubmit } from '../kimiCliPromptNote';
 
 const LIVE = process.env.KIMI_LIVE === '1';
 const KIMI = process.env.KIMI_PATH || path.join(os.homedir(), '.kimi-code', 'bin', 'kimi.exe');
@@ -242,8 +243,29 @@ describe.skipIf(!LIVE)('Kimi Code CLI terminal mode, live', () => {
     await new Promise<void>((resolve) => sse.listen(0, '127.0.0.1', resolve));
     const port = (sse.address() as AddressInfo).port;
 
+    // Stands in for Nimbalyst's own core server: the tool the first prompt's note asks for.
+    const metaCalls = path.join(workDir, 'meta-calls.jsonl');
+    const metaScript = path.join(workDir, 'nimbalyst-server.cjs');
+    fs.writeFileSync(metaScript, `
+      const fs = require('fs');
+      let buffer = '';
+      process.stdin.on('data', (chunk) => {
+        buffer += chunk;
+        for (let at = buffer.indexOf('\\n'); at >= 0; at = buffer.indexOf('\\n')) {
+          const m = JSON.parse(buffer.slice(0, at)); buffer = buffer.slice(at + 1);
+          if (m.id === undefined) continue;
+          if (m.method === 'tools/call') fs.appendFileSync(${JSON.stringify(metaCalls)}, JSON.stringify(m.params.arguments) + '\\n');
+          const result = m.method === 'tools/list' ? { tools: [{ name: 'update_session_meta', description: 'Set this session\\'s name, tags and phase.', inputSchema: { type: 'object', properties: { name: { type: 'string' }, add: { type: 'array', items: { type: 'string' } }, phase: { type: 'string' } } } }] }
+            : m.method === 'tools/call' ? { content: [{ type: 'text', text: 'Session metadata updated.' }] }
+            : { protocolVersion: m.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: 'nimbalyst', version: '1' } };
+          process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: m.id, result }) + '\\n');
+        }
+      });
+    `);
+
     const sessionFile = path.join(workDir, 'session.mcp.json');
     fs.writeFileSync(sessionFile, JSON.stringify({ mcpServers: {
+      nimbalyst: { type: 'stdio', command: process.execPath, args: [metaScript] },
       'probe-stdio': { type: 'stdio', command: process.execPath, args: [stdioScript] },
       'probe-sse': { type: 'sse', url: `http://127.0.0.1:${port}/mcp?sessionId=nimbalyst-live`, headers: { Authorization: 'Bearer live-token' } },
     } }));
@@ -252,6 +274,7 @@ describe.skipIf(!LIVE)('Kimi Code CLI terminal mode, live', () => {
     // entries are the same: a server name and the launcher, nothing else.
     fs.mkdirSync(path.join(workDir, '.kimi-code'));
     fs.writeFileSync(path.join(workDir, '.kimi-code', 'mcp.json'), JSON.stringify({ mcpServers: {
+      nimbalyst: { command: process.execPath, args: [launcher, 'nimbalyst'] },
       'probe-stdio': { command: process.execPath, args: [launcher, 'probe-stdio'] },
       'probe-sse': { command: process.execPath, args: [launcher, 'probe-sse'] },
     } }));
@@ -261,7 +284,9 @@ describe.skipIf(!LIVE)('Kimi Code CLI terminal mode, live', () => {
       await waitFor('kimi prompt box', () => kimi.runtime.getTurnState() === 'idle');
       // kimi connects a folder's servers once the folder is trusted.
       await waitFor('kimi to list the SSE server\'s tools', () => seen.filter((l) => l.startsWith('POST')).length >= 3, 60_000);
-      await kimi.submit('Call the tool echo_stdio with the text "a", then the tool echo_sse with the text "b", then reply with the single word: done');
+      // The first prompt as the app types it: the person's words, then Nimbalyst's note.
+      const asked = 'Call the tool echo_stdio with the text "a", then the tool echo_sse with the text "b", then reply with the single word: done';
+      await kimi.submit(kimiCliPromptForSubmit(asked, { isFirstPrompt: true, hasNimbalystTools: true }));
       await waitFor('the MCP turn to end', () => {
         // An approval prompt for an MCP tool: answer it as the person would.
         if (kimi.runtime.getTurnState() === 'waiting_for_input') kimi.proc.write('\r');
@@ -276,6 +301,15 @@ describe.skipIf(!LIVE)('Kimi Code CLI terminal mode, live', () => {
       expect(lines.some((l) => l.includes('STDIO-OK a'))).toBe(true);
       expect(lines.some((l) => l.includes('SSE-OK b'))).toBe(true);
       expect(seen[0]).toBe('GET ?sessionId=nimbalyst-live Bearer live-token');
+
+      // kimi has no flag for instructions, so the note on the first prompt is the
+      // only thing telling it to name the session. It has to work on the real
+      // model, and the person's own words are what the transcript keeps.
+      const meta = fs.existsSync(metaCalls) ? fs.readFileSync(metaCalls, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : [];
+      record('update_session_meta calls:', meta);
+      expect(meta.length).toBeGreaterThan(0);
+      expect(typeof meta[0].name).toBe('string');
+      expect(lines[0]).toBe(`user: ${asked}`);
     } finally {
       kimi.runtime.stop();
       kimi.proc.kill();

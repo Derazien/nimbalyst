@@ -16,6 +16,7 @@ import { AISessionsRepository } from '@nimbalyst/runtime/storage/repositories/AI
 import { TranscriptMigrationRepository } from '@nimbalyst/runtime/storage/repositories/TranscriptMigrationRepository';
 import { claimExternalSessionForLocalExecution } from '../externalSessions/ExternalSessionService';
 import { getMcpConfigService } from '@nimbalyst/runtime/ai/server/services/mcpServerConfig';
+import { MCP_CORE } from '@nimbalyst/runtime/ai/server/services/mcpTopology';
 import { toKimiSpawnableCommand } from '@nimbalyst/runtime/ai/server/providers/kimiMcpCommand';
 import { resolveEffortLevel, resolveKimiEffortLevels } from '@nimbalyst/runtime/ai/server/effortLevels';
 import { getDefaultEffortLevel } from '../../utils/store';
@@ -36,7 +37,7 @@ import { KimiCliSessionRuntime, type KimiCliRow } from './kimiCliSessionRuntime'
 import { switchKimiCliModel } from './kimiCliModelSwitch';
 import { switchKimiCliEffort, type SwitchKimiCliEffortResult } from './kimiCliEffortSwitch';
 import { resolveClaudeCliEffort } from './claudeCliEffort';
-import { kimiCliRuntimes, typeIntoKimiCliTerminal } from './kimiCliRuntimes';
+import { kimiCliRuntimes, kimiCliSessionsWithNimbalystTools, typeIntoKimiCliTerminal } from './kimiCliRuntimes';
 import { KimiCliMcpConfigService, type PreparedKimiCliMcp } from './kimiCliMcpConfig';
 import { resolveKimiCliMcpLauncher } from './kimiCliMcpLauncherPath';
 import type { EnsureClaudeCliSessionInput, EnsureClaudeCliSessionResult } from './claudeCliLauncherSingleton';
@@ -71,6 +72,12 @@ async function prepareMcp(sessionId: string, workspacePath: string): Promise<Pre
     const prepared = await mcpConfig.prepare(sessionId, servers);
     if (prepared?.skipped.length) {
       console.log(`[KimiCliLauncher] kept the user's own kimi MCP servers named: ${prepared.skipped.join(', ')}`);
+    }
+    // Only then may the first prompt's note name `update_session_meta`.
+    if (prepared && MCP_CORE in servers && !prepared.skipped.includes(MCP_CORE)) {
+      kimiCliSessionsWithNimbalystTools.add(sessionId);
+    } else {
+      kimiCliSessionsWithNimbalystTools.delete(sessionId);
     }
     return prepared;
   } catch (error) {
@@ -265,6 +272,7 @@ export async function ensureKimiCliSession(
           if (runtimes.get(input.sessionId) !== runtime) return;
           runtimes.delete(input.sessionId);
           effortsWaitingForIdle.delete(input.sessionId);
+          kimiCliSessionsWithNimbalystTools.delete(input.sessionId);
           void mcpConfig.release(input.sessionId);
           void fileWatcher.stopForSession(input.sessionId).catch(() => {});
           void stateManager.endSession(input.sessionId).catch(() => {});

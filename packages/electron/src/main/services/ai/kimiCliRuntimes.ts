@@ -14,6 +14,12 @@ export function isKimiCliTerminal(sessionId: string): boolean {
   return kimiCliRuntimes.has(sessionId);
 }
 
+/**
+ * Sessions whose kimi was started with Nimbalyst's own MCP server, so a note to
+ * the model may name its tools (kimiCliPromptNote.ts).
+ */
+export const kimiCliSessionsWithNimbalystTools = new Set<string>();
+
 const typing = new Map<string, Promise<unknown>>();
 
 /**
