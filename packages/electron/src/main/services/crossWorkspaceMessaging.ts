@@ -22,6 +22,7 @@
 import { getSettingsService } from './SettingsService';
 import { hasLiveWindowForWorkspace } from '../window/windowState';
 import { getAlphaFeatures } from '../utils/store';
+import { sameWorkspaceIdentity } from '../utils/workspaceIdentity';
 
 export type CrossWorkspaceMessagingMode = 'off' | 'creator' | 'allow';
 
@@ -95,8 +96,9 @@ export function resolveCrossWorkspaceAccess(
 ): { allowed: boolean; mode: CrossWorkspaceMessagingMode } {
   if (!target) return { allowed: false, mode: 'off' };
   // Same-workspace access never consults the setting, so the common path has
-  // no settings or window-registry cost.
-  if (target.workspacePath && target.workspacePath === callerWorkspaceId) {
+  // no settings or window-registry cost. Another spelling of the caller's
+  // project (case, symlink, separators) is the same workspace (#1551).
+  if (sameWorkspaceIdentity(target.workspacePath, callerWorkspaceId)) {
     return { allowed: true, mode: 'off' };
   }
   const mode = readCrossWorkspaceMessagingMode();
@@ -171,8 +173,9 @@ export function resolveCrossProjectSpawn(
   targetWorkspacePath: string,
 ): CrossProjectSpawnDecision {
   // The caller's own project is the overwhelmingly common case and must not pay for two
-  // store reads, nor be gated by an experimental toggle it has nothing to do with.
-  if (targetWorkspacePath && targetWorkspacePath === callerWorkspaceId) {
+  // store reads, nor be gated by an experimental toggle it has nothing to do with. That
+  // includes another spelling of it (#1551).
+  if (sameWorkspaceIdentity(targetWorkspacePath, callerWorkspaceId)) {
     return { allowed: true, mode: 'off', featureEnabled: false };
   }
   const featureEnabled = readCrossProjectFeatureEnabled();

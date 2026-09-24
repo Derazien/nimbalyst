@@ -238,6 +238,15 @@ describe('spawning into another project', () => {
     expect(vi.mocked(AISessionsRepository.create).mock.calls[0][0]).toMatchObject({ workspaceId: HOME });
   });
 
+  it('another spelling of the caller own project is still home, filed under the caller key (#1551)', async () => {
+    settingsGet.mockReturnValue('off');
+    alphaFeatures.mockReturnValue({ 'cross-project': false });
+    const service = spawnService();
+    vi.mocked(AISessionsRepository.get).mockResolvedValue({ ...PARENT, worktreeId: null } as never);
+    await service.spawnSession(CALLER, HOME, { prompt: 'go', project: `${HOME}/`, isolated: true });
+    expect(vi.mocked(AISessionsRepository.create).mock.calls[0][0]).toMatchObject({ workspaceId: HOME });
+  });
+
   it('honours an explicit provider, so a spawn is not stuck on the caller model', async () => {
     settingsGet.mockReturnValue('allow');
     liveWindows.add(OTHER);

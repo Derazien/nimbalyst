@@ -498,7 +498,9 @@ export class MetaAgentService {
    */
   private resolveSpawnTargetWorkspace(callerWorkspaceId: string, project: string | undefined): string {
     const target = project?.trim() || callerWorkspaceId;
-    if (target === callerWorkspaceId) return target;
+    // Another spelling of the caller's own project keeps the caller's key, so the session is
+    // not filed under a spelling no window is registered under (#1551).
+    if (sameWorkspaceIdentity(target, callerWorkspaceId)) return callerWorkspaceId;
     const decision = resolveCrossProjectSpawn(callerWorkspaceId, target);
     if (!decision.allowed) {
       throw new Error(crossProjectSpawnRefusal(target, decision));

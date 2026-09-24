@@ -94,6 +94,13 @@ describe('resolveCrossWorkspaceAccess (runtime binding)', () => {
     expect(settingsGet).not.toHaveBeenCalled();
   });
 
+  it('treats another spelling of the caller workspace as the same workspace (#1551)', () => {
+    settingsGet.mockClear();
+    settingsGet.mockReturnValue('off');
+    expect(resolveCrossWorkspaceAccess(CALLER, HOME, { workspacePath: `${HOME}/` })).toEqual({ allowed: true, mode: 'off' });
+    expect(settingsGet).not.toHaveBeenCalled();
+  });
+
   it('reads the setting and the window registry for other workspaces', () => {
     settingsGet.mockReturnValue('allow');
     hasLiveWindowForWorkspace.mockImplementation((path: string) => path === OTHER);
@@ -161,6 +168,14 @@ describe('resolveCrossProjectSpawn (runtime binding)', () => {
     settingsGet.mockClear();
     alphaFeatures.mockClear();
     expect(resolveCrossProjectSpawn(HOME, HOME).allowed).toBe(true);
+    expect(settingsGet).not.toHaveBeenCalled();
+    expect(alphaFeatures).not.toHaveBeenCalled();
+  });
+
+  it('treats another spelling of the caller project as the caller own project (#1551)', () => {
+    settingsGet.mockClear();
+    alphaFeatures.mockClear();
+    expect(resolveCrossProjectSpawn(HOME, `${HOME}/`).allowed).toBe(true);
     expect(settingsGet).not.toHaveBeenCalled();
     expect(alphaFeatures).not.toHaveBeenCalled();
   });
