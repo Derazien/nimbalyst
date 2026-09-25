@@ -81,6 +81,8 @@ describe('SettingsService', () => {
     const svc = getSettingsService();
     expect(svc.get('projects.allowUnlimited')).toBe(false);
     svc.set('projects.allowUnlimited', true);
+    // App settings are saved in the background; a real restart flushes them on the way out.
+    (await import('../../utils/settingsFiles')).flushSettingsSync();
     vi.resetModules();
     const reloaded = (await import('../SettingsService')).getSettingsService();
     expect(reloaded.get('projects.allowUnlimited')).toBe(true);
