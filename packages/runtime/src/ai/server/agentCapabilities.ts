@@ -255,6 +255,10 @@ const BUILTIN_SESSION_DIRECTIVE_SUPPORT: Readonly<Record<AIProviderType, boolean
   'grok-build': true,
   'cursor-agent': true,
   'antigravity-gemini-agent': true,
+  // Neither Kimi lane builds a turn prompt from session metadata: the ACP adapter
+  // sends only the user's prompt, and the CLI lane is driven through its PTY.
+  'kimi-code': false,
+  'kimi-code-cli': false,
 });
 
 /** Unknown ids (extension-contributed agents) fail closed, like `agentCapabilitiesForProviderType`. */

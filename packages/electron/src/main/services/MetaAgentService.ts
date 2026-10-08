@@ -687,7 +687,13 @@ export class MetaAgentService {
 
       // create_session shares the caller's container just like spawn_session.
       // Explicit isolation or a different worktree keeps the manager but no tree edge.
-      if (!args.useWorktree && !args.worktreeId && parentSession?.worktreeId) {
+      // Never across projects: the caller's worktree is a checkout of the caller's repository.
+      if (
+        !args.useWorktree &&
+        !args.worktreeId &&
+        parentSession?.worktreeId &&
+        sameWorkspaceIdentity(parentSession.workspacePath, workspaceKey)
+      ) {
         worktreeId = parentSession.worktreeId;
         worktreePath = parentSession.worktreePath ?? null;
       }

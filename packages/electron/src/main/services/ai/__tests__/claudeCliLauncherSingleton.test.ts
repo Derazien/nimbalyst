@@ -29,6 +29,11 @@ vi.mock('../../PermissionService', () => ({
   getPermissionService: () => ({ getPermissionMode: () => 'default' }),
 }));
 vi.mock('../../../utils/store', () => ({ getDefaultEffortLevel: () => undefined }));
+// buildLauncher reads the plan-mode setting and the mode tracker. The real modules pull
+// the @nimbalyst/runtime barrel and the settings store, which made every resetModules
+// import cost ~7s and tripped the 20s timeout under a parallel run.
+vi.mock('../../SettingsService', () => ({ getSettingsService: () => ({ get: () => undefined }) }));
+vi.mock('../claudeCliModeSingleton', () => ({ getClaudeCliModeTracker: () => undefined }));
 vi.mock('../../attachments/attachmentStagingRoot', () => ({
   resolveAttachmentStagingAllowDirectories: () => [],
 }));

@@ -40,7 +40,6 @@ import { HighlightOverlay, type OverlayToken } from './commandPills/HighlightOve
 import { CommandPillPopover } from './commandPills/CommandPillPopover';
 import { canPersistWorkspaceHydratedState } from '../../utils/workspaceHydration';
 import { attachmentUnsupportedMessage } from './providerAttachmentSupport';
-import { errorNotificationService } from '../../services/ErrorNotificationService';
 
 export interface AIInputRef {
   focus: () => void;

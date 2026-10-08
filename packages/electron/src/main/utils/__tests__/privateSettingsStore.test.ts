@@ -112,6 +112,8 @@ it("does not read a transiently unparseable settings file as empty, or let a wri
   truncatedReads = 1;
   store.set("launchCount", 3);
   vi.restoreAllMocks();
+  // app-settings is saved in the background; put it on disk before reading the file back.
+  flushSettingsSync();
   expect(JSON.parse(fs.readFileSync(store.path, "utf8"))).toMatchObject({ developerMode: true, theme: "dark", launchCount: 3 });
 });
 

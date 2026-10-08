@@ -61,6 +61,9 @@ vi.mock('electron', () => ({
 vi.mock('../SyncManager', () => ({ getSyncProvider: () => ({ pushChange: vi.fn() }) }));
 vi.mock('../../utils/ipcRegistry', () => ({ safeHandle: vi.fn() }));
 vi.mock('../../utils/store', () => ({ getDefaultAIModel: () => null }));
+// crossWorkspaceMessaging (imported by MetaAgentService) reads these two at call time only; stubbing them keeps SettingsService -> logger -> the real settings store out of the graph.
+vi.mock('../SettingsService', () => ({ getSettingsService: () => ({ get: vi.fn() }) }));
+vi.mock('../../window/windowState', () => ({ hasLiveWindowForWorkspace: () => false }));
 vi.mock('../../utils/timestampUtils', () => ({ toMillis: (v: unknown) => v }));
 vi.mock('../WorktreeStore', () => ({ createWorktreeStore: vi.fn() }));
 vi.mock('../GitWorktreeService', () => ({ GitWorktreeService: class {} }));
