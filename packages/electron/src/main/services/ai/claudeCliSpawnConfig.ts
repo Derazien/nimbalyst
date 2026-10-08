@@ -207,7 +207,8 @@ const FORBIDDEN_ENV_KEYS: readonly string[] = ['ANTHROPIC_API_KEY', 'CLAUDECODE'
  *
  * `ExitPlanMode` is intentionally NOT here: there is no MCP replacement for it
  * yet, so denying it would strip plan-approval with nothing to take its place.
- * It keeps rendering natively in the TUI (answerable there) until Phase 4.
+ * It keeps its native TUI dialog; in ask projects a PreToolUse hook on it (see
+ * claudeCliExitPlanMode.ts) lets Nimbalyst's plan card answer instead.
  */
 const CLAUDE_CLI_DISALLOWED_TOOLS: readonly string[] = ['AskUserQuestion'];
 

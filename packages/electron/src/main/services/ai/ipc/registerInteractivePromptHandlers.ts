@@ -11,6 +11,14 @@ import { getSyncProvider } from '../../SyncManager';
 import { persistInteractivePromptTerminalResult } from '.././askUserQuestionFallbackResolution';
 import { buildToolPermissionResponseRecord } from '.././claudeCliToolPermission';
 import { setSessionPendingPrompt } from '.././pendingPromptPersistence';
+import {
+  answerExitPlanFromCard,
+  isExitPlanCardInteractive,
+  parseExitPlanResponse,
+} from '.././claudeCliExitPlanMode';
+import { approvePlanOnScreen, revisePlanOnScreen } from '.././claudeCliPlanDialog';
+import { getClaudeCliModeTracker } from '.././claudeCliModeSingleton';
+import { getTerminalSessionManager } from '../../TerminalSessionManager';
 import { type AIServiceContext } from './AIServiceContext';
 import { ProviderFactory } from '@nimbalyst/runtime/ai/server';
 import { hasOpenPrompts, isPromptOpen } from '../openPromptRegistry';
@@ -36,6 +44,39 @@ export function registerInteractivePromptHandlers(ctx: AIServiceContext): void {
     ctx.sendMessageHandler(event, message, { promptOrigin: 'interactive-question' }, sessionId, workspacePath),
     sessionId => ctx.publishQueueStateToSync(sessionId),
   );
+  // claude-code-cli: the plan card answers the CLI's plan approval. Ask projects resolve the parked
+  // ExitPlanMode hook; skip projects type into the CLI's own dialog after checking the screen. A
+  // success:false carries "Answer in the terminal ..." for the card to show.
+  safeHandle('claude-cli:exit-plan-mode-response', async (_event, payload: unknown) => {
+    const parsed = parseExitPlanResponse(payload);
+    if (!parsed) return { success: false, error: 'Invalid plan response' };
+    const { sessionId, answer } = parsed;
+    const result = await answerExitPlanFromCard(sessionId, answer, {
+      driveScreen: (sid, userAnswer) => {
+        const manager = getTerminalSessionManager();
+        const tracker = getClaudeCliModeTracker();
+        const deps = {
+          getLines: () => manager.getScreenLines(sid),
+          write: (data: string) => manager.writeToTerminal(sid, data),
+          delay: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+          readMode: () => tracker.getMode(sid),
+        };
+        return userAnswer.decision === 'approve'
+          ? approvePlanOnScreen(deps)
+          : revisePlanOnScreen(deps, userAnswer.feedback ?? '');
+      },
+    });
+    logger.main.info(
+      `[AIService] CLI ExitPlanMode response: session=${sessionId}, decision=${answer.decision}, ` +
+        (result.success ? `via=${result.via}, mode=${result.mode ?? 'unknown'}` : `failed=${result.error}`),
+    );
+    return result;
+  });
+  // Whether the card can answer this session's CLI (hook or screen), i.e. whether to show it live.
+  safeHandle('claude-cli:exit-plan-mode-capable', async (_event, sessionId: unknown) => ({
+    interactive: typeof sessionId === 'string' && isExitPlanCardInteractive(sessionId),
+  }));
+
   // Handle ExitPlanMode confirmation response from renderer
   safeHandle('ai:exitPlanModeConfirmResponse', async (event, requestId: string, sessionId: string, response: { approved: boolean; clearContext?: boolean; feedback?: string }) => {
     logger.main.info(`[AIService] ExitPlanMode confirmation response: requestId=${requestId}, approved=${response.approved}, clearContext=${response.clearContext}, hasFeedback=${!!response.feedback}`);

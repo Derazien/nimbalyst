@@ -11,6 +11,11 @@ import {
   buildElectronNodeHookCommand,
   PERMISSION_HOOK_MATCHER,
   PERMISSION_HOOK_TIMEOUT_SEC,
+  buildClaudeCliHookSettings,
+  buildExitPlanHookCommand,
+  EXIT_PLAN_HOOK_MATCHER,
+  EXIT_PLAN_HOOK_MODE,
+  EXIT_PLAN_HOOK_TIMEOUT_SEC,
 } from '../claudeCliPermissionHookConfig';
 
 describe('buildPermissionHookSettings', () => {
@@ -46,5 +51,30 @@ describe('buildElectronNodeHookCommand', () => {
   it('runs the script under Electron-as-Node with quoted paths', () => {
     const cmd = buildElectronNodeHookCommand('/Apps/My App/electron', '/Apps/My App/resources/hook.cjs');
     expect(cmd).toBe('ELECTRON_RUN_AS_NODE=1 "/Apps/My App/electron" "/Apps/My App/resources/hook.cjs"');
+  });
+});
+
+describe('buildClaudeCliHookSettings (gate + ExitPlanMode)', () => {
+  const exit = buildExitPlanHookCommand('/Apps/electron', '/Apps/hook.cjs');
+
+  it('ask projects: the gate stays first, the ExitPlanMode hook rides along with a long timeout', () => {
+    const s = buildClaudeCliHookSettings({ gateCommand: 'gate', exitPlanCommand: exit });
+    expect(s.hooks.PreToolUse).toHaveLength(2);
+    expect(s.hooks.PreToolUse[0]).toEqual(buildPermissionHookSettings({ command: 'gate' }).hooks.PreToolUse[0]);
+    expect(s.hooks.PreToolUse[1]).toEqual({
+      matcher: EXIT_PLAN_HOOK_MATCHER,
+      hooks: [{ type: 'command', command: exit, timeout: EXIT_PLAN_HOOK_TIMEOUT_SEC }],
+    });
+    // Longer than a permission prompt: a plan can sit unread, and the hook must outlive the card.
+    expect(EXIT_PLAN_HOOK_TIMEOUT_SEC).toBeGreaterThan(PERMISSION_HOOK_TIMEOUT_SEC);
+  });
+
+  it('skip projects: only the ExitPlanMode hook, and the gate matcher is not registered', () => {
+    const s = buildClaudeCliHookSettings({ exitPlanCommand: exit });
+    expect(s.hooks.PreToolUse.map((h) => h.matcher)).toEqual(['ExitPlanMode']);
+  });
+
+  it('runs the same script in exit-plan-mode via argv', () => {
+    expect(exit).toBe(`ELECTRON_RUN_AS_NODE=1 "/Apps/electron" "/Apps/hook.cjs" ${EXIT_PLAN_HOOK_MODE}`);
   });
 });

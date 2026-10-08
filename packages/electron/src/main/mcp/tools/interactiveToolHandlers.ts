@@ -30,6 +30,10 @@ import {
   markPatternApproved,
 } from "../../services/ai/claudeCliPermissionCache";
 import { broadcastMessageLogged } from "../../services/ai/claudeCliUserPromptLog";
+import {
+  handleExitPlanHookRequest,
+  type ExitPlanHookAnswer,
+} from "../../services/ai/claudeCliExitPlanMode";
 import { ClaudeSettingsManager } from "../../services/ClaudeSettingsManager";
 import { getPermissionService } from "../../services/PermissionService";
 import { SessionCommitService } from "../../services/SessionCommitService";
@@ -402,6 +406,52 @@ export async function handleToolPermission(
       },
       log: (m) => console.log(`[MCP Server] ${m}`),
     },
+  );
+}
+
+/**
+ * Plan approval for a genuine `claude-code-cli` session, answered from the ExitPlanMode card.
+ * Reached from the loopback `/exit-plan-mode` endpoint (the CLI's PreToolUse hook on
+ * ExitPlanMode); blocks until the card answers via `claude-cli:exit-plan-mode-response`.
+ * `ask` tells the hook to print nothing so the CLI shows its own terminal dialog.
+ */
+export async function handleCliExitPlanMode(
+  body: { sessionId?: string; toolInput?: unknown; permissionMode?: string },
+  workspacePath: string | undefined,
+  signal?: AbortSignal,
+): Promise<ExitPlanHookAnswer> {
+  const sessionId = body.sessionId ?? "";
+  let sessionTitle = "AI Session";
+  try {
+    const session = sessionId ? await AISessionsRepository.get(sessionId) : null;
+    if (session?.title) sessionTitle = session.title;
+  } catch {
+    // default title
+  }
+  return handleExitPlanHookRequest(
+    { sessionId, toolInput: body.toolInput, permissionMode: body.permissionMode },
+    {
+      isCliSession: isClaudeCliSession,
+      markBlocked: ({ sessionId: sid }) => {
+        getSessionStateManager()
+          .updateActivity({ sessionId: sid, status: "waiting_for_input" })
+          .catch((err) => {
+            console.error("[MCP Server] Failed to set waiting_for_input for ExitPlanMode:", err);
+          });
+        notificationService.showBlockedNotification(sid, sessionTitle, "permission", workspacePath ?? "");
+        void setSessionPendingPrompt(sid, true);
+      },
+      markSettled: ({ sessionId: sid }) => {
+        void applyInteractivePromptSettleTurnState({
+          sessionId: sid,
+          isCliSession: true,
+          stateManager: getSessionStateManager(),
+        }).catch(() => {});
+        void setSessionPendingPrompt(sid, false);
+      },
+      log: (m) => console.log(`[MCP Server] ${m}`),
+    },
+    { signal },
   );
 }
 

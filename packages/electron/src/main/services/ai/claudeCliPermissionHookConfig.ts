@@ -76,3 +76,72 @@ export function buildPermissionHookSettingsJson(args: {
 export function buildElectronNodeHookCommand(execPath: string, scriptPath: string): string {
   return `ELECTRON_RUN_AS_NODE=1 "${execPath}" "${scriptPath}"`;
 }
+
+/** Tool whose approval Nimbalyst answers from its plan card (PreToolUse, not the permission gate). */
+export const EXIT_PLAN_HOOK_MATCHER = 'ExitPlanMode';
+
+/**
+ * Argv mode that makes `claudeCliPermissionHook.cjs` run its ExitPlanMode branch. One script
+ * serves both hooks so nothing new has to be packaged.
+ */
+export const EXIT_PLAN_HOOK_MODE = 'exit-plan-mode';
+
+/**
+ * The hook blocks until the user answers the plan card, which can be a long read. The script's
+ * own request timeout stays just under this so the CLI never has to kill it.
+ */
+export const EXIT_PLAN_HOOK_TIMEOUT_SEC = 3600;
+
+/**
+ * No ExitPlanMode hook in projects that skip permissions. Live spike on CLI 2.1.295: a
+ * `PreToolUse` allow skips the plan dialog but the CLI then continues in `default` ("manual
+ * mode"), not bypass, and a `PermissionRequest` hook's `setMode` is ignored for ExitPlanMode. Only
+ * the dialog's own option 1 switches to bypass, so those projects are answered by keystrokes into
+ * the dialog instead (claudeCliPlanDialog.ts); the card is driven by the ExitPlanMode tool_use the
+ * proxy already observes, no hook needed.
+ */
+
+export interface ClaudeCliHookSettings {
+  hooks: {
+    PreToolUse: Array<{
+      matcher: string;
+      hooks: Array<{ type: 'command'; command: string; timeout: number }>;
+    }>;
+  };
+}
+
+/**
+ * Build the `--settings` object for every hook a `claude-code-cli` session can carry: the
+ * Bash/Edit/Write permission gate (ask projects only) and the ExitPlanMode plan-card hook.
+ * The gate entry stays first so existing consumers reading `PreToolUse[0]` keep working.
+ */
+export function buildClaudeCliHookSettings(args: {
+  gateCommand?: string;
+  exitPlanCommand?: string;
+}): ClaudeCliHookSettings {
+  const PreToolUse: ClaudeCliHookSettings['hooks']['PreToolUse'] = [];
+  if (args.gateCommand) {
+    PreToolUse.push(
+      ...buildPermissionHookSettings({ command: args.gateCommand }).hooks.PreToolUse,
+    );
+  }
+  if (args.exitPlanCommand) {
+    PreToolUse.push({
+      matcher: EXIT_PLAN_HOOK_MATCHER,
+      hooks: [{ type: 'command', command: args.exitPlanCommand, timeout: EXIT_PLAN_HOOK_TIMEOUT_SEC }],
+    });
+  }
+  return { hooks: { PreToolUse } };
+}
+
+export function buildClaudeCliHookSettingsJson(args: {
+  gateCommand?: string;
+  exitPlanCommand?: string;
+}): string {
+  return JSON.stringify(buildClaudeCliHookSettings(args));
+}
+
+/** Command for the ExitPlanMode hook: the permission-hook script run in its `exit-plan-mode` mode. */
+export function buildExitPlanHookCommand(execPath: string, scriptPath: string): string {
+  return `${buildElectronNodeHookCommand(execPath, scriptPath)} ${EXIT_PLAN_HOOK_MODE}`;
+}

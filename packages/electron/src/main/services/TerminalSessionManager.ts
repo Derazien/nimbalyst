@@ -1199,6 +1199,11 @@ export class TerminalSessionManager {
     return terminal?.scrollbackBuffer || null;
   }
 
+  /** The terminal emulator's latest visible lines, as pushed by the renderer; null when none yet. */
+  getScreenLines(sessionId: string): string[] | null {
+    return this.terminals.get(sessionId)?.screenLines ?? null;
+  }
+
   updateTerminalRenderState(
     sessionId: string,
     updates: {

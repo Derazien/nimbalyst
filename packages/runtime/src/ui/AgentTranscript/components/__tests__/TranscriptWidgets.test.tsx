@@ -1543,6 +1543,76 @@ describe('ExitPlanModeWidget', () => {
     expect(screen.queryByTestId('exit-plan-mode-approve')).toBeNull();
   });
 
+  it('offers only proceed and keep-planning when the CLI hook answers the card', async () => {
+    const { interactiveWidgetHostAtom } = await import('../../../../store/atoms/interactiveWidgetHost');
+    const testStore = createStore();
+    const exitPlanModeApprove = vi.fn().mockResolvedValue(undefined);
+    testStore.set(interactiveWidgetHostAtom('cli-hook-plan'), {
+      sessionId: 'cli-hook-plan',
+      workspacePath: '/',
+      exitPlanModeApproveOrReviseOnly: true,
+      exitPlanModeApprove,
+      openFile: vi.fn(),
+    } as unknown as InteractiveWidgetHost);
+    render(
+      <JotaiProvider store={testStore}>
+        <ExitPlanModeWidget
+          message={makeToolMessage('ExitPlanMode', { planFilePath: 'plan.md' })}
+          isExpanded={false}
+          onToggle={() => {}}
+          sessionId="cli-hook-plan"
+        />
+      </JotaiProvider>
+    );
+    expect(screen.queryByTestId('exit-plan-mode-new-session')).toBeNull();
+    expect(screen.queryByTestId('exit-plan-mode-cancel')).toBeNull();
+    expect(screen.getByTestId('exit-plan-mode-deny')).toBeDefined();
+    fireEvent.click(screen.getByTestId('exit-plan-mode-approve'));
+    await rtl.waitFor(() => expect(exitPlanModeApprove).toHaveBeenCalledTimes(1));
+  });
+
+  it.each([
+    'PreToolUse:ExitPlanMode hook error: Plan denied by the user. Continue planning and revise the plan. User feedback: shorter',
+    "The user doesn't want to proceed with this tool use. The tool use was rejected. To tell you how to proceed, the user said: shorter",
+  ])('shows a CLI plan denial (an error-flagged result) as denied, not as a failure', (result) => {
+    render(
+      <Wrapper>
+        <ExitPlanModeWidget
+          message={makeToolMessage('ExitPlanMode', { planFilePath: 'plan.md' }, result)}
+          isExpanded={false}
+          onToggle={() => {}}
+          sessionId="cli-denied-plan"
+        />
+      </Wrapper>
+    );
+    expect(screen.getByTestId('exit-plan-mode-widget').dataset.state).toBe('denied');
+  });
+
+  it('shows why the CLI card refused an answer and stays pending', async () => {
+    const { interactiveWidgetHostAtom } = await import('../../../../store/atoms/interactiveWidgetHost');
+    const testStore = createStore();
+    testStore.set(interactiveWidgetHostAtom('cli-refused-plan'), {
+      sessionId: 'cli-refused-plan',
+      workspacePath: '/',
+      exitPlanModeApproveOrReviseOnly: true,
+      exitPlanModeApprove: vi.fn().mockRejectedValue(new Error('Answer in the terminal: the plan dialog is not showing.')),
+      openFile: vi.fn(),
+    } as unknown as InteractiveWidgetHost);
+    render(
+      <JotaiProvider store={testStore}>
+        <ExitPlanModeWidget
+          message={makeToolMessage('ExitPlanMode', { planFilePath: 'plan.md' })}
+          isExpanded={false}
+          onToggle={() => {}}
+          sessionId="cli-refused-plan"
+        />
+      </JotaiProvider>
+    );
+    fireEvent.click(screen.getByTestId('exit-plan-mode-approve'));
+    await rtl.waitFor(() => expect(screen.getByTestId('exit-plan-mode-error').textContent).toContain('Answer in the terminal'));
+    expect(screen.getByTestId('exit-plan-mode-widget').dataset.state).toBe('pending');
+  });
+
   it('renders approved state from tool result', () => {
     const message = makeToolMessage(
       'ExitPlanMode',

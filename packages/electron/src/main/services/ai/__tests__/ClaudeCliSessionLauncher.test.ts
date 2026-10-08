@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { ClaudeCliSessionLauncher, type ClaudeCliSessionLauncherDeps } from '../ClaudeCliSessionLauncher';
+import { getExitPlanAnswerPath } from '../claudeCliExitPlanMode';
 
 type CreateClaudeCliTerminal = ClaudeCliSessionLauncherDeps['terminalManager']['createClaudeCliTerminal'];
 type CreateClaudeCliTerminalArgs = Parameters<CreateClaudeCliTerminal>;
@@ -228,6 +229,35 @@ describe('ClaudeCliSessionLauncher', () => {
     // The endpoint URL + bearer are injected into the CLI env (lifted from the MCP config).
     expect(cfg.env.NIMBALYST_PERMISSION_URL).toBe('http://127.0.0.1:5123/permission');
     expect(cfg.env.NIMBALYST_PERMISSION_TOKEN).toBe('secret-token-xyz');
+  });
+
+  it('installs the ExitPlanMode hook next to the gate in ask projects and records the capability', async () => {
+    const { launcher, createClaudeCliTerminal } = makeHookHarness(() => 'ask');
+    await launcher.launch(baseInput);
+    const cfg = createClaudeCliTerminal.mock.calls[0][1].spawnConfig;
+    const settings = JSON.parse(cfg.args[cfg.args.indexOf('--settings') + 1]);
+    expect(settings.hooks.PreToolUse.map((h: { matcher: string }) => h.matcher)).toEqual([
+      expect.stringContaining('Bash'),
+      'ExitPlanMode',
+    ]);
+    expect(settings.hooks.PreToolUse[1].hooks[0].command).toMatch(/claudeCliPermissionHook.cjs" exit-plan-mode$/);
+    expect(getExitPlanAnswerPath(baseInput.sessionId)).toBe('hook');
+  });
+
+  it.each(['allow-all', 'bypass-all'] as const)(
+    '%s plan starts install no hook and answer through the CLI dialog (a hook allow would drop out of bypass)',
+    async (mode) => {
+      const { launcher, createClaudeCliTerminal } = makeHookHarness(() => mode, { getStartInPlanMode: () => true });
+      await launcher.launch(baseInput);
+      expect(createClaudeCliTerminal.mock.calls[0][1].spawnConfig.args).not.toContain('--settings');
+      expect(getExitPlanAnswerPath(baseInput.sessionId)).toBe('screen');
+    },
+  );
+
+  it('records no answer path when an ask project has no hook script', async () => {
+    const { launcher } = makeHarness();
+    await launcher.launch(baseInput);
+    expect(getExitPlanAnswerPath(baseInput.sessionId)).toBe('none');
   });
 
   it('omits the permission hook when no hook script path is provided (keeps native gate)', async () => {

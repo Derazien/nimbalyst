@@ -58,6 +58,8 @@ export const ExitPlanModeWidget: React.FC<CustomToolWidgetProps> = ({
   const [feedback, setFeedback] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [hasResponded, setHasResponded] = useState(false);
+  // Why the last answer was refused (e.g. the CLI's own dialog must be answered in the terminal).
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [localResult, setLocalResult] = useState<{
     approved: boolean;
     feedback?: string;
@@ -77,6 +79,16 @@ export const ExitPlanModeWidget: React.FC<CustomToolWidgetProps> = ({
     if (!isCompleted || !toolResult) return null;
 
     const resultLower = toolResult.toLowerCase();
+
+    // Explicit user denials arrive as error results: a plan-card denial through the CLI hook
+    // ("PreToolUse:ExitPlanMode hook error: Plan denied by the user ...") and the CLI's own dialog
+    // feedback ("The user doesn't want to proceed with this tool use ..."). They are answers, not failures.
+    if (
+      resultLower.includes('plan denied by the user') ||
+      resultLower.includes("user doesn't want to proceed")
+    ) {
+      return { type: 'denied' as const };
+    }
 
     // Check for error patterns first - don't show as completed, return null to keep interactive UI
     if (resultLower.includes('error') || resultLower.includes('missing') || resultLower.includes('invalid')) {
@@ -112,6 +124,7 @@ export const ExitPlanModeWidget: React.FC<CustomToolWidgetProps> = ({
     if (hasResponded || !isPending || !host) return;
 
     setIsSubmitting(true);
+    setSubmitError(null);
     setLocalResult({ approved: true });
     setHasResponded(true);
 
@@ -119,6 +132,7 @@ export const ExitPlanModeWidget: React.FC<CustomToolWidgetProps> = ({
       await host.exitPlanModeApprove(requestId);
     } catch (error) {
       console.error('[ExitPlanModeWidget] Failed to approve:', error);
+      setSubmitError(error instanceof Error ? error.message : null);
       setLocalResult(null);
       setHasResponded(false);
     } finally {
@@ -152,6 +166,7 @@ export const ExitPlanModeWidget: React.FC<CustomToolWidgetProps> = ({
     if (hasResponded || !isPending || !host) return;
 
     setIsSubmitting(true);
+    setSubmitError(null);
     setLocalResult({ approved: false, feedback: feedbackText });
     setHasResponded(true);
 
@@ -159,6 +174,7 @@ export const ExitPlanModeWidget: React.FC<CustomToolWidgetProps> = ({
       await host.exitPlanModeDeny(requestId, feedbackText);
     } catch (error) {
       console.error('[ExitPlanModeWidget] Failed to deny:', error);
+      setSubmitError(error instanceof Error ? error.message : null);
       setLocalResult(null);
       setHasResponded(false);
     } finally {
@@ -338,6 +354,7 @@ export const ExitPlanModeWidget: React.FC<CustomToolWidgetProps> = ({
   }
 
   // Show interactive UI for pending request
+  const approveOrReviseOnly = host.exitPlanModeApproveOrReviseOnly === true;
   return (
     <div
       data-testid="exit-plan-mode-widget"
@@ -372,8 +389,14 @@ export const ExitPlanModeWidget: React.FC<CustomToolWidgetProps> = ({
         <div className="mb-3 text-[13px] text-nim">
           Would you like to proceed?
         </div>
+        {submitError && (
+          <div data-testid="exit-plan-mode-error" className="mb-3 text-[13px] text-nim-warning">
+            {submitError}
+          </div>
+        )}
 
         <div className="flex flex-col gap-2">
+          {!approveOrReviseOnly && (
           <button
             data-testid="exit-plan-mode-new-session"
             className="w-full px-4 py-2 rounded-md text-[13px] font-medium cursor-pointer border border-nim transition-colors duration-150 hover:bg-nim-hover active:opacity-80 bg-nim-tertiary text-nim text-left disabled:opacity-50 disabled:cursor-not-allowed"
@@ -383,13 +406,14 @@ export const ExitPlanModeWidget: React.FC<CustomToolWidgetProps> = ({
             <span className="text-nim-muted mr-2">1.</span>
             Yes, start new session and implement (clean context window)
           </button>
+          )}
           <button
             data-testid="exit-plan-mode-approve"
             className="w-full px-4 py-2 rounded-md text-[13px] font-medium cursor-pointer border border-nim transition-colors duration-150 hover:bg-nim-hover active:opacity-80 bg-nim-tertiary text-nim text-left disabled:opacity-50 disabled:cursor-not-allowed"
             onClick={handleApprove}
             disabled={isSubmitting}
           >
-            <span className="text-nim-muted mr-2">2.</span>
+            <span className="text-nim-muted mr-2">{approveOrReviseOnly ? '1.' : '2.'}</span>
             Yes, proceed in this same session
           </button>
           {!showFeedbackInput ? (
@@ -399,7 +423,7 @@ export const ExitPlanModeWidget: React.FC<CustomToolWidgetProps> = ({
               onClick={handleShowFeedbackInput}
               disabled={isSubmitting}
             >
-              <span className="text-nim-muted mr-2">3.</span>
+              <span className="text-nim-muted mr-2">{approveOrReviseOnly ? '2.' : '3.'}</span>
               Type here to tell Claude what to change
             </button>
           ) : (
@@ -437,6 +461,7 @@ export const ExitPlanModeWidget: React.FC<CustomToolWidgetProps> = ({
               </div>
             </div>
           )}
+          {!approveOrReviseOnly && (
           <button
             data-testid="exit-plan-mode-cancel"
             className="w-full px-4 py-2 rounded-md text-[13px] font-medium cursor-pointer border border-nim transition-colors duration-150 hover:bg-nim-hover active:opacity-80 bg-nim-tertiary text-nim text-left disabled:opacity-50 disabled:cursor-not-allowed"
@@ -446,6 +471,7 @@ export const ExitPlanModeWidget: React.FC<CustomToolWidgetProps> = ({
             <span className="text-nim-muted mr-2">4.</span>
             Stop for now
           </button>
+          )}
         </div>
       </div>
     </div>

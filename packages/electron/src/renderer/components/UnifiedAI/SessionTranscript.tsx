@@ -59,6 +59,12 @@ import type { TextSelection } from './TextSelectionIndicator';
 import { type SerializableDocumentContext } from '../../hooks/useDocumentContext';
 import { serializeEditorContextItemsForIpc } from './editorContextSerialization';
 import { isClaudeCliTerminalSession, CLAUDE_CLI_PROVIDER_ID } from './claudeCliInputRouting';
+import {
+  CLAUDE_CLI_EXIT_PLAN_CAPABLE_CHANNEL,
+  resolveExitPlanCardMode,
+  routesExitPlanToCliHook,
+  sendCliExitPlanResponse,
+} from './claudeCliExitPlanRouting';
 import { expandSessionMentions } from './sessionMentions';
 import { diffTreeGroupByDirectoryAtom, setDiffTreeGroupByDirectoryAtom } from '../../store/atoms/projectState';
 import { openSettingsCommandAtom } from '../../store/atoms/settingsNavigation';
@@ -1775,8 +1781,34 @@ const LocalSessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscrip
     inputRef.current?.focus();
   }, [setDraftInput]);
 
+  // Whether the main process parked a PreToolUse hook for this CLI session, i.e. whether the
+  // ExitPlanMode card can answer the CLI. Asked again as the transcript grows until it says yes:
+  // by the time a plan card exists the CLI has long since launched, so the answer is settled.
+  const [cliExitPlanHook, setCliExitPlanHook] = useState<{ sessionId: string; interactive: boolean } | null>(null);
+  const cliExitPlanInteractive = cliExitPlanHook?.sessionId === sessionId ? cliExitPlanHook.interactive : null;
+  useEffect(() => {
+    if (provider !== CLAUDE_CLI_PROVIDER_ID || cliExitPlanInteractive === true) return;
+    let cancelled = false;
+    window.electronAPI
+      .invoke(CLAUDE_CLI_EXIT_PLAN_CAPABLE_CHANNEL, sessionId)
+      .then((result: { interactive?: boolean } | undefined) => {
+        if (!cancelled) setCliExitPlanHook({ sessionId, interactive: result?.interactive === true });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [provider, sessionId, messages.length, cliExitPlanInteractive]);
+  const exitPlanCardMode = resolveExitPlanCardMode(provider, cliExitPlanInteractive);
+
   // Confirmation handlers
   const handleExitPlanModeApprove = useCallback(async (requestId: string, confirmSessionId: string) => {
+    if (routesExitPlanToCliHook(provider, cliExitPlanInteractive)) {
+      // Throws when no hook is waiting, which reverts the card so the terminal dialog is used.
+      await sendCliExitPlanResponse(window.electronAPI.invoke, confirmSessionId, { approved: true });
+      posthog?.capture('exit_plan_mode_response', { decision: 'approved' });
+      return;
+    }
     try {
       // Use the unified respondToPromptAtom which persists to DB and notifies provider
       const success = await respondToPrompt({
@@ -1797,9 +1829,14 @@ const LocalSessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscrip
     } catch (error) {
       console.error('[SessionTranscript] Failed to send ExitPlanMode approval:', error);
     }
-  }, [respondToPrompt, setAiMode, posthog]);
+  }, [respondToPrompt, setAiMode, posthog, provider, cliExitPlanInteractive]);
 
   const handleExitPlanModeDeny = useCallback(async (requestId: string, confirmSessionId: string, feedback?: string) => {
+    if (routesExitPlanToCliHook(provider, cliExitPlanInteractive)) {
+      await sendCliExitPlanResponse(window.electronAPI.invoke, confirmSessionId, { approved: false, feedback });
+      posthog?.capture('exit_plan_mode_response', { decision: 'denied', has_feedback: !!feedback });
+      return;
+    }
     try {
       // Use the unified respondToPromptAtom which persists to DB and notifies provider
       await respondToPrompt({
@@ -1817,7 +1854,7 @@ const LocalSessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscrip
     } catch (error) {
       console.error('[SessionTranscript] Failed to send ExitPlanMode denial:', error);
     }
-  }, [respondToPrompt, posthog]);
+  }, [respondToPrompt, posthog, provider, cliExitPlanInteractive]);
 
   const openSessionWithDraft = useCallback((targetSessionId: string, draftInput: string) => {
     if (!workspacePath) {
@@ -1968,7 +2005,8 @@ const LocalSessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscrip
       },
 
       // ExitPlanMode operations
-      exitPlanModeInTerminal: isClaudeCliTerminalSession(provider),
+      exitPlanModeInTerminal: exitPlanCardMode.inTerminal,
+      exitPlanModeApproveOrReviseOnly: exitPlanCardMode.approveOrReviseOnly,
       exitPlanModeApprove: async (requestId: string) => {
         await handleExitPlanModeApprove(requestId, sessionId);
       },
@@ -2326,6 +2364,7 @@ const LocalSessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscrip
       get usageLimitAutoResumeEnabled() { return liveHostRef.current?.usageLimitAutoResumeEnabled ?? false; },
       get diffPeekSize() { return getDiffPeekSizeForInteractiveWidgetHost(liveHostRef.current); },
       get exitPlanModeInTerminal() { return liveHostRef.current?.exitPlanModeInTerminal ?? false; },
+      get exitPlanModeApproveOrReviseOnly() { return liveHostRef.current?.exitPlanModeApproveOrReviseOnly ?? false; },
       askUserQuestionSubmit: (...args) => liveHostRef.current!.askUserQuestionSubmit(...args),
       askUserQuestionCancel: (...args) => liveHostRef.current!.askUserQuestionCancel(...args),
       requestUserInputSubmit: (...args) => liveHostRef.current!.requestUserInputSubmit(...args),

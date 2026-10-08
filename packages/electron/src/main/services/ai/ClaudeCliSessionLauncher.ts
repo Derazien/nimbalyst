@@ -28,9 +28,11 @@ import os from 'os';
 import path from 'path';
 import { buildClaudeCliSpawnConfig } from './claudeCliSpawnConfig';
 import {
-  buildPermissionHookSettingsJson,
+  buildClaudeCliHookSettingsJson,
   buildElectronNodeHookCommand,
+  buildExitPlanHookCommand,
 } from './claudeCliPermissionHookConfig';
+import { setExitPlanAnswerPath } from './claudeCliExitPlanMode';
 import { resolveClaudeCliJsonlPath, shouldResumeClaudeCliSession } from './claudeCliJsonlPath';
 import { resolveClaudeConfigDir } from '@nimbalyst/runtime/ai/server/providers/claudeCode/claudeConfigDir';
 import { hasEnterpriseManagedMcpConfig } from '@nimbalyst/runtime/ai/server/providers/claudeCode/enterpriseMcpConfig';
@@ -268,26 +270,32 @@ export class ClaudeCliSessionLauncher {
     // the hook script path is provided AND the core server is configured — and
     // never when we're skipping the gate (the two are mutually exclusive).
     let settingsJson: string | undefined;
+    let exitPlanHookInstalled = false;
     const permissionHookEnv: Record<string, string> = {};
     const nimbalystMcp = mcpServers['nimbalyst'] as
       | { url?: string; headers?: Record<string, string> }
       | undefined;
+    // Ask projects: the ExitPlanMode hook (plan card instead of the terminal dialog) rides the same
+    // script and endpoint as the gate. Skip projects have no hook at all; their card types into the
+    // CLI's own dialog (see the answer path recorded after spawn).
     if (!dangerouslySkipPermissions && this.deps.permissionHookScriptPath && nimbalystMcp?.url) {
       try {
         const mcpUrl = new URL(nimbalystMcp.url);
         const permissionUrl = `${mcpUrl.protocol}//${mcpUrl.host}/permission`;
         const token = (nimbalystMcp.headers?.Authorization ?? '').replace(/^Bearer\s+/i, '');
-        const command = buildElectronNodeHookCommand(
-          this.deps.electronExecPath ?? process.execPath,
-          this.deps.permissionHookScriptPath,
-        );
-        settingsJson = buildPermissionHookSettingsJson({ command });
+        const execPath = this.deps.electronExecPath ?? process.execPath;
+        settingsJson = buildClaudeCliHookSettingsJson({
+          gateCommand: buildElectronNodeHookCommand(execPath, this.deps.permissionHookScriptPath),
+          exitPlanCommand: buildExitPlanHookCommand(execPath, this.deps.permissionHookScriptPath),
+        });
+        exitPlanHookInstalled = true;
         permissionHookEnv.NIMBALYST_PERMISSION_URL = permissionUrl;
         if (token) permissionHookEnv.NIMBALYST_PERMISSION_TOKEN = token;
       } catch (err) {
         // Never block the CLI launch over the permission hook; fall back to native.
         console.warn('[ClaudeCliSessionLauncher] failed to build permission hook settings:', err);
         settingsJson = undefined;
+        exitPlanHookInstalled = false;
       }
     }
 
@@ -390,6 +398,12 @@ export class ClaudeCliSessionLauncher {
       });
       // The flags fix the starting mode of a new process and whether bypass is
       // reachable; the first screen reading then takes over.
+      // Skip projects answer through the CLI's own dialog, but only when the dialog can offer
+      // bypass (it does for every skip launch, which passes an --*skip-permissions flag).
+      setExitPlanAnswerPath(
+        sessionId,
+        exitPlanHookInstalled ? 'hook' : dangerouslySkipPermissions ? 'screen' : 'none',
+      );
       modeTracker?.seed(sessionId, workspacePath, {
         mode: startingModeFromArgs(spawnConfig.args),
         bypassAvailable: bypassAvailableFromArgs(spawnConfig.args),

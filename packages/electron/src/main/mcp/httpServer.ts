@@ -99,6 +99,7 @@ import {
 import {
   handleAskUserQuestion,
   handleToolPermission,
+  handleCliExitPlanMode,
   handleGitCommitProposal,
   handleRequestUserInput,
   getInteractiveToolSchemas,
@@ -911,6 +912,43 @@ async function tryCreateServer(port: number): Promise<any> {
           } finally {
             req.off("aborted", abortPermission);
             res.off("close", abortPermission);
+          }
+          return;
+        }
+
+        // The genuine CLI's PreToolUse hook on ExitPlanMode POSTs here. Parks the request
+        // until the plan card answers (claude-cli:exit-plan-mode-response) and returns
+        // {decision: approve|deny|ask, feedback?}; the hook prints nothing on `ask` or any
+        // error so the CLI falls back to its own terminal dialog. Bearer-gated like /permission.
+        if (pathname === "/exit-plan-mode" && req.method === "POST") {
+          if (!requireMcpAuth(req)) {
+            res.writeHead(401);
+            res.end("Unauthorized");
+            return;
+          }
+          const body = (await readJsonBody(req)) as
+            | { sessionId?: string; toolInput?: unknown; permissionMode?: string; cwd?: string }
+            | undefined;
+          // The hook dying (CLI Ctrl-C, restart) closes this socket before we reply.
+          const exitPlanAbort = new AbortController();
+          const abortExitPlan = () => exitPlanAbort.abort();
+          req.once("aborted", abortExitPlan);
+          res.once("close", abortExitPlan);
+          try {
+            const answer = await handleCliExitPlanMode(
+              { sessionId: body?.sessionId, toolInput: body?.toolInput, permissionMode: body?.permissionMode },
+              body?.cwd,
+              exitPlanAbort.signal,
+            );
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify(answer));
+          } catch (err) {
+            console.error("[MCP Server] /exit-plan-mode handler error:", err);
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ decision: "ask" }));
+          } finally {
+            req.off("aborted", abortExitPlan);
+            res.off("close", abortExitPlan);
           }
           return;
         }

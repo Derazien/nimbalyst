@@ -243,6 +243,13 @@ export interface InteractiveWidgetHost {
   readonly exitPlanModeInTerminal?: boolean;
 
   /**
+   * True when the card answers the agent, but only "proceed" and "keep planning" are meaningful
+   * (the CLI hook cannot start a new session or stop the run). The widget then hides those two
+   * options.
+   */
+  readonly exitPlanModeApproveOrReviseOnly?: boolean;
+
+  /**
    * Approve exiting plan mode and switch to agent mode
    */
   exitPlanModeApprove(requestId: string): Promise<void>;

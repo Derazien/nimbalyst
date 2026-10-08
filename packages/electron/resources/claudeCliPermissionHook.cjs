@@ -66,11 +66,11 @@ function readStdin() {
   });
 }
 
-function postPermission(payload) {
+function postPermission(payload, endpoint = ENDPOINT, timeoutMs = REQUEST_TIMEOUT_MS) {
   return new Promise((resolve, reject) => {
     let url;
     try {
-      url = new URL(ENDPOINT);
+      url = new URL(endpoint);
     } catch (e) {
       reject(new Error('bad endpoint url'));
       return;
@@ -109,7 +109,7 @@ function postPermission(payload) {
         });
       },
     );
-    req.setTimeout(REQUEST_TIMEOUT_MS, () => {
+    req.setTimeout(timeoutMs, () => {
       req.destroy(new Error('request timeout'));
     });
     req.on('error', (e) => reject(e));
@@ -118,7 +118,7 @@ function postPermission(payload) {
   });
 }
 
-(async () => {
+async function runPermissionGate() {
   if (!ENDPOINT) {
     emit('ask', 'Nimbalyst permission endpoint not configured');
     return;
@@ -153,4 +153,106 @@ function postPermission(payload) {
     // Endpoint unreachable / errored → defer to the CLI's native prompt.
     emit('ask', `Nimbalyst permission unavailable: ${e instanceof Error ? e.message : 'error'}`);
   }
-})();
+}
+
+// ---------------------------------------------------------------------------
+// ExitPlanMode mode ("node claudeCliPermissionHook.cjs exit-plan-mode")
+//
+// A PreToolUse hook on ExitPlanMode that lets Nimbalyst's plan card answer the CLI's
+// "Ready to code?" dialog. Verified live on CLI 2.1.295: a PreToolUse allow skips the
+// dialog (the CLI continues in default mode); a PermissionRequest hook is NOT honored for
+// ExitPlanMode. FAIL-OPEN: on any error or timeout this prints NOTHING and exits 0, so the
+// CLI shows its own terminal dialog exactly as if no hook were installed.
+// ---------------------------------------------------------------------------
+
+const EXIT_PLAN_TIMEOUT_MS = Number(process.env.NIMBALYST_EXIT_PLAN_TIMEOUT_MS || 3590000);
+
+/** /permission -> /exit-plan-mode on the same loopback host, unless given explicitly. */
+function resolveExitPlanEndpoint(env) {
+  if (env.NIMBALYST_EXIT_PLAN_URL) return env.NIMBALYST_EXIT_PLAN_URL;
+  const base = env.NIMBALYST_PERMISSION_URL || '';
+  return base ? base.replace(/\/permission(\?.*)?$/, '/exit-plan-mode') : '';
+}
+
+/** Hook stdin (snake_case) -> the body POSTed to Nimbalyst, or null when unusable. */
+function buildExitPlanPayload(input) {
+  const sessionId = (input && (input.session_id || input.sessionId)) || '';
+  if (!sessionId) return null;
+  return {
+    sessionId,
+    toolInput: (input && (input.tool_input || input.toolInput)) || {},
+    toolUseId: (input && (input.tool_use_id || input.toolUseId)) || '',
+    permissionMode: (input && (input.permission_mode || input.permissionMode)) || '',
+  };
+}
+
+/** Message the agent sees when the user sends the plan back. */
+function buildExitPlanDenyReason(feedback) {
+  const text = typeof feedback === 'string' ? feedback.trim() : '';
+  return (
+    'Plan denied by the user. Continue planning and revise the plan.' +
+    (text ? ' User feedback: ' + text : '')
+  );
+}
+
+/**
+ * Nimbalyst's answer -> the PreToolUse hook output, or null for "print nothing" (anything
+ * but an explicit approve/deny falls back to the CLI's own dialog).
+ */
+function mapExitPlanAnswer(answer, toolInput) {
+  const decision = answer && answer.decision;
+  if (decision === 'approve') {
+    return {
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'allow',
+        updatedInput: toolInput || {},
+      },
+    };
+  }
+  if (decision === 'deny') {
+    return {
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'deny',
+        permissionDecisionReason: buildExitPlanDenyReason(answer.feedback),
+      },
+    };
+  }
+  return null;
+}
+
+async function exitPlanOutput() {
+  const endpoint = resolveExitPlanEndpoint(process.env);
+  if (!endpoint) return null;
+  const raw = await readStdin();
+  const payload = buildExitPlanPayload(raw ? JSON.parse(raw) : {});
+  if (!payload) return null;
+  const answer = await postPermission(payload, endpoint, EXIT_PLAN_TIMEOUT_MS);
+  return mapExitPlanAnswer(answer, payload.toolInput);
+}
+
+async function runExitPlanMode() {
+  try {
+    const out = await exitPlanOutput();
+    if (out) process.stdout.write(JSON.stringify(out));
+  } catch {
+    // Print nothing: the CLI falls back to its own plan dialog.
+  }
+  process.exit(0);
+}
+
+module.exports = {
+  buildExitPlanPayload,
+  buildExitPlanDenyReason,
+  mapExitPlanAnswer,
+  resolveExitPlanEndpoint,
+};
+
+if (require.main === module) {
+  if (process.argv[2] === 'exit-plan-mode') {
+    void runExitPlanMode();
+  } else {
+    void runPermissionGate();
+  }
+}
