@@ -279,6 +279,15 @@ export const SETTINGS_REGISTRY = {
     { store: 'app-settings', path: 'externalSessionFollowEnabled' },
     false,
   ),
+  /**
+   * Start NEW Claude Code CLI sessions in the CLI's plan mode. Absent on disk
+   * (settings saved before this key existed) reads as true.
+   */
+  'app.claudeCliStartInPlanMode': setting(
+    z.boolean(),
+    { store: 'app-settings', path: 'claudeCliStartInPlanMode' },
+    true,
+  ),
   /** Width (px) of the gutter's agent sessions attention popover. */
   'agent.sessionsPopoverWidth': setting(
     z.number(),

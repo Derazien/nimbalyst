@@ -267,3 +267,32 @@ describe('Cmd+Shift+K', () => {
     }
   });
 });
+
+describe('focused terminal', () => {
+  // The claude CLI runs in a ghostty terminal; a capture-phase window listener
+  // would otherwise swallow Ctrl+K / Ctrl+T before the CLI sees them, while the
+  // keep-list (Ctrl+`) must still toggle the terminal panel.
+  it('owns Cmd+K but still lets Ctrl+` through to the app', () => {
+    const { getByTestId } = render(
+      <>
+        <Harness activeMode="files" />
+        <div data-nim-terminal><textarea data-testid="term-input" /></div>
+      </>,
+    );
+    const isMac = navigator.platform.startsWith('Mac');
+    const press = (key: string, init: KeyboardEventInit = {}): KeyboardEvent => {
+      const event = new KeyboardEvent('keydown', {
+        key, metaKey: isMac, ctrlKey: !isMac, bubbles: true, cancelable: true, ...init,
+      });
+      getByTestId('term-input').dispatchEvent(event);
+      return event;
+    };
+
+    const owned = press('k');
+    expect(setActiveMode).not.toHaveBeenCalled();
+    expect(owned.defaultPrevented).toBe(false);
+
+    const kept = press('`', { code: 'Backquote', metaKey: false, ctrlKey: true });
+    expect(kept.defaultPrevented).toBe(true);
+  });
+});

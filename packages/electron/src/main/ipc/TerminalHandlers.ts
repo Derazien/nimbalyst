@@ -13,6 +13,9 @@ import { isKimiCliTerminal } from '../services/ai/kimiCliRuntimes';
 import { submitClaudeCliPromptProduction } from '../services/ai/claudeCliSubmitSingleton';
 import { switchClaudeCliModel } from '../services/ai/claudeCliModelSwitch';
 import { switchClaudeCliEffort } from '../services/ai/claudeCliEffortSwitch';
+import { cycleClaudeCliMode } from '../services/ai/claudeCliModeCycle';
+import { getClaudeCliModeTracker } from '../services/ai/claudeCliModeSingleton';
+import { parseClaudeCliPermissionMode } from '../../shared/claudeCliPermissionMode';
 import type { ClaudeCliDocumentContext } from '../services/ai/claudeCliPromptComposer';
 import type { ChatAttachment } from '@nimbalyst/runtime/ai/server/types';
 import { ShellDetector } from '../services/ShellDetector';
@@ -465,6 +468,40 @@ export function registerTerminalHandlers(): void {
     }
     return manager.interruptClaudeCliTurn(sessionId);
   });
+
+  /**
+   * Press Shift+Tab in a claude-code-cli session. No `target`: one press. With a
+   * `target`: press (up to 6 times) until the footer detector reports that mode.
+   * The result carries the mode the CLI reported, never a guess; the persisted
+   * `cliPermissionMode` is updated by the same detector, not here.
+   */
+  safeHandle(
+    'claude-cli:cycle-mode',
+    async (_event, payload: { sessionId: string; workspacePath: string; target?: string }) => {
+      if (!payload?.sessionId || typeof payload.sessionId !== 'string') {
+        throw new Error('sessionId is required and must be a string');
+      }
+      if (!payload?.workspacePath || typeof payload.workspacePath !== 'string') {
+        throw new Error('workspacePath is required and must be a string');
+      }
+      const target = payload.target === undefined ? undefined : parseClaudeCliPermissionMode(payload.target);
+      if (payload.target !== undefined && !target) {
+        throw new Error(`Unknown permission mode "${payload.target}"`);
+      }
+      if (isKimiCliTerminal(payload.sessionId) || !manager.isTerminalActive(payload.sessionId)) {
+        return { ok: false, mode: getClaudeCliModeTracker().getMode(payload.sessionId) };
+      }
+      const tracker = getClaudeCliModeTracker();
+      return cycleClaudeCliMode(
+        {
+          write: (data) => manager.writeToTerminal(payload.sessionId, data),
+          readMode: () => tracker.getMode(payload.sessionId),
+          delay: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+        },
+        { target: target ?? undefined },
+      );
+    }
+  );
 
   /**
    * Locate a sub-agent's own transcript so the app can open it from the agent's

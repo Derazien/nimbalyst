@@ -1,7 +1,8 @@
 import { ClaudeRuntimeStatus } from './ClaudeRuntimeStatus';
 import React, { useState, useEffect, useCallback } from 'react';
-import { useAtomValue, useSetAtom } from 'jotai';
+import { useAtom, useAtomValue, useSetAtom } from 'jotai';
 import { activeWorkspacePathAtom } from '../../../store/atoms/openProjects';
+import { settingAtom } from '../../../store/atoms/settingAtomFamily';
 import { ProviderConfig, Model } from '../../Settings/SettingsView';
 import { hiddenGutterItemsAtom, toggleGutterItemHiddenAtom } from '../../../store/atoms/appSettings';
 import { SettingsToggle, ToggleSwitch } from '../SettingsToggle';
@@ -169,6 +170,12 @@ export function ClaudeCodePanel({
   const [customClaudeCodePath, setCustomClaudeCodePathState] = useState('');
   const [globalCustomClaudeCodePath, setGlobalCustomClaudeCodePath] = useState('');
   const [hasProjectPathOverride, setHasProjectPathOverride] = useState(false);
+
+  // Start new Claude Code CLI sessions in plan mode (default true; settings saved
+  // before the key existed read as true via the registry default).
+  const [cliStartInPlanMode, setCliStartInPlanMode] = useAtom(
+    settingAtom('app.claudeCliStartInPlanMode'),
+  ) as [boolean, (value: boolean) => void];
 
   // Agent teams toggle (experimental) - stored as env var in ~/.claude/settings.json
   const [agentTeamsEnabled, setAgentTeamsEnabled] = useState(false);
@@ -781,6 +788,15 @@ export function ClaudeCodePanel({
           name="Enable Claude Code CLI"
           checked={cli.config.enabled ?? false}
           onChange={(checked) => cli.onToggle(checked)}
+        />
+
+        <SettingsToggle
+          variant="enable"
+          name="Start Claude Code CLI sessions in plan mode"
+          description="New sessions open in plan mode. Approving the plan offers to switch to bypass permissions."
+          checked={cliStartInPlanMode}
+          onChange={setCliStartInPlanMode}
+          testId="claude-cli-start-in-plan-mode-toggle"
         />
 
         {(cli.config.enabled ?? false) && (

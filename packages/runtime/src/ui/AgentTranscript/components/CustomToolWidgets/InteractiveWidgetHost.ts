@@ -236,6 +236,13 @@ export interface InteractiveWidgetHost {
   // ============================================================
 
   /**
+   * True when the agent shows its own plan-approval dialog (the genuine CLI in a
+   * terminal). The widget then shows the plan read-only and points at the
+   * terminal, because the approve/deny calls below have nothing to resolve.
+   */
+  readonly exitPlanModeInTerminal?: boolean;
+
+  /**
    * Approve exiting plan mode and switch to agent mode
    */
   exitPlanModeApprove(requestId: string): Promise<void>;

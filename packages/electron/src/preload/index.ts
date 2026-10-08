@@ -2260,6 +2260,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // SIGINT, re-checking the PID turn state between steps.
     interruptClaudeCli: (sessionId: string) =>
       ipcRenderer.invoke('claude-cli:interrupt', sessionId),
+    // Press Shift+Tab in a claude-code-cli session: once with no target, or until
+    // the CLI reports `target` (plan / bypassPermissions / acceptEdits / auto / default).
+    cycleClaudeCliMode: (payload: { sessionId: string; workspacePath: string; target?: string }) =>
+      ipcRenderer.invoke('claude-cli:cycle-mode', payload),
     // Locate a sub-agent's own transcript from the tool_use id that spawned it,
     // so its node can offer to open it. Null when there is none on disk.
     resolveClaudeCliSubagentTranscript: (payload: {

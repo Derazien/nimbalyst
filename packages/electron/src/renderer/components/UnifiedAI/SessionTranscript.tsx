@@ -58,7 +58,7 @@ import { useProviderAttachmentSupport } from './useProviderAttachmentSupport';
 import type { TextSelection } from './TextSelectionIndicator';
 import { type SerializableDocumentContext } from '../../hooks/useDocumentContext';
 import { serializeEditorContextItemsForIpc } from './editorContextSerialization';
-import { isClaudeCliTerminalSession } from './claudeCliInputRouting';
+import { isClaudeCliTerminalSession, CLAUDE_CLI_PROVIDER_ID } from './claudeCliInputRouting';
 import { expandSessionMentions } from './sessionMentions';
 import { diffTreeGroupByDirectoryAtom, setDiffTreeGroupByDirectoryAtom } from '../../store/atoms/projectState';
 import { openSettingsCommandAtom } from '../../store/atoms/settingsNavigation';
@@ -110,8 +110,9 @@ import {
 } from '../../store';
 import { streamCompletionSignalAtom } from '../../store/atoms/sessionTranscript';
 import { sessionBackgroundTasksAtom } from '../../store/atoms/sessionBackgroundTasks';
-import { sessionPromptAdditionsAtom, sessionLastSubmitAtAtom, sessionDraftLocalModifiedAtAtom, nextOptimisticId } from '../../store/atoms/sessions';
+import { sessionPromptAdditionsAtom, sessionLastSubmitAtAtom, sessionDraftLocalModifiedAtAtom, nextOptimisticId, sessionCliPermissionModeAtom, sessionCliBypassAvailableAtom } from '../../store/atoms/sessions';
 import { sessionViewRetention } from '../../store/sessionViewRetention';
+import { CLAUDE_CLI_PERMISSION_MODE_LABELS, claudeCliTargetForChipMode } from '../../../shared/claudeCliPermissionMode';
 import { clearAIInputHistoryAtom } from '../../store/atoms/aiInputUndo';
 import {
   cliTerminalExpandedAtom,
@@ -416,6 +417,8 @@ const LocalSessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscrip
   const isDataLoading = useAtomValue(sessionLoadingAtom(sessionId));
   const chatShowToolCalls = useAtomValue(chatShowToolCallsAtom);
   const [aiMode, setAiMode] = useAtom(sessionModeAtom(sessionId));
+  const cliPermissionMode = useAtomValue(sessionCliPermissionModeAtom(sessionId));
+  const cliBypassAvailable = useAtomValue(sessionCliBypassAvailableAtom(sessionId));
   const [currentModel, setCurrentModel] = useAtom(sessionModelAtom(sessionId));
   const [isArchived, setIsArchived] = useAtom(sessionArchivedAtom(sessionId));
   const [isProcessing, setIsProcessing] = useAtom(sessionProcessingAtom(sessionId));
@@ -1666,14 +1669,41 @@ const LocalSessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscrip
     setIsArchived(false);
   }, [sessionId, setIsArchived]);
 
+  // Claude only: Kimi's CLI has no Shift+Tab permission-mode cycle.
+  const isCliModeSession = provider === CLAUDE_CLI_PROVIDER_ID;
+
   const handleAIModeChange = useCallback(async (newMode: AIMode) => {
+    if (isCliModeSession) {
+      // claude-code-cli: the CLI owns its permission mode. Press its Shift+Tab
+      // until it reports the target; the chip follows the mode main detects from
+      // the terminal footer (metadata), never an optimistic local write.
+      try {
+        await window.electronAPI.terminal.cycleClaudeCliMode({
+          sessionId,
+          workspacePath,
+          target: claudeCliTargetForChipMode(newMode, cliBypassAvailable),
+        });
+      } catch (error) {
+        console.error('[SessionTranscript] Failed to change Claude CLI mode:', error);
+      }
+      return;
+    }
     setAiMode(newMode);
     try {
       await window.electronAPI.invoke('sessions:update-metadata', sessionId, { mode: newMode });
     } catch (error) {
       console.error('[SessionTranscript] Failed to update mode:', error);
     }
-  }, [sessionId, setAiMode]);
+  }, [sessionId, workspacePath, setAiMode, isCliModeSession, cliBypassAvailable]);
+
+  // claude-code-cli: Shift+Tab in the input box is one press of the CLI's mode key.
+  const handleCycleCliMode = useCallback(() => {
+    window.electronAPI.terminal
+      .cycleClaudeCliMode({ sessionId, workspacePath })
+      .catch((error: unknown) => {
+        console.error('[SessionTranscript] Failed to cycle Claude CLI mode:', error);
+      });
+  }, [sessionId, workspacePath]);
 
   const handleModelChange = useCallback(async (modelId: string) => {
     const previousModel = currentModel;
@@ -1938,6 +1968,7 @@ const LocalSessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscrip
       },
 
       // ExitPlanMode operations
+      exitPlanModeInTerminal: isClaudeCliTerminalSession(provider),
       exitPlanModeApprove: async (requestId: string) => {
         await handleExitPlanModeApprove(requestId, sessionId);
       },
@@ -2294,6 +2325,7 @@ const LocalSessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscrip
       get autoCommitEnabled() { return liveHostRef.current?.autoCommitEnabled ?? false; },
       get usageLimitAutoResumeEnabled() { return liveHostRef.current?.usageLimitAutoResumeEnabled ?? false; },
       get diffPeekSize() { return getDiffPeekSizeForInteractiveWidgetHost(liveHostRef.current); },
+      get exitPlanModeInTerminal() { return liveHostRef.current?.exitPlanModeInTerminal ?? false; },
       askUserQuestionSubmit: (...args) => liveHostRef.current!.askUserQuestionSubmit(...args),
       askUserQuestionCancel: (...args) => liveHostRef.current!.askUserQuestionCancel(...args),
       requestUserInputSubmit: (...args) => liveHostRef.current!.requestUserInputSubmit(...args),
@@ -2888,6 +2920,8 @@ const LocalSessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscrip
         }
         mode={aiMode as AIMode}
         onModeChange={handleAIModeChange}
+        modeLabel={isCliModeSession && cliPermissionMode ? CLAUDE_CLI_PERMISSION_MODE_LABELS[cliPermissionMode] : undefined}
+        onCycleMode={isCliModeSession ? handleCycleCliMode : undefined}
         currentModel={currentModel}
         // claude-code-cli (NIM-806): the genuine CLI supports `/model <alias>`
         // as a direct setter, so the picker now RETUNES a committed CLI session
@@ -2897,8 +2931,8 @@ const LocalSessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscrip
         // queued-input behavior, which is unverified under programmatic writes.
         // Provider switching for a committed session stays blocked via
         // sessionHasMessages. The effort selector is still hidden outright (the
-        // CLI has no effort flag). ModeTag is already gated to `claude-code` in
-        // AIInput.
+        // CLI has no effort flag). The mode chip shows for claude-code-cli once
+        // the CLI has reported its permission mode (modeLabel below).
         onModelChange={handleModelChange}
         readOnlyModel={isClaudeCliTerminalSession(provider) && cliSessionCommitted && isLoading}
         readOnlyModelTitle="Wait for the current turn to finish before switching models"

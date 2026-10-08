@@ -16,6 +16,7 @@ interface AIInputControlsProps
   extends Pick<
     AIInputProps,
     | 'onModeChange'
+    | 'modeLabel'
     | 'provider'
     | 'mode'
     | 'onModelChange'
@@ -46,6 +47,7 @@ interface AIInputControlsProps
 
 export function AIInputControls({
   onModeChange,
+  modeLabel,
   provider,
   mode,
   onModelChange,
@@ -130,8 +132,8 @@ export function AIInputControls({
         gap: '8px',
       }}
     >
-      {onModeChange && provider === 'claude-code' && mode && (
-        <ModeTag mode={mode} onModeChange={onModeChange} />
+      {onModeChange && mode && (provider === 'claude-code' || (provider === 'claude-code-cli' && modeLabel)) && (
+        <ModeTag mode={mode} onModeChange={onModeChange} label={provider === 'claude-code-cli' ? modeLabel : undefined} />
       )}
 
       {(onModelChange || (readOnlyModel && currentModel)) && (

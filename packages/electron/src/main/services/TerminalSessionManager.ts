@@ -138,6 +138,12 @@ export interface TerminalProcess {
    * Claude PID file (Kimi Code CLI reads its event log). Unset for claude.
    */
   readCliTurnState?: () => ClaudeTurnState | null;
+  /**
+   * Called with the visible screen lines each time the renderer's terminal
+   * emulator pushes its render state (the only screen model; main sees raw PTY
+   * bytes). The Claude CLI mode tracker reads the permission-mode footer here.
+   */
+  onScreenLines?: (lines: string[]) => void;
 }
 
 export interface TerminalRestoreSnapshot {
@@ -996,6 +1002,8 @@ export class TerminalSessionManager {
       readTurnState?: () => ClaudeTurnState | null;
       /** Every chunk of raw PTY output (Kimi reads its prompt box from it). */
       onOutput?: (data: string) => void;
+      /** Visible screen lines as the renderer's terminal pushes them (see TerminalProcess). */
+      onScreenLines?: (lines: string[]) => void;
     }
   ): Promise<void> {
     if (this.terminals.has(terminalId)) {
@@ -1065,6 +1073,7 @@ export class TerminalSessionManager {
       workspacePath: options.workspacePath,
       outputSequence: 0,
       readCliTurnState: options.readTurnState,
+      onScreenLines: options.onScreenLines,
     };
 
     // Drive turn-level state off the CLI's PID file. node-pty's `pid` is the
@@ -1218,6 +1227,11 @@ export class TerminalSessionManager {
       }
       if (updates.screenLines !== undefined) {
         terminal.screenLines = updates.screenLines;
+        try {
+          terminal.onScreenLines?.(updates.screenLines);
+        } catch (err) {
+          console.warn(`[TerminalSessionManager] onScreenLines failed for ${sessionId}:`, err);
+        }
       }
       this.scheduleScrollbackPersist(sessionId);
       return;

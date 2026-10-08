@@ -81,6 +81,7 @@ import { SoundNotificationService } from '../SoundNotificationService';
 import { isDesktopTrulyAway } from '../SyncManager';
 import { requestMobilePush } from './mobilePushRequest';
 import { AISessionsRepository } from '@nimbalyst/runtime';
+import { ClaudeCliTodoCapture } from './claudeCliTodoCapture';
 import { getClaudeCodeApiUpstreamUrl } from '../../utils/store';
 import { ClaudeSettingsManager } from '../ClaudeSettingsManager';
 import { resolveClaudeCliProxyUpstream } from './claudeCliObservation/proxyUpstream';
@@ -263,6 +264,16 @@ export async function startClaudeCliProxyObservation(opts: {
     console.warn(`[ClaudeCliObservation] not following non-loopback ANTHROPIC_BASE_URL from Claude settings: ${ignoredClaudeSettingsBaseUrl}`);
   }
 
+  // Mirrors TodoWrite / TaskCreate / TaskUpdate into session metadata so the
+  // TodoPanel and TaskListPanel work for CLI sessions (the SDK lane does this in
+  // ClaudeCodeProvider). The refresh is the same `ai:message-logged` broadcast the
+  // transcript rows use; its renderer handler reloads the session, metadata included.
+  const todoCapture = new ClaudeCliTodoCapture({
+    loadMetadata: async (id) => (await AISessionsRepository.get(id))?.metadata as Record<string, unknown> | undefined,
+    saveMetadata: (id, metadata) => AISessionsRepository.updateMetadata(id, { metadata }),
+    notify: (id) => notifyMessageLogged(id, workspacePath),
+  });
+
   // Turns claimed as a `/btw` answer, so onPersisted can tell them from a real
   // lead turn (they produced no row and are not the session's answer).
   const claimedSideAnswerIds = new Set<string>();
@@ -318,6 +329,8 @@ export async function startClaudeCliProxyObservation(opts: {
       await persistAssistantTurn(sessionId, workspacePath, turn.message, parentToolUseId);
     },
     onPersisted: (turn, parentToolUseId) => {
+      // Attribution is known here: only a lead turn's todo tools drive the panels.
+      void todoCapture.noteTurnAttributed(sessionId, turn.message.content, !parentToolUseId);
       // Only a lead turn counts as visible output for the failure-surfacing
       // policy, and only a lead turn belongs in the "Response Ready" body, so a
       // sub-agent's text and tools do not surface as the session's answer.
@@ -346,6 +359,7 @@ export async function startClaudeCliProxyObservation(opts: {
       // Record this turn's `Agent`/`Task` calls before anything else: a later
       // turn's attribution can depend on a spawn observed in this one.
       noteAssistantSubagentSpawns(sessionId, msg);
+      todoCapture.noteAssistantToolUses(sessionId, msg.content);
       // A produced turn means the session is unblocked, so let the next failure
       // episode surface. Whether it counts as VISIBLE output waits for
       // attribution and is decided in the queue's onPersisted.
@@ -370,6 +384,7 @@ export async function startClaudeCliProxyObservation(opts: {
         // in-process teammate to the call that spawned it, so capture it before
         // logging.
         noteSubagentSpawnResults(sessionId, results);
+        void todoCapture.noteToolResults(sessionId, results);
         // Every result is logged now, including a sub-agent's own intermediate
         // ones. They used to be dropped because they would orphan against hidden
         // rows; the rows are no longer hidden, so each result completes the tool
@@ -434,6 +449,7 @@ export async function startClaudeCliProxyObservation(opts: {
     env,
     stop: () => {
       observation.stop();
+      todoCapture.clear(sessionId);
       // Drop the per-session seen-set so a later relaunch re-seeds from the DB.
       clearSeenToolResultIds(sessionId);
       clearClaudeCliTurnSummary(sessionId);

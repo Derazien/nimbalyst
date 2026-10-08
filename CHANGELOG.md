@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - In the iOS and Android apps, a synced Markdown file now shows an embedded `.html` diagram live instead of as a link; document sync now carries `.html` files so the phone has them
 - The Project Graph timeline has a "24 hours" time range with an hourly ruler and times in its tooltips
 - Run coding sessions with Kimi Code (alpha): pick Kimi Code as an agent provider, sign in once with `kimi login`, and stream turns with file diffs from your Kimi membership, or enable Kimi Code CLI to run the genuine `kimi` terminal app with its conversation mirrored into the transcript. Both get Nimbalyst's tools, the MCP servers from your app and project settings and the effort selector, and name and tag their own sessions.
+- Plan mode for Claude Code CLI sessions: start in plan and approve into bypass, switch modes from a chip or Shift+Tab, follow the agent's todo list in the side panels, and type any key into the focused terminal.
 
 ### Changed
 <!-- Changes to existing functionality go here -->

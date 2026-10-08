@@ -241,7 +241,10 @@ describe('ClaudeCliSessionLauncher', () => {
   // NIM-806 Phase 4: an "allow-all"/"bypass-all" workspace skips the gate entirely
   // — spawn the genuine CLI with --dangerously-skip-permissions and DROP the
   // PreToolUse hook (the hook would otherwise still prompt for Bash/Edit/Write).
-  function makeHookHarness(getPermissionMode?: (workspacePath: string) => 'ask' | 'allow-all' | 'bypass-all' | null) {
+  function makeHookHarness(
+    getPermissionMode?: (workspacePath: string) => 'ask' | 'allow-all' | 'bypass-all' | null,
+    extraDeps: Partial<ClaudeCliSessionLauncherDeps> = {},
+  ) {
     const getMcpServersConfig = vi.fn(async (_opts: { sessionId: string; workspacePath: string }) => ({
       'nimbalyst': {
         type: 'sse',
@@ -262,9 +265,44 @@ describe('ClaudeCliSessionLauncher', () => {
       permissionHookScriptPath: '/app/resources/claudeCliPermissionHook.cjs',
       electronExecPath: '/app/electron',
       getPermissionMode,
+      ...extraDeps,
     });
     return { launcher, createClaudeCliTerminal };
   }
+
+  // Slice C: plan-mode start is plumbed from the setting, the hook is still dropped
+  // when the project skips permissions, and the mode tracker is seeded from the
+  // flags actually spawned (with screen lines forwarded to it).
+  it('starts new sessions in plan mode per the setting and seeds the mode tracker', async () => {
+    const modeTracker = { seed: vi.fn(), noteScreen: vi.fn(), forget: vi.fn() };
+    const { launcher, createClaudeCliTerminal } = makeHookHarness(() => 'allow-all', {
+      getStartInPlanMode: () => true,
+      modeTracker,
+    });
+    await launcher.launch(baseInput);
+    const opts = createClaudeCliTerminal.mock.calls[0][1];
+    expect(opts.spawnConfig.args).toEqual(
+      expect.arrayContaining(['--permission-mode', 'plan', '--allow-dangerously-skip-permissions']),
+    );
+    expect(opts.spawnConfig.args).not.toContain('--dangerously-skip-permissions');
+    expect(opts.spawnConfig.args).not.toContain('--settings');
+    expect(modeTracker.seed).toHaveBeenCalledWith(baseInput.sessionId, baseInput.workspacePath, {
+      mode: 'plan',
+      bypassAvailable: true,
+    });
+    opts.onScreenLines?.(['x']);
+    expect(modeTracker.noteScreen).toHaveBeenCalledWith(baseInput.sessionId, baseInput.workspacePath, ['x']);
+  });
+
+  it('keeps the old flags when the plan-mode setting is off', async () => {
+    const { launcher, createClaudeCliTerminal } = makeHookHarness(() => 'bypass-all', {
+      getStartInPlanMode: () => false,
+    });
+    await launcher.launch(baseInput);
+    const args = createClaudeCliTerminal.mock.calls[0][1].spawnConfig.args;
+    expect(args).toContain('--dangerously-skip-permissions');
+    expect(args).not.toContain('--permission-mode');
+  });
 
   it.each(['allow-all', 'bypass-all'] as const)(
     'skips the gate (--dangerously-skip-permissions, no hook) when the workspace is %s',

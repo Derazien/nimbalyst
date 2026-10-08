@@ -20,6 +20,7 @@ import {
 } from './terminalVisibility';
 import { setTerminalPainting } from './terminalRenderGate';
 import { canPersistTerminalRenderState } from './terminalRenderState';
+import { TERMINAL_KEY_SURFACE_ATTR } from '../../utils/terminalKeyTarget';
 
 // Type for terminal API is defined in electron.d.ts
 
@@ -731,6 +732,27 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
             }
           });
 
+          // ghostty-web sends "\t" for Shift+Tab, but the claude CLI (and shells) need
+          // the backtab sequence to cycle permission modes. Returning true from a custom
+          // key handler makes ghostty preventDefault and send nothing itself.
+          // Attached exactly once here, right after the single Terminal creation.
+          terminal.attachCustomKeyEventHandler((event: KeyboardEvent) => {
+            if (
+              event.type === 'keydown' &&
+              event.key === 'Tab' &&
+              event.shiftKey &&
+              !event.ctrlKey &&
+              !event.altKey &&
+              !event.metaKey
+            ) {
+              if (!disposed && !hasExitedRef.current) {
+                window.electronAPI.terminal.write(sessionId, '\x1b[Z');
+              }
+              return true;
+            }
+            return false;
+          });
+
           // Handle resize. The ResizeObserver fires in a rapid burst while the
           // collapsible "Raw terminal" drawer animates (and during panel drags /
           // window resizes). Each fit()+resize() sends a SIGWINCH to the PTY, and
@@ -961,6 +983,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
           visibility: isInitialized ? 'visible' : 'hidden',
         }}
         data-testid="terminal-container"
+        {...{ [TERMINAL_KEY_SURFACE_ATTR]: '' }}
         data-ready={isInitialized}
         onContextMenu={handleContextMenu}
       />

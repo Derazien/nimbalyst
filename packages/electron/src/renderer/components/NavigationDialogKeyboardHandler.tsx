@@ -14,6 +14,7 @@ import { openNavigationDialogRequestAtom } from '../store/atoms/appCommands';
 import { workspaceHasTeamAtom } from '../store/atoms/collabDocuments';
 import type { UnifiedQuickOpenData } from '../dialogs/navigation';
 import type { UnifiedQuickOpenTab } from './UnifiedQuickOpen';
+import { terminalOwnsKey } from '../utils/terminalKeyTarget';
 
 const isMac = navigator.platform.startsWith('Mac');
 
@@ -90,6 +91,9 @@ export function NavigationDialogKeyboardHandler({
   // that intercepts these to jump tabs.
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // A focused terminal owns its keys (Ctrl+L clears the screen, Ctrl+O etc. belong to the CLI).
+      if (terminalOwnsKey(e)) return;
+
       // If the unified dialog is already mounted, let it handle the shortcut.
       if (document.querySelector('[data-testid="unified-quick-open"]')) return;
 

@@ -21,6 +21,7 @@ import { developerModeAtom } from '../store/atoms/appSettings';
 import { sessionLaunchPopupRequestAtom, trackerQuickCreateRequestAtom } from '../store/atoms/appCommands';
 import { titleBarCreateMenusAtom, type TitleBarCreateMenuItem } from '../store/atoms/titleBarCreate';
 import posthog from 'posthog-js';
+import { terminalOwnsKey } from '../utils/terminalKeyTarget';
 
 interface KeyboardShortcutsOptions {
   // Mode state
@@ -179,6 +180,9 @@ export function useKeyboardShortcuts({
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent): void => {
+      // A focused terminal (genuine claude CLI / shell) owns its keys; let them reach ghostty.
+      if (terminalOwnsKey(e)) return;
+
       // On macOS, app shortcuts use Command (metaKey). On Windows/Linux, they use Ctrl.
       const isAppModifier = isMac ? e.metaKey : e.ctrlKey;
 

@@ -6,6 +6,11 @@ export type AIMode = 'planning' | 'agent';
 interface ModeTagProps {
   mode: AIMode;
   onModeChange: (mode: AIMode) => void;
+  /**
+   * Text to show instead of Plan/Agent. Claude Code CLI sessions pass the CLI's
+   * own permission mode here (Plan, Bypass, Edits, Manual, Auto).
+   */
+  label?: string;
 }
 
 /**
@@ -14,7 +19,7 @@ interface ModeTagProps {
  * Plan mode: Creates plan documents, restricted to markdown files
  * Agent mode: Full tool access, write operations enabled
  */
-export function ModeTag({ mode, onModeChange }: ModeTagProps) {
+export function ModeTag({ mode, onModeChange, label }: ModeTagProps) {
   const handleToggle = () => {
     onModeChange(mode === 'planning' ? 'agent' : 'planning');
   };
@@ -29,12 +34,14 @@ export function ModeTag({ mode, onModeChange }: ModeTagProps) {
             : 'mode-tag-agent bg-orange-100 text-orange-600 hover:bg-orange-200 dark:bg-orange-900/40 dark:text-orange-400 dark:hover:bg-orange-900/60'
         }`}
         onClick={handleToggle}
-        aria-label={mode === 'planning'
-          ? 'Plan mode: Creates plan documents (click to enable full agent mode)'
-          : 'Agent mode: Full tool access (click to switch to plan mode)'}
+        aria-label={label
+          ? `${label} mode (click to switch ${mode === 'planning' ? 'out of' : 'to'} plan mode)`
+          : mode === 'planning'
+            ? 'Plan mode: Creates plan documents (click to enable full agent mode)'
+            : 'Agent mode: Full tool access (click to switch to plan mode)'}
         type="button"
       >
-        {mode === 'planning' ? 'Plan' : 'Agent'}
+        {label ?? (mode === 'planning' ? 'Plan' : 'Agent')}
       </button>
     </HelpTooltip>
   );

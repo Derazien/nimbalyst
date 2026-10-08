@@ -131,6 +131,14 @@ export interface ClaudeCliSpawnInput {
    */
   dangerouslySkipPermissions?: boolean;
   /**
+   * Start NEW sessions in the CLI's plan mode (`--permission-mode plan`). Resumed
+   * sessions never get the flag: the CLI restores the mode it stored. When
+   * `dangerouslySkipPermissions` is also set, the skip becomes
+   * `--allow-dangerously-skip-permissions` so bypass stays reachable (Shift+Tab and
+   * the plan-approval dialog) without the session starting in it. Defaults to false.
+   */
+  startInPlanMode?: boolean;
+  /**
    * Extra directories to pre-authorize for the CLI's file tools via `--add-dir`
    * (NIM-806 — input integration). Pasted chat attachments are written OUTSIDE
    * the workspace cwd (under `<userData>/chat-attachments/<workspaceDir>/...`), so
@@ -302,8 +310,24 @@ export function buildClaudeCliSpawnConfig(input: ClaudeCliSpawnInput): ClaudeCli
   // genuine CLI's own flag (NIM-806 Phase 4). Value-less boolean, safe before the
   // variadics. The launcher never sets this together with `settingsJson` (the hook
   // would prompt on top of the skip), but they're independent here for safety.
+  //
+  // Plan-mode start (slice C): a NEW session with startInPlanMode begins in plan.
+  // When the project also skips permissions we use `--allow-dangerously-skip-permissions`
+  // instead (bypass joins the Shift+Tab cycle and the plan-approval dialog offers it,
+  // but the session does not start in it). A RESUMED session never forces a mode:
+  // the CLI restores its own, and the allow flag keeps bypass reachable.
+  const resuming = Boolean(input.resumeSessionId || input.continueSession);
+  const startPlan = Boolean(input.startInPlanMode) && !resuming;
   if (input.dangerouslySkipPermissions) {
-    args.push('--dangerously-skip-permissions');
+    if (resuming) {
+      args.push('--allow-dangerously-skip-permissions');
+    } else if (startPlan) {
+      args.push('--permission-mode', 'plan', '--allow-dangerously-skip-permissions');
+    } else {
+      args.push('--dangerously-skip-permissions');
+    }
+  } else if (startPlan) {
+    args.push('--permission-mode', 'plan');
   }
   // Register the PreToolUse permission hook via --settings so built-in tool
   // prompts route to a Nimbalyst widget (NIM-806 Phase 4). Value-bearing flag —
@@ -390,6 +414,12 @@ export function buildClaudeCliSpawnConfig(input: ClaudeCliSpawnInput): ClaudeCli
   // Set as a default the user can still override via their own shell/`baseEnv`.
   if (merged.ENABLE_TOOL_SEARCH == null) {
     merged.ENABLE_TOOL_SEARCH = 'true';
+  }
+  // Newer models ship with the todo tools (TodoWrite / TaskCreate / TaskUpdate) off
+  // unless this is set. Nimbalyst's Todo and Task List panels are fed by those tool
+  // calls, so enable them; a user's own export (even `0`) still wins.
+  if (merged.CLAUDE_CODE_ENABLE_TODO_TOOLS == null) {
+    merged.CLAUDE_CODE_ENABLE_TODO_TOOLS = '1';
   }
   // An inherited CLAUDE_CODE_EFFORT_LEVEL beats `--effort`, so a user who has it
   // exported would see the selector do nothing — which is the bug #996 reported.

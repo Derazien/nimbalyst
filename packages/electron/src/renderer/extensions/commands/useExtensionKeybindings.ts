@@ -17,6 +17,7 @@ import {
   unregisterExtension,
   getRegisteredKeybindings,
 } from './ExtensionCommandRegistry';
+import { terminalOwnsKey } from '../../utils/terminalKeyTarget';
 
 // ============================================================================
 // Key parsing
@@ -145,6 +146,9 @@ export function useExtensionKeybindings(): void {
   // Listen for key combos
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent): void => {
+      // A focused terminal owns its keys; extension bindings must not steal them.
+      if (terminalOwnsKey(e)) return;
+
       const keybindings = getRegisteredKeybindings();
       for (const kb of keybindings) {
         const parsed = parseManifestKey(kb.key);

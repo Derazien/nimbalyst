@@ -87,6 +87,14 @@ export interface AIInputProps {
   // Mode support (plan vs agent)
   mode?: AIMode;
   onModeChange?: (mode: AIMode) => void;
+  /**
+   * claude-code-cli only: the CLI's own permission mode as chip text (Plan, Bypass,
+   * Edits, Manual, Auto). Unset until the CLI has reported a mode, which keeps the
+   * chip hidden rather than guessing.
+   */
+  modeLabel?: string;
+  /** claude-code-cli only: Shift+Tab in the input presses the CLI's mode key once. */
+  onCycleMode?: () => void;
 
   // Model selection support
   currentModel?: string;
@@ -197,6 +205,8 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
     enableSlashCommands = false,
     mode = 'planning' as AIMode,
     onModeChange,
+    modeLabel,
+    onCycleMode,
     currentModel,
     onModelChange,
     sessionHasMessages,
@@ -938,6 +948,12 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
         onModeChange(mode === 'planning' ? 'agent' : 'planning');
         return;
       }
+      // claude-code-cli: Shift+Tab is one press of the CLI's own mode key.
+      if (e.key === 'Tab' && e.shiftKey && provider === 'claude-code-cli' && onCycleMode) {
+        e.preventDefault();
+        onCycleMode();
+        return;
+      }
 
       // Handle memory mode keyboard shortcuts
       if (isMemoryMode && !typeaheadMatch) {
@@ -1461,6 +1477,7 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
         {!isMemoryMode && (onModeChange || onModelChange || readOnlyModel || workspacePath || (tokenUsage && provider === 'claude-code')) && (
           <AIInputControls
             onModeChange={onModeChange}
+            modeLabel={modeLabel}
             provider={provider}
             mode={mode}
             onModelChange={onModelChange}

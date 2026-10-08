@@ -36,6 +36,11 @@ import { resolveClaudeConfigDir } from '@nimbalyst/runtime/ai/server/providers/c
 import { hasEnterpriseManagedMcpConfig } from '@nimbalyst/runtime/ai/server/providers/claudeCode/enterpriseMcpConfig';
 import type { TerminalSessionManager } from '../TerminalSessionManager';
 import type { ClaudeTurnState, ParsedClaudePidFile } from './claudeCliPidState';
+import {
+  bypassAvailableFromArgs,
+  startingModeFromArgs,
+  type ClaudeCliModeTracker,
+} from './claudeCliModeTracker';
 
 export interface ClaudeCliSessionLauncherDeps {
   /**
@@ -100,6 +105,18 @@ export interface ClaudeCliSessionLauncherDeps {
    * `ask` / `null` (untrusted) keep the hook + native gate. Omit to keep the gate.
    */
   getPermissionMode?: (workspacePath: string) => 'ask' | 'allow-all' | 'bypass-all' | null;
+  /**
+   * Whether NEW sessions start in the CLI's plan mode (`--permission-mode plan`).
+   * In production this is the `app.claudeCliStartInPlanMode` setting (default true).
+   * Omit → false (the pre-plan-mode behaviour). Never applied to a resumed session.
+   */
+  getStartInPlanMode?: () => boolean;
+  /**
+   * Live permission-mode tracking (Shift+Tab cycle). The launcher seeds it from the
+   * spawn flags and forwards the terminal's screen lines to it; omit to skip
+   * tracking. In production this is the shared `ClaudeCliModeTracker`.
+   */
+  modeTracker?: Pick<ClaudeCliModeTracker, 'seed' | 'noteScreen' | 'forget'>;
   /**
    * Load the extension Claude-plugin directories for this workspace (NIM-845).
    * In production this is `getClaudePluginPaths(wp)` mapped to `.path` — the same
@@ -343,6 +360,7 @@ export class ClaudeCliSessionLauncher {
       allowedMcpServerNames,
       settingsJson,
       dangerouslySkipPermissions,
+      startInPlanMode: this.deps.getStartInPlanMode?.() ?? false,
       additionalDirectories: input.additionalDirectories,
       pluginDirs,
       mcpToolsUnavailable,
@@ -350,6 +368,7 @@ export class ClaudeCliSessionLauncher {
 
     // 4. Spawn the genuine interactive CLI in the terminal strip. Tear the proxy
     // down when the PTY exits (composed with the PID-watcher cleanup downstream).
+    const modeTracker = this.deps.modeTracker;
     try {
       await this.deps.terminalManager.createClaudeCliTerminal(sessionId, {
         cwd,
@@ -358,12 +377,22 @@ export class ClaudeCliSessionLauncher {
         cols: input.cols,
         rows: input.rows,
         onTurnState: input.onTurnState,
-        onExit: observation || input.onExit
+        onScreenLines: modeTracker
+          ? (lines) => modeTracker.noteScreen(sessionId, workspacePath, lines)
+          : undefined,
+        onExit: observation || input.onExit || modeTracker
           ? (exitCode) => {
               observation?.stop();
+              modeTracker?.forget(sessionId);
               input.onExit?.(exitCode);
             }
           : undefined,
+      });
+      // The flags fix the starting mode of a new process and whether bypass is
+      // reachable; the first screen reading then takes over.
+      modeTracker?.seed(sessionId, workspacePath, {
+        mode: startingModeFromArgs(spawnConfig.args),
+        bypassAvailable: bypassAvailableFromArgs(spawnConfig.args),
       });
     } catch (err) {
       // Spawn failed — don't leak the proxy.

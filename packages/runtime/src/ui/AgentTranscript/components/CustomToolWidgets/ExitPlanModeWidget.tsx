@@ -282,6 +282,37 @@ export const ExitPlanModeWidget: React.FC<CustomToolWidgetProps> = ({
     return null;
   }
 
+  // The CLI asks for approval in its own terminal dialog; buttons here would no-op.
+  if (host?.exitPlanModeInTerminal) {
+    return (
+      <div
+        data-testid="exit-plan-mode-widget"
+        data-state="pending-terminal"
+        className="exit-plan-mode-widget rounded-lg bg-nim-secondary border border-nim-primary overflow-hidden"
+      >
+        <div className="flex items-center gap-2 py-3 px-4 bg-nim-tertiary">
+          <span className="text-sm font-semibold text-nim flex-1">
+            Plan ready for review
+          </span>
+          <span data-testid="exit-plan-mode-in-terminal" className="text-xs text-nim-muted">
+            Approve or keep planning in the terminal below
+          </span>
+        </div>
+        {planFilePath && (
+          <div className="px-4 py-2 text-[13px]">
+            <span className="text-nim-muted">Plan file: </span>
+            <button
+              onClick={handleOpenPlanFile}
+              className="text-nim-link hover:text-nim-link-hover hover:underline cursor-pointer bg-transparent border-none p-0 font-mono text-[13px]"
+            >
+              {planFilePath}
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   // If no host available, show non-interactive pending state
   if (!host) {
     return (

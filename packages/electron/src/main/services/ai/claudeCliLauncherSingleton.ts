@@ -31,6 +31,8 @@ import { getAgentWorkflowService } from '../AgentWorkflowService';
 import { resolveAttachmentStagingAllowDirectories } from '../attachments/attachmentStagingRoot';
 import { resolveClaudePermissionHookScriptPath } from './claudeCliPermissionHookPath';
 import { getPermissionService } from '../PermissionService';
+import { getSettingsService } from '../SettingsService';
+import { getClaudeCliModeTracker } from './claudeCliModeSingleton';
 import { startClaudeCliProxyObservation, fireClaudeCliTurnCompletion } from './claudeCliObservationSingleton';
 import { flushNextClaudeCliQueuedPromptForSession } from './claudeCliQueueFlushSingleton';
 import { claudeCliSubmitLatch } from './claudeCliSubmitLatch';
@@ -195,6 +197,10 @@ function buildLauncher(): ClaudeCliSessionLauncher {
     // project so trust is shared.
     getPermissionMode: (workspacePath: string) =>
       getPermissionService().getPermissionMode(workspacePath),
+    // New sessions start in the CLI's plan mode unless the user turned it off.
+    getStartInPlanMode: () => getSettingsService().get('app.claudeCliStartInPlanMode') !== false,
+    // Live Shift+Tab mode: seeded from the spawn flags, then read off the screen.
+    modeTracker: getClaudeCliModeTracker(),
     // NIM-845: load extension Claude-plugins so namespaced slash commands
     // (`/feedback:bug-report`, …) resolve in CLI sessions. Mirror the SDK path's
     // loader EXACTLY (`getClaudeProviderPluginPaths`, the same loader wired at

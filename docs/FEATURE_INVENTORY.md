@@ -498,6 +498,8 @@ Companion app; pairs with a desktop over encrypted sync. Voice mode is not inclu
 - Context menu (clear, rename)
 - Claude Code CLI sessions: raw-terminal drawer auto-reveals and focuses when the genuine CLI opens a native picker (`/model`, `/config`, `/login`, …)
 - Claude Code CLI sessions: mid-session model switching from the model picker (drives the CLI's `/model` command; idle turns only)
+- Claude Code CLI sessions: plan mode. New sessions can start in plan with bypass one approval away (setting, on by default); a mode chip shows and switches the CLI's live permission mode; the focused terminal receives every key including Shift+Tab
+- Claude Code CLI sessions: the agent's todo checklist and task list feed the Todo and Task List side panels
 
 ## Settings
 

@@ -656,6 +656,7 @@ export const resetSessionHistoryAtom = atom(
 // ============================================================
 
 import type { AIMode } from '../../components/UnifiedAI/ModeTag';
+import { parseClaudeCliPermissionMode } from '../../../shared/claudeCliPermissionMode';
 
 /**
  * Session tab state - the minimal data AgenticPanel needs for an open session.
@@ -995,6 +996,26 @@ export const sessionEffortLevelRawAtom = atomFamily((sessionId: string) =>
   atom((get) => {
     const metadata = get(sessionStoreAtom(sessionId))?.metadata as Record<string, unknown> | undefined;
     return metadata?.effortLevel ?? null;
+  })
+);
+
+/**
+ * claude-code-cli: the CLI's live permission mode, written by main from the
+ * terminal footer. Null until the CLI has reported one (and for sessions saved
+ * before it was tracked), so the chip stays hidden instead of guessing.
+ */
+export const sessionCliPermissionModeAtom = atomFamily((sessionId: string) =>
+  atom((get) => {
+    const metadata = get(sessionStoreAtom(sessionId))?.metadata as Record<string, unknown> | undefined;
+    return parseClaudeCliPermissionMode(metadata?.cliPermissionMode);
+  })
+);
+
+/** claude-code-cli: whether the session's CLI process can reach bypass via Shift+Tab. */
+export const sessionCliBypassAvailableAtom = atomFamily((sessionId: string) =>
+  atom((get) => {
+    const metadata = get(sessionStoreAtom(sessionId))?.metadata as Record<string, unknown> | undefined;
+    return metadata?.cliBypassAvailable === true;
   })
 );
 

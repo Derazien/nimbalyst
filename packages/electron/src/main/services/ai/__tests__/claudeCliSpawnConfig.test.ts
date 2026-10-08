@@ -125,6 +125,12 @@ describe('buildClaudeCliSpawnConfig', () => {
     expect(cfg.env.ENABLE_TOOL_SEARCH).toBe('true');
   });
 
+  it('enables the CLI todo tools by default (off for newer models) but keeps a user override', () => {
+    expect(buildClaudeCliSpawnConfig(base).env.CLAUDE_CODE_ENABLE_TODO_TOOLS).toBe('1');
+    const optedOut = buildClaudeCliSpawnConfig({ ...base, baseEnv: { CLAUDE_CODE_ENABLE_TODO_TOOLS: '0' } });
+    expect(optedOut.env.CLAUDE_CODE_ENABLE_TODO_TOOLS).toBe('0');
+  });
+
   /**
    * The SDK path forwards the selected effort via CLAUDE_CODE_EFFORT_LEVEL
    * (sdkOptionsBuilder, #844). The CLI path never did, so the effort selector
@@ -296,6 +302,44 @@ describe('buildClaudeCliSpawnConfig', () => {
     expect(
       buildClaudeCliSpawnConfig({ ...base, dangerouslySkipPermissions: false }).args
     ).not.toContain('--dangerously-skip-permissions');
+  });
+
+  // Slice C: which permission flags each (project trust x new/resume x setting) row emits.
+  // Every row must put its value-bearing flag before the trailing variadics.
+  it.each([
+    { name: 'skip + new + plan on', skip: true, resume: false, plan: true, flags: ['--permission-mode', 'plan', '--allow-dangerously-skip-permissions'] },
+    { name: 'skip + new + plan off', skip: true, resume: false, plan: false, flags: ['--dangerously-skip-permissions'] },
+    { name: 'skip + resume (plan on)', skip: true, resume: true, plan: true, flags: ['--allow-dangerously-skip-permissions'] },
+    { name: 'skip + resume (plan off)', skip: true, resume: true, plan: false, flags: ['--allow-dangerously-skip-permissions'] },
+    { name: 'ask + new + plan on', skip: false, resume: false, plan: true, flags: ['--permission-mode', 'plan'] },
+    { name: 'ask + new + plan off', skip: false, resume: false, plan: false, flags: [] },
+    { name: 'ask + resume (plan on)', skip: false, resume: true, plan: true, flags: [] },
+  ])('permission flags: $name', ({ skip, resume, plan, flags }) => {
+    const cfg = buildClaudeCliSpawnConfig({
+      ...base,
+      sessionId: '11111111-2222-4333-8444-555555555555',
+      resumeSessionId: resume ? '11111111-2222-4333-8444-555555555555' : undefined,
+      dangerouslySkipPermissions: skip,
+      startInPlanMode: plan,
+      allowedMcpServerNames: ['nimbalyst'],
+    });
+    const permissionArgs = cfg.args.filter(
+      (a, i, all) =>
+        a === '--permission-mode' ||
+        all[i - 1] === '--permission-mode' ||
+        a === '--dangerously-skip-permissions' ||
+        a === '--allow-dangerously-skip-permissions',
+    );
+    expect(permissionArgs).toEqual(flags);
+    if (flags.length > 0) {
+      const lastFlagIdx = Math.max(...flags.map((f) => cfg.args.indexOf(f)));
+      expect(lastFlagIdx).toBeLessThan(cfg.args.indexOf('--allowedTools'));
+    }
+  });
+
+  it('continueSession counts as resuming (no forced plan mode)', () => {
+    const cfg = buildClaudeCliSpawnConfig({ ...base, continueSession: true, startInPlanMode: true });
+    expect(cfg.args).not.toContain('--permission-mode');
   });
 
   it('still denies the built-in AskUserQuestion under --dangerously-skip-permissions (MCP routing kept)', () => {

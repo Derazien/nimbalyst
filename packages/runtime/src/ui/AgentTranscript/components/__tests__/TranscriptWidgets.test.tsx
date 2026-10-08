@@ -20,6 +20,7 @@ import React from 'react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import * as rtl from '@testing-library/react';
 import { createStore, Provider as JotaiProvider } from 'jotai';
+import type { InteractiveWidgetHost } from '../CustomToolWidgets/InteractiveWidgetHost';
 import type { TranscriptViewMessage } from '../../../../ai/server/transcript/TranscriptProjector';
 import type { CustomToolWidgetProps } from '../CustomToolWidgets/index';
 
@@ -1514,6 +1515,32 @@ describe('ExitPlanModeWidget', () => {
     expect(widget.dataset.state).toBe('pending');
     expect(screen.getByText('Ready to exit planning mode?')).toBeDefined();
     expect(screen.getByText('Waiting...')).toBeDefined();
+  });
+
+  it('points at the terminal instead of offering no-op buttons when the CLI owns approval', async () => {
+    const { interactiveWidgetHostAtom } = await import('../../../../store/atoms/interactiveWidgetHost');
+    const testStore = createStore();
+    const exitPlanModeApprove = vi.fn().mockResolvedValue(undefined);
+    testStore.set(interactiveWidgetHostAtom('cli-plan'), {
+      sessionId: 'cli-plan',
+      workspacePath: '/',
+      exitPlanModeInTerminal: true,
+      exitPlanModeApprove,
+      openFile: vi.fn(),
+    } as unknown as InteractiveWidgetHost);
+    render(
+      <JotaiProvider store={testStore}>
+        <ExitPlanModeWidget
+          message={makeToolMessage('ExitPlanMode', { planFilePath: 'plan.md' })}
+          isExpanded={false}
+          onToggle={() => {}}
+          sessionId="cli-plan"
+        />
+      </JotaiProvider>
+    );
+    expect(screen.getByTestId('exit-plan-mode-widget').dataset.state).toBe('pending-terminal');
+    expect(screen.getByText('plan.md')).toBeDefined();
+    expect(screen.queryByTestId('exit-plan-mode-approve')).toBeNull();
   });
 
   it('renders approved state from tool result', () => {
