@@ -13,6 +13,7 @@
  *      3. Tell Claude what to change
  *         shift+tab to approve with this feedback
  *
+ * Option 2 keeps the CLI asking before each edit (the card's "ask before each edit" choice).
  * Option 3 is an inline text field: once highlighted, typed text replaces its label and Enter
  * sends it as feedback. Up/Down move the highlight (proven live); number keys are not used.
  *
@@ -43,10 +44,13 @@ export interface PlanDialog {
   /** Index into `options` of the highlighted one, or -1 when no pointer is visible. */
   highlightedIndex: number;
   bypassIndex: number;
+  /** Index of "Yes, manually approve edits" (approve and keep being asked before each edit), or -1. */
+  manualIndex: number;
   keepPlanningIndex: number;
 }
 
 const BYPASS = /^yes\b.*\bbypass\b/i;
+const MANUAL = /^yes\b.*\bmanually approve edits\b/i;
 const KEEP_PLANNING = /tell claude what to change|keep planning/i;
 
 /** The plan-approval dialog on this screen, or null when it is not (fully) showing. */
@@ -77,6 +81,7 @@ export function parsePlanApprovalDialog(lines: readonly string[] | null | undefi
     options,
     highlightedIndex: options.findIndex((o) => o.highlighted),
     bypassIndex: options.findIndex((o) => BYPASS.test(o.label)),
+    manualIndex: options.findIndex((o) => MANUAL.test(o.label)),
     keepPlanningIndex,
   };
 }
@@ -100,6 +105,19 @@ export function planApproveStep(lines: readonly string[] | null | undefined): Pl
   if (dialog.bypassIndex < 0) return { action: 'bail', reason: 'the dialog does not offer bypass permissions' };
   if (dialog.highlightedIndex === dialog.bypassIndex) return { action: 'enter' };
   return moveTo(dialog, dialog.bypassIndex);
+}
+
+/**
+ * Next keystroke to approve with "Yes, manually approve edits" (the CLI keeps asking before each
+ * edit). Same discipline as the bypass step: nothing is sent unless the dialog is showing and the
+ * option's own label says it is the manual one.
+ */
+export function planManualStep(lines: readonly string[] | null | undefined): PlanDialogStep {
+  const dialog = parsePlanApprovalDialog(lines);
+  if (!dialog) return { action: 'bail', reason: 'the plan dialog is not showing' };
+  if (dialog.manualIndex < 0) return { action: 'bail', reason: 'the dialog does not offer manual approval of edits' };
+  if (dialog.highlightedIndex === dialog.manualIndex) return { action: 'enter' };
+  return moveTo(dialog, dialog.manualIndex);
 }
 
 export function flattenPlanFeedback(feedback: string): string {
@@ -188,21 +206,35 @@ async function drive(
   return { ok: false, reason: 'the dialog did not settle' };
 }
 
+/** Drive an approval to Enter, then wait for the dialog to go and the footer to read `wanted`. */
+async function approveOnScreen(
+  deps: PlanDriverDeps,
+  step: () => PlanDialogStep,
+  wanted: ClaudeCliPermissionMode,
+): Promise<PlanDriveResult> {
+  const sent = await drive(deps, step);
+  if (!sent.ok) return sent;
+  await waitForDialogGone(deps, SETTLE_MS);
+  let mode: ClaudeCliPermissionMode | null = deps.readMode();
+  for (let waited = 0; mode !== wanted && waited < CONFIRM_MS; waited += POLL_MS) {
+    await deps.delay(POLL_MS);
+    mode = deps.readMode();
+  }
+  return { ok: true, mode, confirmed: mode === wanted };
+}
+
 /**
  * Approve the plan with "switch to BYPASS PERMISSIONS" and confirm the footer says so. `ok:false`
  * means no Enter was sent (the answer belongs to the terminal); `confirmed:false` means Enter was
  * sent but the footer did not read bypass in time.
  */
-export async function approvePlanOnScreen(deps: PlanDriverDeps): Promise<PlanDriveResult> {
-  const sent = await drive(deps, () => planApproveStep(deps.getLines()));
-  if (!sent.ok) return sent;
-  await waitForDialogGone(deps, SETTLE_MS);
-  let mode: ClaudeCliPermissionMode | null = deps.readMode();
-  for (let waited = 0; mode !== 'bypassPermissions' && waited < CONFIRM_MS; waited += POLL_MS) {
-    await deps.delay(POLL_MS);
-    mode = deps.readMode();
-  }
-  return { ok: true, mode, confirmed: mode === 'bypassPermissions' };
+export function approvePlanOnScreen(deps: PlanDriverDeps): Promise<PlanDriveResult> {
+  return approveOnScreen(deps, () => planApproveStep(deps.getLines()), 'bypassPermissions');
+}
+
+/** Approve with "manually approve edits" and confirm the footer reads the default (manual) mode. */
+export function approvePlanManualOnScreen(deps: PlanDriverDeps): Promise<PlanDriveResult> {
+  return approveOnScreen(deps, () => planManualStep(deps.getLines()), 'default');
 }
 
 /** Send the plan back with feedback through the dialog's inline field. */

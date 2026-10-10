@@ -24,9 +24,29 @@ const SESSION_TITLE_PROMPT_MARKERS = [
  */
 const PROMPT_SUGGESTION_PROMPT_MARKER = "[SUGGESTION MODE:";
 
+/**
+ * The CLI's `rename_generate_name` side request, sent in the background when a
+ * plan is presented (CLI 2.1.295). Its system prompt carries these markers and it
+ * asks for a `{"name": ...}` json_schema reply.
+ */
+const SESSION_NAME_PROMPT_MARKERS = [
+  "Generate a short kebab-case name",
+  'Return JSON with a "name" field',
+];
+
+/**
+ * The `/rename` fork (no name given, behind a flag) replays the full conversation
+ * and appends the naming prompt as the LAST user message, with no json_schema.
+ */
+const SESSION_NAME_FORK_PROMPT_MARKER = "Generate a short kebab-case name";
+
 /** True when this `/v1/messages` body is a real conversational turn to observe. */
 export function shouldObserveMessagesRequest(body: Record<string, unknown>): boolean {
-  return !isClaudeSessionTitleRequest(body) && !isPromptSuggestionRequest(body);
+  return (
+    !isClaudeSessionTitleRequest(body) &&
+    !isClaudeSessionNameRequest(body) &&
+    !isPromptSuggestionRequest(body)
+  );
 }
 
 /**
@@ -43,11 +63,16 @@ export function shouldObserveMessagesRequest(body: Record<string, unknown>): boo
  * happen to quote this file.
  */
 function isPromptSuggestionRequest(body: Record<string, unknown>): boolean {
+  return lastUserMessageStartsWith(body, PROMPT_SUGGESTION_PROMPT_MARKER);
+}
+
+/** True when the final message is a user turn whose leading text starts with `marker`. */
+function lastUserMessageStartsWith(body: Record<string, unknown>, marker: string): boolean {
   const messages = body.messages;
   if (!Array.isArray(messages) || messages.length === 0) return false;
   const last = messages[messages.length - 1] as Record<string, unknown> | null;
   if (!last || typeof last !== "object" || last.role !== "user") return false;
-  return leadingText(last.content).trimStart().startsWith(PROMPT_SUGGESTION_PROMPT_MARKER);
+  return leadingText(last.content).trimStart().startsWith(marker);
 }
 
 /** A message's leading text — content is either a bare string or a block list. */
@@ -65,7 +90,15 @@ function leadingText(content: unknown): string {
 function isClaudeSessionTitleRequest(body: Record<string, unknown>): boolean {
   return (
     hasAnyTextMarker(body.system, SESSION_TITLE_PROMPT_MARKERS) &&
-    hasSingleTitleJsonSchema(body)
+    hasSingleKeyJsonSchema(body, "title")
+  );
+}
+
+function isClaudeSessionNameRequest(body: Record<string, unknown>): boolean {
+  return (
+    (hasAnyTextMarker(body.system, SESSION_NAME_PROMPT_MARKERS) &&
+      hasSingleKeyJsonSchema(body, "name")) ||
+    lastUserMessageStartsWith(body, SESSION_NAME_FORK_PROMPT_MARKER)
   );
 }
 
@@ -80,21 +113,21 @@ function hasAnyTextMarker(value: unknown, markers: string[]): boolean {
   return false;
 }
 
-function hasSingleTitleJsonSchema(value: unknown): boolean {
-  if (Array.isArray(value)) return value.some(hasSingleTitleJsonSchema);
+function hasSingleKeyJsonSchema(value: unknown, key: string): boolean {
+  if (Array.isArray(value)) return value.some((item) => hasSingleKeyJsonSchema(item, key));
   if (!value || typeof value !== "object") return false;
   const obj = value as Record<string, unknown>;
-  if (obj.type === "json_schema" && schemaOnlyAllowsTitle(obj.schema)) return true;
-  return Object.values(obj).some(hasSingleTitleJsonSchema);
+  if (obj.type === "json_schema" && schemaOnlyAllowsKey(obj.schema, key)) return true;
+  return Object.values(obj).some((item) => hasSingleKeyJsonSchema(item, key));
 }
 
-function schemaOnlyAllowsTitle(schema: unknown): boolean {
+function schemaOnlyAllowsKey(schema: unknown, key: string): boolean {
   if (!schema || typeof schema !== "object") return false;
   const obj = schema as Record<string, unknown>;
   const properties = obj.properties;
   if (!properties || typeof properties !== "object" || Array.isArray(properties)) return false;
   const propertyNames = Object.keys(properties);
-  if (propertyNames.length !== 1 || propertyNames[0] !== "title") return false;
+  if (propertyNames.length !== 1 || propertyNames[0] !== key) return false;
   const required = obj.required;
-  return !Array.isArray(required) || (required.length === 1 && required[0] === "title");
+  return !Array.isArray(required) || (required.length === 1 && required[0] === key);
 }

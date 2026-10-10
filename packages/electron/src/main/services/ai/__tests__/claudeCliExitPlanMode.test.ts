@@ -37,6 +37,10 @@ describe('parseExitPlanResponse', () => {
     expect(parseExitPlanResponse({ sessionId: 's', decision: 'deny', feedback: '   ' })?.answer).toEqual({
       decision: 'deny',
     });
+    expect(parseExitPlanResponse({ sessionId: 's', decision: 'approve-manual' })).toEqual({
+      sessionId: 's',
+      answer: { decision: 'approve-manual' },
+    });
     expect(parseExitPlanResponse({ sessionId: 's', decision: 'ask' })).toBeNull();
     expect(parseExitPlanResponse({ decision: 'approve' })).toBeNull();
     expect(parseExitPlanResponse(null)).toBeNull();
@@ -113,6 +117,24 @@ describe('answerExitPlanFromCard: hook path for ask projects, keystroke path for
     const late = await answerExitPlanFromCard('s', { decision: 'approve' }, { driveScreen });
     expect(late).toMatchObject({ success: false, error: expect.stringContaining('terminal') });
     expect(driveScreen).not.toHaveBeenCalled();
+  });
+
+  it('approve-manual: the hook only ever sees plain approve (an ask project is already manual); the screen gets the manual answer', async () => {
+    setExitPlanAnswerPath('hook-s', 'hook');
+    const driveScreen = vi.fn();
+    const waiting = waitForExitPlanAnswer('hook-s');
+    await expect(answerExitPlanFromCard('hook-s', { decision: 'approve-manual' }, { driveScreen })).resolves.toEqual({
+      success: true,
+      via: 'hook',
+    });
+    await expect(waiting).resolves.toEqual({ decision: 'approve' });
+    expect(driveScreen).not.toHaveBeenCalled();
+
+    setExitPlanAnswerPath('screen-s', 'screen');
+    const screenDrive = vi.fn(async () => ({ ok: true as const, mode: 'default' as const, confirmed: true }));
+    const result = await answerExitPlanFromCard('screen-s', { decision: 'approve-manual' }, { driveScreen: screenDrive });
+    expect(screenDrive).toHaveBeenCalledWith('screen-s', { decision: 'approve-manual' });
+    expect(result).toMatchObject({ success: true, via: 'screen', mode: 'default' });
   });
 
   it('skip project (screen): drives the dialog and reports the confirmed mode, ignoring any parked hook', async () => {

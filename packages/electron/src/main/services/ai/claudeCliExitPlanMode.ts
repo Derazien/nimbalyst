@@ -20,6 +20,13 @@ export type ExitPlanUserAnswer =
   | { decision: 'approve' }
   | { decision: 'deny'; feedback?: string };
 
+/**
+ * What the card can send. `approve-manual` = approve but keep being asked before each edit: on the
+ * screen path it picks the dialog's option 2; on the hook path it is the same allow as `approve`
+ * (an ask project is already in the manual mode), so the hook script never sees it.
+ */
+export type ExitPlanCardAnswer = ExitPlanUserAnswer | { decision: 'approve-manual' };
+
 /** What the endpoint tells the hook. `ask` = print nothing, let the CLI's dialog show. */
 export type ExitPlanHookAnswer = ExitPlanUserAnswer | { decision: 'ask' };
 
@@ -61,10 +68,11 @@ export function hasPendingExitPlan(sessionId: string): boolean {
 }
 
 /** Validate a renderer payload; null when it cannot be acted on. */
-export function parseExitPlanResponse(payload: unknown): { sessionId: string; answer: ExitPlanUserAnswer } | null {
+export function parseExitPlanResponse(payload: unknown): { sessionId: string; answer: ExitPlanCardAnswer } | null {
   const p = payload as { sessionId?: unknown; decision?: unknown; feedback?: unknown } | null | undefined;
   if (!p || typeof p.sessionId !== 'string' || !p.sessionId) return null;
   if (p.decision === 'approve') return { sessionId: p.sessionId, answer: { decision: 'approve' } };
+  if (p.decision === 'approve-manual') return { sessionId: p.sessionId, answer: { decision: 'approve-manual' } };
   if (p.decision === 'deny') {
     const feedback = typeof p.feedback === 'string' && p.feedback.trim() ? p.feedback.trim() : undefined;
     return { sessionId: p.sessionId, answer: { decision: 'deny', ...(feedback ? { feedback } : {}) } };
@@ -157,7 +165,7 @@ export async function handleExitPlanHookRequest(
 
 export interface ExitPlanCardDeps {
   /** Types the answer into the CLI's own dialog (skip-permissions projects). */
-  driveScreen: (sessionId: string, answer: ExitPlanUserAnswer) => Promise<PlanDriveResult>;
+  driveScreen: (sessionId: string, answer: ExitPlanCardAnswer) => Promise<PlanDriveResult>;
 }
 
 export type ExitPlanCardResult =
@@ -171,17 +179,20 @@ export type ExitPlanCardResult =
  */
 export async function answerExitPlanFromCard(
   sessionId: string,
-  answer: ExitPlanUserAnswer,
+  answer: ExitPlanCardAnswer,
   deps: ExitPlanCardDeps,
 ): Promise<ExitPlanCardResult> {
   const path = getExitPlanAnswerPath(sessionId);
   if (path === 'hook') {
-    return resolveExitPlanAnswer(sessionId, answer)
+    // An ask project's allow already lands in the manual mode, so "ask before each edit" is plain approve.
+    const hookAnswer: ExitPlanUserAnswer = answer.decision === 'approve-manual' ? { decision: 'approve' } : answer;
+    return resolveExitPlanAnswer(sessionId, hookAnswer)
       ? { success: true, via: 'hook' }
       : { success: false, error: 'No plan approval is waiting. Answer in the terminal.' };
   }
   if (path === 'screen') {
     const result = await deps.driveScreen(sessionId, answer);
+    // `confirmed` = the footer read the mode this answer asked for (bypass, or default for manual).
     return result.ok
       ? { success: true, via: 'screen', mode: result.mode, bypassConfirmed: result.confirmed }
       : { success: false, error: `Answer in the terminal: ${result.reason}.` };

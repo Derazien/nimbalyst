@@ -6,9 +6,11 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import {
+  approvePlanManualOnScreen,
   approvePlanOnScreen,
   parsePlanApprovalDialog,
   planApproveStep,
+  planManualStep,
   planReviseStep,
   revisePlanOnScreen,
   PLAN_KEY_DOWN,
@@ -92,6 +94,24 @@ describe('planApproveStep', () => {
   });
 });
 
+describe('planManualStep', () => {
+  it('finds option 2 on the real dialog and moves to it with Down from the bypass option, Enter once there', () => {
+    expect(parsePlanApprovalDialog(AT_BYPASS)!.manualIndex).toBe(1);
+    expect(planManualStep(AT_BYPASS)).toEqual({ action: 'move', keys: PLAN_KEY_DOWN });
+    expect(planManualStep(AT_MANUAL)).toEqual({ action: 'enter' });
+    expect(planManualStep(AT_FEEDBACK)).toEqual({ action: 'move', keys: PLAN_KEY_UP });
+  });
+
+  it('sends nothing when the dialog is absent, shows no pointer, or option 2 is not the manual one', () => {
+    expect(planManualStep(FOOTER_BYPASS)).toMatchObject({ action: 'bail', reason: 'the plan dialog is not showing' });
+    expect(planManualStep(null)).toMatchObject({ action: 'bail' });
+    expect(planManualStep(dialog(OPT1_PLAIN, OPT2, OPT3))).toMatchObject({ action: 'bail' });
+    // A future CLI that reorders or renames the options must not get an Enter on whatever is at index 1.
+    const renamed = dialog(OPT1, '     2. Yes, and auto-accept edits', OPT3);
+    expect(planManualStep(renamed)).toMatchObject({ action: 'bail', reason: expect.stringContaining('manual') });
+  });
+});
+
 describe('planReviseStep', () => {
   it('walks to the feedback field, types the flattened text, checks it shows, then submits', () => {
     expect(planReviseStep(AT_BYPASS, 'a\nb', false)).toEqual({ action: 'move', keys: PLAN_KEY_DOWN.repeat(2) });
@@ -155,6 +175,27 @@ describe('approvePlanOnScreen', () => {
   it('reports Enter sent but bypass unconfirmed when the footer never says so', async () => {
     const { deps } = scripted([AT_BYPASS, FOOTER_PLAN]);
     await expect(approvePlanOnScreen(deps)).resolves.toMatchObject({ ok: true, mode: 'plan', confirmed: false });
+  });
+});
+
+describe('approvePlanManualOnScreen', () => {
+  const FOOTER_MANUAL = [...FOOTER_BYPASS.slice(0, 4), '  ? for shortcuts'];
+
+  it('Down then Enter from the default highlight, then confirms the footer reads the default mode', async () => {
+    const { deps, writes } = scripted([AT_BYPASS, AT_MANUAL, FOOTER_MANUAL]);
+    await expect(approvePlanManualOnScreen(deps)).resolves.toEqual({ ok: true, mode: 'default', confirmed: true });
+    expect(writes).toEqual([PLAN_KEY_DOWN, PLAN_KEY_ENTER]);
+  });
+
+  it('writes no keystroke when the dialog is not showing', async () => {
+    const { deps, writes } = scripted([FOOTER_PLAN]);
+    await expect(approvePlanManualOnScreen(deps)).resolves.toEqual({ ok: false, reason: 'the plan dialog is not showing' });
+    expect(writes).toEqual([]);
+  });
+
+  it('reports Enter sent but unconfirmed when the footer still reads bypass', async () => {
+    const { deps } = scripted([AT_MANUAL, FOOTER_BYPASS]);
+    await expect(approvePlanManualOnScreen(deps)).resolves.toMatchObject({ ok: true, mode: 'bypassPermissions', confirmed: false });
   });
 });
 

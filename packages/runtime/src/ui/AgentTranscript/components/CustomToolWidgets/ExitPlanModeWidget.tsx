@@ -8,19 +8,35 @@
  * The host is read from interactiveWidgetHostAtom(sessionId) - no prop drilling needed.
  */
 
-import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { useAtomValue } from 'jotai';
 import type { CustomToolWidgetProps } from './index';
 import { interactiveWidgetHostAtom } from '../../../../store/atoms/interactiveWidgetHost';
+import {
+  ExitPlanBody,
+  ExitPlanChoices,
+  ExitPlanFullscreen,
+  resolvePlanFilePath,
+  useExitPlanText,
+  type ExitPlanChoiceVariant,
+} from './ExitPlanModeParts';
 
 // ============================================================
 // Types
 // ============================================================
 
 interface ExitPlanModeArgs {
+  /** Full plan markdown. The genuine CLI sends it; the Agent SDK sends only the file path. */
+  plan?: string;
   planFilePath?: string;
   allowedPrompts?: Array<{ tool: string; prompt: string }>;
 }
+
+/**
+ * Tool calls whose plan review already opened full screen once. Module-level so a remount (the
+ * transcript virtualizes and re-renders cards) does not throw the same plan back in the user's face.
+ */
+const autoOpenedPlanReviews = new Set<string>();
 
 // ============================================================
 // Widget Component
@@ -30,6 +46,7 @@ export const ExitPlanModeWidget: React.FC<CustomToolWidgetProps> = ({
   message,
   workspacePath,
   sessionId,
+  readFile,
 }) => {
   const toolCall = message.toolCall;
   if (!toolCall) {
@@ -65,14 +82,8 @@ export const ExitPlanModeWidget: React.FC<CustomToolWidgetProps> = ({
     feedback?: string;
     startNewSession?: boolean;
   } | null>(null);
-  const feedbackInputRef = useRef<HTMLTextAreaElement>(null);
-
-  // Focus feedback input when shown
-  useEffect(() => {
-    if (showFeedbackInput && feedbackInputRef.current) {
-      feedbackInputRef.current.focus();
-    }
-  }, [showFeedbackInput]);
+  const [fullscreenOpen, setFullscreenOpen] = useState(false);
+  const [planExpanded, setPlanExpanded] = useState(false);
 
   // Parse completed state from result
   const completedState = useMemo(() => {
@@ -119,6 +130,28 @@ export const ExitPlanModeWidget: React.FC<CustomToolWidgetProps> = ({
     approved: completedState.type === 'approved',
   } : null);
 
+  // The plan to review. A pending card loads it straight away; a finished one only once expanded.
+  const isFinished = !!(displayResult || hasResponded);
+  const plan = useExitPlanText({
+    inlinePlan: args?.plan,
+    planFilePath,
+    workspacePath,
+    readFile,
+    enabled: !isFinished || planExpanded,
+  });
+  const canShowPlan = (typeof args?.plan === 'string' && args.plan.trim() !== '') || (!!planFilePath && !!readFile);
+
+  // Open the full-screen review once per tool call, the first time there is a plan to read and the
+  // card is waiting on the user. Closing it (Escape) returns to the inline card for good: remounts
+  // find the call already in the set. A plan that never loads never opens an empty modal.
+  const autoOpenKey = `${sessionId}:${toolCall?.providerToolCallId ?? `message-${message.id}`}`;
+  const awaitingReview = isPending && !isFinished && !!host;
+  useEffect(() => {
+    if (!awaitingReview || plan.status !== 'ready' || autoOpenedPlanReviews.has(autoOpenKey)) return;
+    autoOpenedPlanReviews.add(autoOpenKey);
+    setFullscreenOpen(true);
+  }, [awaitingReview, plan.status, autoOpenKey]);
+
   // Handle approve
   const handleApprove = useCallback(async () => {
     if (hasResponded || !isPending || !host) return;
@@ -132,6 +165,27 @@ export const ExitPlanModeWidget: React.FC<CustomToolWidgetProps> = ({
       await host.exitPlanModeApprove(requestId);
     } catch (error) {
       console.error('[ExitPlanModeWidget] Failed to approve:', error);
+      setSubmitError(error instanceof Error ? error.message : null);
+      setLocalResult(null);
+      setHasResponded(false);
+    } finally {
+      setIsSubmitting(false);
+    }
+  }, [host, requestId, hasResponded, isPending]);
+
+  // Handle approve while keeping the CLI's per-edit prompts (host offers it only where it differs from approve)
+  const handleApproveManual = useCallback(async () => {
+    if (hasResponded || !isPending || !host?.exitPlanModeApproveManual) return;
+
+    setIsSubmitting(true);
+    setSubmitError(null);
+    setLocalResult({ approved: true });
+    setHasResponded(true);
+
+    try {
+      await host.exitPlanModeApproveManual(requestId);
+    } catch (error) {
+      console.error('[ExitPlanModeWidget] Failed to approve with manual edits:', error);
       setSubmitError(error instanceof Error ? error.message : null);
       setLocalResult(null);
       setHasResponded(false);
@@ -209,42 +263,35 @@ export const ExitPlanModeWidget: React.FC<CustomToolWidgetProps> = ({
     }
   }, [feedback, handleDeny]);
 
-  const handleFeedbackKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSubmitFeedback();
-    } else if (e.key === 'Escape') {
-      setShowFeedbackInput(false);
-      setFeedback('');
-    }
-  }, [handleSubmitFeedback]);
+  const handleCancelFeedback = useCallback(() => {
+    setShowFeedbackInput(false);
+    setFeedback('');
+  }, []);
 
   const handleOpenPlanFile = useCallback(() => {
     if (!planFilePath || !workspacePath) return;
 
-    // Check if path is already absolute (works for both Unix and Windows)
-    const isAbsolute = planFilePath.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(planFilePath);
-
-    // If path is relative but we don't have a workspacePath, we can't resolve it
-    if (!isAbsolute && !workspacePath) {
-      console.warn('[ExitPlanModeWidget] Cannot resolve relative path without workspacePath:', planFilePath);
-      return;
-    }
-
-    // Detect path separator from workspacePath (works cross-platform)
-    const separator = workspacePath?.includes('\\') ? '\\' : '/';
-
-    const absolutePath = isAbsolute
-      ? planFilePath
-      : `${workspacePath}${separator}${planFilePath}`;
-
-    if (host) {
+    // Relative paths resolve against the workspace; absolute ones (either platform) pass through.
+    const absolutePath = resolvePlanFilePath(planFilePath, workspacePath);
+    if (absolutePath && host) {
       host.openFile(absolutePath);
     }
   }, [planFilePath, workspacePath, host]);
 
+  const closeFullscreen = useCallback(() => setFullscreenOpen(false), []);
+  const openFullscreen = useCallback(() => setFullscreenOpen(true), []);
+
+  const planFileLink = planFilePath ? (
+    <button
+      onClick={handleOpenPlanFile}
+      className="text-nim-link hover:text-nim-link-hover hover:underline cursor-pointer bg-transparent border-none p-0 font-mono text-[13px]"
+    >
+      {planFilePath}
+    </button>
+  ) : null;
+
   // Show completed state
-  if (displayResult || hasResponded) {
+  if (isFinished) {
     const approved = displayResult?.approved ?? false;
 
     return (
@@ -281,12 +328,27 @@ export const ExitPlanModeWidget: React.FC<CustomToolWidgetProps> = ({
         </div>
         {planFilePath && (
           <div className="px-4 py-2 text-[13px] text-nim-muted">
-            Plan: <button
-              onClick={handleOpenPlanFile}
-              className="text-nim-link hover:text-nim-link-hover hover:underline cursor-pointer bg-transparent border-none p-0 font-mono text-[13px]"
+            Plan: {planFileLink}
+          </div>
+        )}
+        {canShowPlan && (
+          <div className="exit-plan-mode-finished-plan px-4 pb-3">
+            <button
+              data-testid="exit-plan-mode-plan-toggle"
+              onClick={() => setPlanExpanded((open) => !open)}
+              aria-expanded={planExpanded}
+              className="text-[13px] text-nim-muted hover:text-nim cursor-pointer bg-transparent border-none p-0"
             >
-              {planFilePath}
+              {planExpanded ? 'Hide plan' : 'Show plan'}
             </button>
+            {planExpanded && (
+              <>
+                <ExitPlanBody plan={plan} className="mt-2 max-h-[50vh] overflow-y-auto rounded-md border border-nim p-4" />
+                {plan.status === 'unavailable' && (
+                  <div className="mt-2 text-[13px] text-nim-muted">The plan text is not available here.</div>
+                )}
+              </>
+            )}
           </div>
         )}
       </div>
@@ -297,6 +359,21 @@ export const ExitPlanModeWidget: React.FC<CustomToolWidgetProps> = ({
   if (!isPending) {
     return null;
   }
+
+  const reviewButton =
+    plan.status === 'ready' ? (
+      <button
+        data-testid="exit-plan-mode-fullscreen-open"
+        onClick={openFullscreen}
+        className="exit-plan-mode-fullscreen-open px-3 py-1 rounded-md text-[12px] cursor-pointer border border-nim transition-colors duration-150 hover:bg-nim-hover bg-nim-secondary text-nim"
+      >
+        Review full screen
+      </button>
+    ) : null;
+
+  const inlinePlan = (
+    <ExitPlanBody plan={plan} className="max-h-[60vh] overflow-y-auto rounded-md border border-nim bg-nim p-4" />
+  );
 
   // The CLI asks for approval in its own terminal dialog; buttons here would no-op.
   if (host?.exitPlanModeInTerminal) {
@@ -313,18 +390,23 @@ export const ExitPlanModeWidget: React.FC<CustomToolWidgetProps> = ({
           <span data-testid="exit-plan-mode-in-terminal" className="text-xs text-nim-muted">
             Approve or keep planning in the terminal below
           </span>
+          {reviewButton}
         </div>
         {planFilePath && (
           <div className="px-4 py-2 text-[13px]">
             <span className="text-nim-muted">Plan file: </span>
-            <button
-              onClick={handleOpenPlanFile}
-              className="text-nim-link hover:text-nim-link-hover hover:underline cursor-pointer bg-transparent border-none p-0 font-mono text-[13px]"
-            >
-              {planFilePath}
-            </button>
+            {planFileLink}
           </div>
         )}
+        {plan.status !== 'unavailable' && <div className="px-4 pb-4">{inlinePlan}</div>}
+        <ExitPlanFullscreen
+          isOpen={fullscreenOpen}
+          onClose={closeFullscreen}
+          plan={plan}
+          planFilePath={planFilePath}
+          onOpenPlanFile={handleOpenPlanFile}
+          footer={<div className="text-[13px] text-nim-muted">Approve or keep planning in the terminal below.</div>}
+        />
       </div>
     );
   }
@@ -349,12 +431,35 @@ export const ExitPlanModeWidget: React.FC<CustomToolWidgetProps> = ({
           </span>
           <span data-testid="exit-plan-mode-pending" className="text-xs text-nim-muted">Waiting...</span>
         </div>
+        {plan.status !== 'unavailable' && <div className="px-4 py-3">{inlinePlan}</div>}
       </div>
     );
   }
 
   // Show interactive UI for pending request
   const approveOrReviseOnly = host.exitPlanModeApproveOrReviseOnly === true;
+  const choiceVariant: ExitPlanChoiceVariant = !approveOrReviseOnly
+    ? 'sdk'
+    : host.exitPlanModeApproveManual
+      ? 'cli-manual'
+      : 'cli';
+  const choices = (
+    <ExitPlanChoices
+      variant={choiceVariant}
+      isSubmitting={isSubmitting}
+      submitError={submitError}
+      showFeedbackInput={showFeedbackInput}
+      feedback={feedback}
+      onFeedbackChange={setFeedback}
+      onShowFeedback={handleShowFeedbackInput}
+      onCancelFeedback={handleCancelFeedback}
+      onSubmitFeedback={handleSubmitFeedback}
+      onApprove={handleApprove}
+      onApproveManual={handleApproveManual}
+      onStartNewSession={handleStartNewSession}
+      onCancel={handleCancel}
+    />
+  );
   return (
     <div
       data-testid="exit-plan-mode-widget"
@@ -371,109 +476,30 @@ export const ExitPlanModeWidget: React.FC<CustomToolWidgetProps> = ({
         <span className="text-sm font-semibold text-nim flex-1">
           Ready to exit planning mode?
         </span>
+        {reviewButton}
       </div>
 
       <div className="p-4">
         {planFilePath && (
           <div className="mb-3 p-2 bg-nim-tertiary rounded-md text-[13px]">
             <span className="text-nim-muted">Plan file: </span>
-            <button
-              onClick={handleOpenPlanFile}
-              className="text-nim-link hover:text-nim-link-hover hover:underline cursor-pointer bg-transparent border-none p-0 font-mono text-[13px]"
-            >
-              {planFilePath}
-            </button>
+            {planFileLink}
           </div>
         )}
+        {plan.status !== 'unavailable' && <div className="mb-4">{inlinePlan}</div>}
 
-        <div className="mb-3 text-[13px] text-nim">
-          Would you like to proceed?
-        </div>
-        {submitError && (
-          <div data-testid="exit-plan-mode-error" className="mb-3 text-[13px] text-nim-warning">
-            {submitError}
-          </div>
-        )}
-
-        <div className="flex flex-col gap-2">
-          {!approveOrReviseOnly && (
-          <button
-            data-testid="exit-plan-mode-new-session"
-            className="w-full px-4 py-2 rounded-md text-[13px] font-medium cursor-pointer border border-nim transition-colors duration-150 hover:bg-nim-hover active:opacity-80 bg-nim-tertiary text-nim text-left disabled:opacity-50 disabled:cursor-not-allowed"
-            onClick={handleStartNewSession}
-            disabled={isSubmitting}
-          >
-            <span className="text-nim-muted mr-2">1.</span>
-            Yes, start new session and implement (clean context window)
-          </button>
-          )}
-          <button
-            data-testid="exit-plan-mode-approve"
-            className="w-full px-4 py-2 rounded-md text-[13px] font-medium cursor-pointer border border-nim transition-colors duration-150 hover:bg-nim-hover active:opacity-80 bg-nim-tertiary text-nim text-left disabled:opacity-50 disabled:cursor-not-allowed"
-            onClick={handleApprove}
-            disabled={isSubmitting}
-          >
-            <span className="text-nim-muted mr-2">{approveOrReviseOnly ? '1.' : '2.'}</span>
-            Yes, proceed in this same session
-          </button>
-          {!showFeedbackInput ? (
-            <button
-              data-testid="exit-plan-mode-deny"
-              className="w-full px-4 py-2 rounded-md text-[13px] font-medium cursor-pointer border border-nim transition-colors duration-150 hover:bg-nim-hover active:opacity-80 bg-nim-tertiary text-nim text-left disabled:opacity-50 disabled:cursor-not-allowed"
-              onClick={handleShowFeedbackInput}
-              disabled={isSubmitting}
-            >
-              <span className="text-nim-muted mr-2">{approveOrReviseOnly ? '2.' : '3.'}</span>
-              Type here to tell Claude what to change
-            </button>
-          ) : (
-            <div className="flex flex-col gap-2">
-              <textarea
-                ref={feedbackInputRef}
-                data-testid="exit-plan-mode-feedback-input"
-                value={feedback}
-                onChange={(e) => setFeedback(e.target.value)}
-                onKeyDown={handleFeedbackKeyDown}
-                placeholder="Tell Claude what to change in the plan..."
-                className="w-full px-3 py-2 rounded-md text-[13px] border border-nim bg-nim-tertiary text-nim placeholder:text-nim-muted resize-none focus:outline-none focus:border-nim-focus"
-                rows={3}
-                disabled={isSubmitting}
-              />
-              <div className="flex gap-2 justify-end">
-                <button
-                  className="px-3 py-1 rounded-md text-[12px] cursor-pointer border border-nim transition-colors duration-150 hover:bg-nim-hover bg-nim-tertiary text-nim-muted disabled:opacity-50 disabled:cursor-not-allowed"
-                  onClick={() => {
-                    setShowFeedbackInput(false);
-                    setFeedback('');
-                  }}
-                  disabled={isSubmitting}
-                >
-                  Cancel
-                </button>
-                <button
-                  data-testid="exit-plan-mode-send-feedback"
-                  className="px-3 py-1 rounded-md text-[12px] cursor-pointer border-none transition-colors duration-150 hover:opacity-90 bg-nim-primary text-nim-on-primary disabled:opacity-50 disabled:cursor-not-allowed"
-                  onClick={handleSubmitFeedback}
-                  disabled={!feedback.trim() || isSubmitting}
-                >
-                  Send Feedback
-                </button>
-              </div>
-            </div>
-          )}
-          {!approveOrReviseOnly && (
-          <button
-            data-testid="exit-plan-mode-cancel"
-            className="w-full px-4 py-2 rounded-md text-[13px] font-medium cursor-pointer border border-nim transition-colors duration-150 hover:bg-nim-hover active:opacity-80 bg-nim-tertiary text-nim text-left disabled:opacity-50 disabled:cursor-not-allowed"
-            onClick={handleCancel}
-            disabled={isSubmitting}
-          >
-            <span className="text-nim-muted mr-2">4.</span>
-            Stop for now
-          </button>
-          )}
-        </div>
+        {/* While the full-screen review is open it owns the choices, so each testid exists once. */}
+        {!fullscreenOpen && choices}
       </div>
+
+      <ExitPlanFullscreen
+        isOpen={fullscreenOpen}
+        onClose={closeFullscreen}
+        plan={plan}
+        planFilePath={planFilePath}
+        onOpenPlanFile={handleOpenPlanFile}
+        footer={choices}
+      />
     </div>
   );
 };

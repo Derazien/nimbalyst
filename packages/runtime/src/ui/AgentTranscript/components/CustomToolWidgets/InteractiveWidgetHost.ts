@@ -255,6 +255,12 @@ export interface InteractiveWidgetHost {
   exitPlanModeApprove(requestId: string): Promise<void>;
 
   /**
+   * Approve but keep being asked before each edit. Only the genuine CLI whose approve switches to
+   * bypass offers it; absent on every other host, and the widget then hides the choice.
+   */
+  exitPlanModeApproveManual?(requestId: string): Promise<void>;
+
+  /**
    * Approve and start a new implementation session
    * Handles workstream creation, worktree sessions, etc.
    */

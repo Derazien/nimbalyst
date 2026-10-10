@@ -13,10 +13,11 @@ import { buildToolPermissionResponseRecord } from '.././claudeCliToolPermission'
 import { setSessionPendingPrompt } from '.././pendingPromptPersistence';
 import {
   answerExitPlanFromCard,
+  getExitPlanAnswerPath,
   isExitPlanCardInteractive,
   parseExitPlanResponse,
 } from '.././claudeCliExitPlanMode';
-import { approvePlanOnScreen, revisePlanOnScreen } from '.././claudeCliPlanDialog';
+import { approvePlanManualOnScreen, approvePlanOnScreen, revisePlanOnScreen } from '.././claudeCliPlanDialog';
 import { getClaudeCliModeTracker } from '.././claudeCliModeSingleton';
 import { getTerminalSessionManager } from '../../TerminalSessionManager';
 import { type AIServiceContext } from './AIServiceContext';
@@ -61,9 +62,9 @@ export function registerInteractivePromptHandlers(ctx: AIServiceContext): void {
           delay: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
           readMode: () => tracker.getMode(sid),
         };
-        return userAnswer.decision === 'approve'
-          ? approvePlanOnScreen(deps)
-          : revisePlanOnScreen(deps, userAnswer.feedback ?? '');
+        if (userAnswer.decision === 'approve') return approvePlanOnScreen(deps);
+        if (userAnswer.decision === 'approve-manual') return approvePlanManualOnScreen(deps);
+        return revisePlanOnScreen(deps, userAnswer.feedback ?? '');
       },
     });
     logger.main.info(
@@ -73,8 +74,10 @@ export function registerInteractivePromptHandlers(ctx: AIServiceContext): void {
     return result;
   });
   // Whether the card can answer this session's CLI (hook or screen), i.e. whether to show it live.
+  // `path` lets the card offer "ask before each edit" only where it differs from approve (screen).
   safeHandle('claude-cli:exit-plan-mode-capable', async (_event, sessionId: unknown) => ({
     interactive: typeof sessionId === 'string' && isExitPlanCardInteractive(sessionId),
+    path: typeof sessionId === 'string' ? getExitPlanAnswerPath(sessionId) : 'none',
   }));
 
   // Handle ExitPlanMode confirmation response from renderer

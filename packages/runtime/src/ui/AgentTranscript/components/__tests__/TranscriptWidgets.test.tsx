@@ -1613,6 +1613,168 @@ describe('ExitPlanModeWidget', () => {
     expect(screen.getByTestId('exit-plan-mode-widget').dataset.state).toBe('pending');
   });
 
+  describe('plan review', () => {
+    const PLAN = '# Plan\n\nStep one: write hello.txt';
+
+    async function hostStore(sessionId: string, host: Record<string, unknown>) {
+      const { interactiveWidgetHostAtom } = await import('../../../../store/atoms/interactiveWidgetHost');
+      const store = createStore();
+      store.set(interactiveWidgetHostAtom(sessionId), {
+        sessionId,
+        workspacePath: '/',
+        openFile: vi.fn(),
+        ...host,
+      } as unknown as InteractiveWidgetHost);
+      return store;
+    }
+
+    /** A tool call with a stable id: the auto-open memory is keyed by it, across tests too. */
+    function planMessage(callId: string, args: Record<string, unknown>, result?: unknown) {
+      const message = makeToolMessage('ExitPlanMode', args, result);
+      message.toolCall!.providerToolCallId = callId;
+      return message;
+    }
+
+    function card(
+      store: ReturnType<typeof createStore>,
+      sessionId: string,
+      message: TranscriptViewMessage,
+      readFile?: CustomToolWidgetProps['readFile'],
+    ) {
+      return (
+        <JotaiProvider store={store}>
+          <ExitPlanModeWidget message={message} isExpanded={false} onToggle={() => {}} sessionId={sessionId} readFile={readFile} />
+        </JotaiProvider>
+      );
+    }
+
+    it('shows the whole plan and opens it full screen once; Escape returns to the inline card for good (SDK lane keeps its four actions)', async () => {
+      const store = await hostStore('review-once', { exitPlanModeApprove: vi.fn() });
+      const message = planMessage('call-review-once', { plan: PLAN, planFilePath: 'plan.md' });
+      const first = render(card(store, 'review-once', message));
+
+      const dialog = await screen.findByRole('dialog');
+      expect(rtl.within(dialog).getByTestId('exit-plan-mode-fullscreen-plan').textContent).toContain('Step one: write hello.txt');
+      // The dialog owns the choices while open, so each testid exists once.
+      for (const id of ['new-session', 'approve', 'deny', 'cancel']) {
+        expect(rtl.within(dialog).getByTestId(`exit-plan-mode-${id}`)).toBeDefined();
+      }
+      expect(screen.getAllByTestId('exit-plan-mode-approve')).toHaveLength(1);
+
+      fireEvent.keyDown(window, { key: 'Escape' });
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+      const widget = screen.getByTestId('exit-plan-mode-widget');
+      expect(rtl.within(widget).getByTestId('exit-plan-mode-plan').textContent).toContain('Step one: write hello.txt');
+      expect(rtl.within(widget).getByTestId('exit-plan-mode-approve')).toBeDefined();
+
+      // A remount (transcript re-render) must not throw the same plan back at the user.
+      first.unmount();
+      render(card(store, 'review-once', message));
+      expect(screen.queryByRole('dialog')).toBeNull();
+      fireEvent.click(screen.getByTestId('exit-plan-mode-fullscreen-open'));
+      expect(screen.getByRole('dialog')).toBeDefined();
+    });
+
+    it('reads the plan file when the tool input has no plan text; an unreadable file opens nothing and keeps the path link', async () => {
+      let resolveRead!: (value: { success: boolean; content?: string }) => void;
+      const readFile = vi.fn(() => new Promise<{ success: boolean; content?: string }>((resolve) => { resolveRead = resolve; }));
+      const store = await hostStore('review-file', { exitPlanModeApproveOrReviseOnly: true, exitPlanModeApprove: vi.fn() });
+      render(card(store, 'review-file', planMessage('call-review-file', { planFilePath: '/plans/p.md' }), readFile));
+
+      expect(screen.getByTestId('exit-plan-mode-plan-loading')).toBeDefined();
+      expect(screen.queryByRole('dialog')).toBeNull();
+      resolveRead({ success: true, content: PLAN });
+      const dialog = await screen.findByRole('dialog');
+      expect(readFile).toHaveBeenCalledWith('/plans/p.md');
+      expect(rtl.within(dialog).getByTestId('exit-plan-mode-fullscreen-plan').textContent).toContain('Step one');
+      rtl.cleanup();
+
+      const failing = vi.fn().mockResolvedValue({ success: false, error: 'ENOENT' });
+      render(card(store, 'review-file', planMessage('call-review-file-2', { planFilePath: '/plans/gone.md' }), failing));
+      await waitFor(() => expect(screen.queryByTestId('exit-plan-mode-plan-loading')).toBeNull());
+      expect(screen.queryByRole('dialog')).toBeNull();
+      expect(screen.queryByTestId('exit-plan-mode-plan')).toBeNull();
+      expect(screen.getByText('/plans/gone.md')).toBeDefined();
+      expect(screen.getByTestId('exit-plan-mode-approve')).toBeDefined();
+    });
+
+    it('CLI card driving the dialog offers bypass, ask-before-each-edit and keep planning; the manual choice calls its own method', async () => {
+      const exitPlanModeApprove = vi.fn().mockResolvedValue(undefined);
+      const exitPlanModeApproveManual = vi.fn().mockResolvedValue(undefined);
+      const store = await hostStore('review-manual', {
+        exitPlanModeApproveOrReviseOnly: true,
+        exitPlanModeApprove,
+        exitPlanModeApproveManual,
+      });
+      render(card(store, 'review-manual', planMessage('call-review-manual', { plan: PLAN })));
+      await screen.findByRole('dialog');
+      fireEvent.keyDown(window, { key: 'Escape' });
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+
+      expect(screen.getByTestId('exit-plan-mode-approve').textContent).toContain('continue in bypass');
+      expect(screen.getByTestId('exit-plan-mode-deny').textContent).toContain('Keep planning');
+      expect(screen.queryByTestId('exit-plan-mode-new-session')).toBeNull();
+      expect(screen.queryByTestId('exit-plan-mode-cancel')).toBeNull();
+      fireEvent.click(screen.getByTestId('exit-plan-mode-approve-manual'));
+      await waitFor(() => expect(exitPlanModeApproveManual).toHaveBeenCalledWith('call-review-manual'));
+      expect(exitPlanModeApprove).not.toHaveBeenCalled();
+      expect(screen.getByTestId('exit-plan-mode-widget').dataset.state).toBe('approved');
+    });
+
+    it('hides ask-before-each-edit when the host cannot do it, and a refused manual answer reverts to pending with the reason', async () => {
+      const hookOnly = await hostStore('review-hook', { exitPlanModeApproveOrReviseOnly: true, exitPlanModeApprove: vi.fn() });
+      render(card(hookOnly, 'review-hook', planMessage('call-review-hook', { planFilePath: 'plan.md' })));
+      expect(screen.queryByTestId('exit-plan-mode-approve-manual')).toBeNull();
+      expect(screen.getByTestId('exit-plan-mode-approve').textContent).toContain('proceed in this same session');
+      rtl.cleanup();
+
+      const refusing = await hostStore('review-refused', {
+        exitPlanModeApproveOrReviseOnly: true,
+        exitPlanModeApprove: vi.fn(),
+        exitPlanModeApproveManual: vi.fn().mockRejectedValue(new Error('Answer in the terminal: the plan dialog is not showing.')),
+      });
+      render(card(refusing, 'review-refused', planMessage('call-review-refused', { planFilePath: 'plan.md' })));
+      fireEvent.click(screen.getByTestId('exit-plan-mode-approve-manual'));
+      await waitFor(() => expect(screen.getByTestId('exit-plan-mode-error').textContent).toContain('Answer in the terminal'));
+      expect(screen.getByTestId('exit-plan-mode-widget').dataset.state).toBe('pending');
+    });
+
+    it('Escape inside the feedback draft closes only the draft, not the full-screen review', async () => {
+      const store = await hostStore('review-escape', { exitPlanModeApproveOrReviseOnly: true, exitPlanModeApprove: vi.fn() });
+      render(card(store, 'review-escape', planMessage('call-review-escape', { plan: PLAN })));
+      const dialog = await screen.findByRole('dialog');
+      fireEvent.click(rtl.within(dialog).getByTestId('exit-plan-mode-deny'));
+      fireEvent.keyDown(rtl.within(dialog).getByTestId('exit-plan-mode-feedback-input'), { key: 'Escape' });
+      expect(screen.queryByTestId('exit-plan-mode-feedback-input')).toBeNull();
+      expect(screen.getByRole('dialog')).toBeDefined();
+    });
+
+    it('a pending terminal-owned plan is reviewable full screen without any answer buttons', async () => {
+      const store = await hostStore('review-terminal', { exitPlanModeInTerminal: true });
+      render(card(store, 'review-terminal', planMessage('call-review-terminal', { plan: PLAN })));
+      const dialog = await screen.findByRole('dialog');
+      expect(rtl.within(dialog).getByTestId('exit-plan-mode-fullscreen-plan').textContent).toContain('Step one');
+      expect(screen.queryByTestId('exit-plan-mode-approve')).toBeNull();
+      expect(screen.getByTestId('exit-plan-mode-widget').dataset.state).toBe('pending-terminal');
+    });
+
+    it('keeps a finished plan collapsed under the result bar, reads the file only once expanded, and never opens full screen', async () => {
+      const readFile = vi.fn().mockResolvedValue({ success: true, content: PLAN });
+      const message = planMessage('call-review-done', { planFilePath: '/plans/done.md' }, 'Approved - exited planning mode');
+      render(card(createStore(), 'review-done', message, readFile));
+
+      expect(screen.getByTestId('exit-plan-mode-widget').dataset.state).toBe('approved');
+      expect(screen.queryByTestId('exit-plan-mode-plan')).toBeNull();
+      expect(readFile).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByTestId('exit-plan-mode-plan-toggle'));
+      await waitFor(() => expect(screen.getByTestId('exit-plan-mode-plan').textContent).toContain('Step one'));
+      expect(readFile).toHaveBeenCalledTimes(1);
+      expect(screen.queryByRole('dialog')).toBeNull();
+      fireEvent.click(screen.getByTestId('exit-plan-mode-plan-toggle'));
+      expect(screen.queryByTestId('exit-plan-mode-plan')).toBeNull();
+    });
+  });
+
   it('renders approved state from tool result', () => {
     const message = makeToolMessage(
       'ExitPlanMode',

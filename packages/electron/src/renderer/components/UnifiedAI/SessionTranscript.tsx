@@ -1784,22 +1784,25 @@ const LocalSessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscrip
   // Whether the main process parked a PreToolUse hook for this CLI session, i.e. whether the
   // ExitPlanMode card can answer the CLI. Asked again as the transcript grows until it says yes:
   // by the time a plan card exists the CLI has long since launched, so the answer is settled.
-  const [cliExitPlanHook, setCliExitPlanHook] = useState<{ sessionId: string; interactive: boolean } | null>(null);
+  const [cliExitPlanHook, setCliExitPlanHook] = useState<{ sessionId: string; interactive: boolean; path: string | null } | null>(null);
   const cliExitPlanInteractive = cliExitPlanHook?.sessionId === sessionId ? cliExitPlanHook.interactive : null;
+  const cliExitPlanPath = cliExitPlanHook?.sessionId === sessionId ? cliExitPlanHook.path : null;
   useEffect(() => {
     if (provider !== CLAUDE_CLI_PROVIDER_ID || cliExitPlanInteractive === true) return;
     let cancelled = false;
     window.electronAPI
       .invoke(CLAUDE_CLI_EXIT_PLAN_CAPABLE_CHANNEL, sessionId)
-      .then((result: { interactive?: boolean } | undefined) => {
-        if (!cancelled) setCliExitPlanHook({ sessionId, interactive: result?.interactive === true });
+      .then((result: { interactive?: boolean; path?: string } | undefined) => {
+        if (!cancelled) {
+          setCliExitPlanHook({ sessionId, interactive: result?.interactive === true, path: result?.path ?? null });
+        }
       })
       .catch(() => {});
     return () => {
       cancelled = true;
     };
   }, [provider, sessionId, messages.length, cliExitPlanInteractive]);
-  const exitPlanCardMode = resolveExitPlanCardMode(provider, cliExitPlanInteractive);
+  const exitPlanCardMode = resolveExitPlanCardMode(provider, cliExitPlanInteractive, cliExitPlanPath);
 
   // Confirmation handlers
   const handleExitPlanModeApprove = useCallback(async (requestId: string, confirmSessionId: string) => {
@@ -1830,6 +1833,13 @@ const LocalSessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscrip
       console.error('[SessionTranscript] Failed to send ExitPlanMode approval:', error);
     }
   }, [respondToPrompt, setAiMode, posthog, provider, cliExitPlanInteractive]);
+
+  // "Approve, ask before each edit": CLI screen path only (the host exposes it only there).
+  const handleExitPlanModeApproveManual = useCallback(async (_requestId: string, confirmSessionId: string) => {
+    // Throws when the dialog is not showing, which reverts the card so the terminal is used.
+    await sendCliExitPlanResponse(window.electronAPI.invoke, confirmSessionId, { approved: true, manualEdits: true });
+    posthog?.capture('exit_plan_mode_response', { decision: 'approved', manual_edits: true });
+  }, [posthog]);
 
   const handleExitPlanModeDeny = useCallback(async (requestId: string, confirmSessionId: string, feedback?: string) => {
     if (routesExitPlanToCliHook(provider, cliExitPlanInteractive)) {
@@ -2010,6 +2020,11 @@ const LocalSessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscrip
       exitPlanModeApprove: async (requestId: string) => {
         await handleExitPlanModeApprove(requestId, sessionId);
       },
+      exitPlanModeApproveManual: exitPlanCardMode.canApproveManual
+        ? async (requestId: string) => {
+            await handleExitPlanModeApproveManual(requestId, sessionId);
+          }
+        : undefined,
       exitPlanModeStartNewSession: async (requestId: string, planFilePath: string) => {
         await handleExitPlanModeStartNewSession(requestId, sessionId, planFilePath);
       },
@@ -2370,6 +2385,12 @@ const LocalSessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscrip
       requestUserInputSubmit: (...args) => liveHostRef.current!.requestUserInputSubmit(...args),
       requestUserInputCancel: (...args) => liveHostRef.current!.requestUserInputCancel(...args),
       exitPlanModeApprove: (...args) => liveHostRef.current!.exitPlanModeApprove(...args),
+      // Undefined (button hidden) unless the live host can answer it; read per access, not frozen.
+      get exitPlanModeApproveManual() {
+        return liveHostRef.current?.exitPlanModeApproveManual
+          ? (requestId: string) => liveHostRef.current!.exitPlanModeApproveManual!(requestId)
+          : undefined;
+      },
       exitPlanModeStartNewSession: (...args) => liveHostRef.current!.exitPlanModeStartNewSession(...args),
       exitPlanModeDeny: (...args) => liveHostRef.current!.exitPlanModeDeny(...args),
       exitPlanModeCancel: (...args) => liveHostRef.current!.exitPlanModeCancel(...args),

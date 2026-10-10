@@ -99,6 +99,55 @@ describe("shouldObserveMessagesRequest", () => {
     ).toBe(true);
   });
 
+  describe("session-name side request (CLI 2.1.295 rename_generate_name)", () => {
+    const NAME_PROMPT =
+      'Generate a short kebab-case name (2-4 words) that captures the main topic of this conversation. ' +
+      'Return JSON with a "name" field. The conversation is provided inside <conversation> tags.';
+    const nameSchema = (properties: Record<string, unknown>, required: string[]) => ({
+      output_config: { format: { type: "json_schema", schema: { type: "object", properties, required } } },
+    });
+
+    it("skips the side request: name system prompt plus a name-only json_schema", () => {
+      expect(
+        shouldObserveMessagesRequest({
+          system: [{ type: "text", text: NAME_PROMPT }],
+          messages: [{ role: "user", content: "<conversation>\nplan\n</conversation>" }],
+          ...nameSchema({ name: { type: "string" } }, ["name"]),
+        }),
+      ).toBe(false);
+    });
+
+    it("skips the /rename fork, whose only tell is the trailing user message", () => {
+      expect(
+        shouldObserveMessagesRequest({
+          messages: [
+            { role: "user", content: "clean up the install" },
+            { role: "assistant", content: [{ type: "text", text: "here is a plan" }] },
+            { role: "user", content: [{ type: "text", text: NAME_PROMPT }] },
+          ],
+        }),
+      ).toBe(false);
+    });
+
+    it("still observes a turn that quotes the phrase mid-message", () => {
+      expect(
+        shouldObserveMessagesRequest({
+          messages: [{ role: "user", content: `Why does the CLI say "${NAME_PROMPT}" in the background?` }],
+        }),
+      ).toBe(true);
+    });
+
+    it("still observes a request whose schema has name plus other properties", () => {
+      expect(
+        shouldObserveMessagesRequest({
+          system: NAME_PROMPT,
+          messages: [{ role: "user", content: "extract a record" }],
+          ...nameSchema({ name: { type: "string" }, age: { type: "number" } }, ["name"]),
+        }),
+      ).toBe(true);
+    });
+  });
+
   it("observes a body with no usable messages rather than guessing", () => {
     expect(shouldObserveMessagesRequest({})).toBe(true);
     expect(shouldObserveMessagesRequest({ messages: [] })).toBe(true);
