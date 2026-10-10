@@ -76,9 +76,9 @@ export class ClaudeApiMessageAssembler {
    * stream (and the unit tests) can omit the id — they share the `"default"` key.
    */
   private readonly states = new Map<string, MessageState>();
-  private readonly onMessage: (msg: AssembledAssistantMessage) => void;
+  private readonly onMessage: (msg: AssembledAssistantMessage, requestId: string) => void;
 
-  constructor(onMessage: (msg: AssembledAssistantMessage) => void) {
+  constructor(onMessage: (msg: AssembledAssistantMessage, requestId: string) => void) {
     this.onMessage = onMessage;
   }
 
@@ -223,14 +223,17 @@ export class ClaudeApiMessageAssembler {
       case "message_stop": {
         const current = this.states.get(requestId);
         if (!current) break;
-        this.onMessage({
-          id: current.id,
-          role: "assistant",
-          model: current.model,
-          content: current.content,
-          stopReason: current.stopReason,
-          usage: current.usage,
-        });
+        this.onMessage(
+          {
+            id: current.id,
+            role: "assistant",
+            model: current.model,
+            content: current.content,
+            stopReason: current.stopReason,
+            usage: current.usage,
+          },
+          requestId,
+        );
         this.states.delete(requestId);
         break;
       }

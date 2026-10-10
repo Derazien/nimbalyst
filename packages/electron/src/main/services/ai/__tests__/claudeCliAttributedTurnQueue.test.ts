@@ -127,4 +127,50 @@ describe('claudeCliAttributedTurnQueue', () => {
 
     expect(persisted).toEqual(['msg_one', 'msg_two']);
   });
+
+  it('takes a parent known at request time as-is: no sidecar wait, even before the session has recorded a spawn', async () => {
+    // The leak this closes: the sidecar wait times out and the agent's turn is
+    // persisted as the lead's. A parent matched from the request needs no file.
+    const resolve = vi.fn(() => new Promise<string | undefined>(() => {})); // never settles
+    const persisted: Array<[string, string | undefined]> = [];
+    const queue = createAttributedTurnQueue({
+      shouldAttribute: () => false,
+      resolveParentToolUseId: resolve,
+      persist: async (t, parent) => { persisted.push([t.messageId, parent]); },
+    });
+
+    queue.enqueue({ ...turn('msg_bg'), knownParentToolUseId: 'toolu_bg' });
+    queue.enqueue(turn('msg_lead'));
+    await queue.drain();
+
+    expect(resolve).not.toHaveBeenCalled();
+    expect(persisted).toEqual([['msg_bg', 'toolu_bg'], ['msg_lead', undefined]]);
+    expect([...queue.leadMessageIds()]).toEqual(['msg_lead']);
+  });
+
+  it('settled() resolves once every turn enqueued before the call is persisted, not turns enqueued after', async () => {
+    const persisted: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const queue = createAttributedTurnQueue({
+      shouldAttribute: () => false,
+      resolveParentToolUseId: async () => undefined,
+      persist: async (t) => { if (t.messageId === 'msg_one') await gate; persisted.push(t.messageId); },
+    });
+
+    queue.enqueue(turn('msg_one'));
+    const settled = queue.settled();
+    queue.enqueue(turn('msg_two'));
+    let done = false;
+    void settled.then(() => { done = true; });
+    await tick(5);
+    expect(done).toBe(false);
+
+    release();
+    await settled;
+    expect(persisted).toContain('msg_one');
+    await queue.drain();
+    await queue.settled(); // nothing pending: resolves immediately
+    expect(persisted).toEqual(['msg_one', 'msg_two']);
+  });
 });

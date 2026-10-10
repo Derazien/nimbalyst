@@ -23,8 +23,18 @@ import {
 export interface ClaudeCliProxyObservationDeps {
   /** Nimbalyst session id this proxy observes (for logging / bridge routing). */
   sessionId: string;
-  /** Called once per reassembled assistant turn (after id-dedup). */
-  onAssistantMessage: (msg: AssembledAssistantMessage) => void;
+  /**
+   * Called once per reassembled assistant turn (after id-dedup). `meta` carries
+   * what the turn's own request already said about it.
+   */
+  onAssistantMessage: (msg: AssembledAssistantMessage, meta?: ObservedTurnMeta) => void;
+  /**
+   * Decide from a request body whether the request belongs to a sub-agent, and if
+   * so return the `Agent`/`Task` tool_use id that spawned it. The answer rides
+   * along to the assembled turn of THAT request's response, so attribution does
+   * not wait on any file. Undefined means "not known", never "the lead's".
+   */
+  attributeRequest?: (body: Record<string, unknown>, info: ProxyRequestInfo) => string | undefined;
   /** Raw request body of an observed `/v1/messages` (Slice E reads tool_result here). */
   onRequestBody?: (body: Record<string, unknown>, info: ProxyRequestInfo) => void;
   /** Proxy / upstream transport errors. */
@@ -41,14 +51,28 @@ export interface ClaudeCliProxyObservationDeps {
   upstreamUrl?: string;
 }
 
+/** What an observed request established about the turn its response produced. */
+export interface ObservedTurnMeta {
+  /** Spawning tool_use id, when the request matched a known sub-agent spawn. */
+  parentToolUseId?: string;
+}
+
+/**
+ * Bound on remembered attributions. An entry is dropped when its response's turn
+ * is assembled; this only matters for streams that never finish.
+ */
+const MAX_PENDING_REQUEST_PARENTS = 256;
+
 export class ClaudeCliProxyObservation {
   private server: http.Server | null = null;
   private port: number | null = null;
   private readonly assembler: ClaudeApiMessageAssembler;
   private readonly emittedMessageIds = new Set<string>();
+  /** Proxy request id to the sub-agent spawn its request matched. */
+  private readonly requestParents = new Map<string, string>();
 
   constructor(private readonly deps: ClaudeCliProxyObservationDeps) {
-    this.assembler = new ClaudeApiMessageAssembler((msg) => this.handleAssembled(msg));
+    this.assembler = new ClaudeApiMessageAssembler((msg, requestId) => this.handleAssembled(msg, requestId));
   }
 
   /** Start the proxy on a loopback port. Returns the base URL for ANTHROPIC_BASE_URL. */
@@ -62,7 +86,10 @@ export class ClaudeCliProxyObservation {
           // isolation (the CLI runs Task sub-agents through this same proxy).
           this.assembler.processSSE(event, info.requestId);
         },
-        onRequestBody: (body, info) => this.deps.onRequestBody?.(body, info),
+        onRequestBody: (body, info) => {
+          this.noteRequestAttribution(body, info);
+          this.deps.onRequestBody?.(body, info);
+        },
         onProxyError: (err) => this.deps.onError?.(err),
         onRateLimit: (info) => this.deps.onRateLimit?.(info),
         onUpstreamError: (info) => this.deps.onUpstreamError?.(info),
@@ -81,6 +108,7 @@ export class ClaudeCliProxyObservation {
   /** Tear down the proxy and drop in-flight assembler state. */
   stop(): void {
     this.assembler.reset();
+    this.requestParents.clear();
     const server = this.server;
     this.server = null;
     this.port = null;
@@ -89,11 +117,30 @@ export class ClaudeCliProxyObservation {
     }
   }
 
-  private handleAssembled(msg: AssembledAssistantMessage): void {
+  private noteRequestAttribution(body: Record<string, unknown>, info: ProxyRequestInfo): void {
+    if (!this.deps.attributeRequest) return;
+    let parentToolUseId: string | undefined;
+    try {
+      parentToolUseId = this.deps.attributeRequest(body, info);
+    } catch (err) {
+      // Attribution is best-effort; the sidecar lookup is still behind it.
+      this.deps.onError?.(err instanceof Error ? err : new Error(String(err)));
+    }
+    if (!parentToolUseId) return;
+    if (this.requestParents.size >= MAX_PENDING_REQUEST_PARENTS) {
+      const oldest = this.requestParents.keys().next().value;
+      if (oldest !== undefined) this.requestParents.delete(oldest);
+    }
+    this.requestParents.set(info.requestId, parentToolUseId);
+  }
+
+  private handleAssembled(msg: AssembledAssistantMessage, requestId: string): void {
+    const parentToolUseId = this.requestParents.get(requestId);
+    this.requestParents.delete(requestId);
     if (msg.id) {
       if (this.emittedMessageIds.has(msg.id)) return;
       this.emittedMessageIds.add(msg.id);
     }
-    this.deps.onAssistantMessage(msg);
+    this.deps.onAssistantMessage(msg, parentToolUseId ? { parentToolUseId } : undefined);
   }
 }

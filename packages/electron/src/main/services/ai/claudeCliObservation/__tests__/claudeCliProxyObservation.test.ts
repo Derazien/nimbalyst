@@ -11,12 +11,17 @@ import * as http from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
 import { ClaudeCliProxyObservation } from "../claudeCliProxyObservation";
 import type { AssembledAssistantMessage } from "../claudeApiMessageAssembler";
+import { createAttributedTurnQueue } from "../../claudeCliAttributedTurnQueue";
+import { createSubagentSpawnRegistry } from "../../claudeCliSubagentSpawnRegistry";
 
-function startTurnUpstream(messageId: string): Promise<{ url: string; close: () => Promise<void> }> {
+function startTurnUpstream(messageIds: string | string[]): Promise<{ url: string; close: () => Promise<void> }> {
+  const ids = Array.isArray(messageIds) ? messageIds : [messageIds];
+  let requestIndex = 0;
   return new Promise((resolve) => {
     const server = http.createServer((req, res) => {
       req.on("data", () => {});
       req.on("end", () => {
+        const messageId = ids[Math.min(requestIndex++, ids.length - 1)];
         res.writeHead(200, { "content-type": "text/event-stream" });
         res.write(
           `event: message_start\ndata: {"type":"message_start","message":{"id":"${messageId}","model":"claude-x","usage":{"input_tokens":5,"output_tokens":0}}}\n\n` +
@@ -40,7 +45,7 @@ function startTurnUpstream(messageId: string): Promise<{ url: string; close: () 
   });
 }
 
-function post(port: number, path: string): Promise<void> {
+function post(port: number, path: string, messages: unknown[] = [{ role: "user", content: "hi" }]): Promise<void> {
   return new Promise((resolve, reject) => {
     const req = http.request(
       { hostname: "127.0.0.1", port, path, method: "POST", headers: { "content-type": "application/json" } },
@@ -50,7 +55,7 @@ function post(port: number, path: string): Promise<void> {
       },
     );
     req.on("error", reject);
-    req.write(JSON.stringify({ model: "claude-x", messages: [{ role: "user", content: "hi" }] }));
+    req.write(JSON.stringify({ model: "claude-x", messages }));
     req.end();
   });
 }
@@ -85,5 +90,59 @@ describe("ClaudeCliProxyObservation", () => {
     expect(seen[0].id).toBe("msg_dedup");
     expect(seen[0].content).toEqual([{ type: "text", text: "Hi there" }]);
     expect(seen[0].stopReason).toBe("end_turn");
+  });
+
+  it("hands a turn the spawn its request matched, with no sidecar involved, even when the sidecar never answers", async () => {
+    // Regression: a background agent's turn used to be persisted as the lead's
+    // whenever the sidecar lagged past the wait budget. The request already names
+    // the agent (its opening prompt is the Agent tool_use's prompt), so the turn
+    // carries its parent from the moment it is assembled.
+    upstream = await startTurnUpstream("msg_bg_turn");
+    const registry = createSubagentSpawnRegistry();
+    registry.noteToolUses([{ type: "tool_use", id: "toolu_bg", name: "Agent", input: { prompt: "Research the thing", run_in_background: true } }]);
+
+    const persisted: Array<[string, string | undefined]> = [];
+    const sidecar = { resolve: () => new Promise<string | undefined>(() => {}) }; // never answers
+    const queue = createAttributedTurnQueue<AssembledAssistantMessage>({
+      shouldAttribute: () => true,
+      resolveParentToolUseId: () => sidecar.resolve(),
+      persist: async (turn, parent) => { persisted.push([turn.messageId, parent]); },
+    });
+    obs = new ClaudeCliProxyObservation({
+      sessionId: "sess-2",
+      upstreamUrl: upstream.url,
+      attributeRequest: (body) => registry.matchRequest(body),
+      onAssistantMessage: (msg, meta) =>
+        queue.enqueue({ messageId: msg.id, message: msg, knownParentToolUseId: meta?.parentToolUseId }),
+    });
+    const { baseUrl } = await obs.start();
+    const port = Number(new URL(baseUrl).port);
+
+    await post(port, "/v1/messages", [
+      { role: "user", content: [{ type: "text", text: "<system-reminder>ctx</system-reminder>" }, { type: "text", text: "Research the thing" }] },
+    ]);
+    await queue.drain();
+
+    expect(persisted).toEqual([["msg_bg_turn", "toolu_bg"]]);
+  });
+
+  it("keeps each request's attribution to its own turn: an agent's request does not tag the lead's next one", async () => {
+    upstream = await startTurnUpstream(["msg_a", "msg_b"]);
+    const registry = createSubagentSpawnRegistry();
+    registry.noteToolUses([{ type: "tool_use", id: "toolu_bg", name: "Agent", input: { prompt: "Research the thing" } }]);
+    const parents: Array<[string, string | undefined]> = [];
+    obs = new ClaudeCliProxyObservation({
+      sessionId: "sess-3",
+      upstreamUrl: upstream.url,
+      attributeRequest: (body) => registry.matchRequest(body),
+      onAssistantMessage: (msg, meta) => parents.push([msg.id, meta?.parentToolUseId]),
+    });
+    const { baseUrl } = await obs.start();
+    const port = Number(new URL(baseUrl).port);
+
+    await post(port, "/v1/messages", [{ role: "user", content: "Research the thing" }]);
+    await post(port, "/v1/messages", [{ role: "user", content: "and what about the lead" }]);
+
+    expect(parents).toEqual([["msg_a", "toolu_bg"], ["msg_b", undefined]]);
   });
 });

@@ -26,6 +26,13 @@ export interface ObservedTurn<TMessage> {
   /** Anthropic message id (`msg_…`), the join key against the sidecars. */
   messageId: string;
   message: TMessage;
+  /**
+   * The spawning tool_use id, when the request that produced this turn already
+   * said whose it is (its opening prompt matched a known spawn). Taken as-is: no
+   * sidecar wait, so a slow or absent sidecar can no longer turn a background
+   * agent's turn into a lead turn.
+   */
+  knownParentToolUseId?: string;
 }
 
 export interface AttributedTurnQueueDeps<TMessage> {
@@ -52,6 +59,12 @@ export interface AttributedTurnQueue<TMessage> {
   enqueue(turn: ObservedTurn<TMessage>): void;
   /** Resolves when everything enqueued so far has been persisted (tests). */
   drain(): Promise<void>;
+  /**
+   * Resolves once every turn enqueued BEFORE this call is persisted. Unlike
+   * `drain`, turns that arrive later (a busy fan-out never goes quiet) do not
+   * extend the wait. Rows that must land after their turn's row use this.
+   */
+  settled(): Promise<void>;
   /** Message ids persisted without attribution, i.e. the lead's. */
   leadMessageIds(): ReadonlySet<string>;
 }
@@ -62,11 +75,14 @@ export function createAttributedTurnQueue<TMessage>(
   const pending: Array<ObservedTurn<TMessage>> = [];
   const leadIds = new Set<string>();
   let running: Promise<void> | null = null;
+  let enqueued = 0;
+  let finished = 0;
+  let waiters: Array<{ target: number; resolve: () => void }> = [];
 
   async function runOne(turn: ObservedTurn<TMessage>): Promise<void> {
-    let parentToolUseId: string | undefined;
+    let parentToolUseId: string | undefined = turn.knownParentToolUseId;
     try {
-      if (deps.shouldAttribute()) {
+      if (!parentToolUseId && deps.shouldAttribute()) {
         parentToolUseId = await deps.resolveParentToolUseId(turn);
       }
     } catch (error) {
@@ -86,21 +102,37 @@ export function createAttributedTurnQueue<TMessage>(
     }
   }
 
+  function markFinished(): void {
+    finished += 1;
+    waiters = waiters.filter((w) => {
+      if (finished < w.target) return true;
+      w.resolve();
+      return false;
+    });
+  }
+
   async function pump(): Promise<void> {
     while (pending.length > 0) {
       const turn = pending.shift()!;
       await runOne(turn);
+      markFinished();
     }
     running = null;
   }
 
   return {
     enqueue(turn) {
+      enqueued += 1;
       pending.push(turn);
       if (!running) running = pump();
     },
     async drain() {
       while (running) await running;
+    },
+    settled() {
+      const target = enqueued;
+      if (finished >= target) return Promise.resolve();
+      return new Promise<void>((resolve) => waiters.push({ target, resolve }));
     },
     leadMessageIds: () => leadIds,
   };

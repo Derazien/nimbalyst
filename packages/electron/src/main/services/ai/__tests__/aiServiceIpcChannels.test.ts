@@ -138,6 +138,8 @@ const EXPECTED_CHANNELS: Record<string, string[]> = {
     'ai:triggerQueueProcessing',
   ],
   registerInteractivePromptHandlers: [
+    'claude-cli:exit-plan-mode-response',
+    'claude-cli:exit-plan-mode-capable',
     'ai:exitPlanModeConfirmResponse',
     'claude-code:answer-question',
     'claude-code:cancel-question',
@@ -206,12 +208,12 @@ describe('AIService IPC registrars', () => {
     });
   }
 
-  it('registers all 62 channels across the modules, with no duplicates', () => {
+  it('registers all 64 channels across the modules, with no duplicates', () => {
     for (const register of Object.values(REGISTRARS)) {
       register(stubContext);
     }
-    expect(registered).toHaveLength(62);
-    expect(new Set(registered).size).toBe(62);
+    expect(registered).toHaveLength(64);
+    expect(new Set(registered).size).toBe(64);
   });
 });
 

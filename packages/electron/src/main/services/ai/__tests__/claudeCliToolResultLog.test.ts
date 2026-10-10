@@ -55,6 +55,23 @@ describe('logClaudeCliToolResults', () => {
     expect(h.notifyMessageLogged).toHaveBeenCalledWith('s1', '/w');
   });
 
+  it('marks a background-launch acknowledgement so the parser keeps the agent running', async () => {
+    const h = harness();
+    await logClaudeCliToolResults(
+      {
+        sessionId: 's1',
+        workspacePath: '/w',
+        results: [result('toolu_bg', 'Async agent launched'), result('toolu_other', 'ok')],
+        seen: new Set(),
+        backgroundLaunchIds: new Set(['toolu_bg']),
+      },
+      h.deps,
+    );
+    const rows = h.createMessage.mock.calls.map((c) => JSON.parse(c[0].content));
+    expect(rows[0]).toMatchObject({ tool_use_id: 'toolu_bg', background_launch: true });
+    expect(rows[1]).not.toHaveProperty('background_launch');
+  });
+
   it('carries the error flag through', async () => {
     const h = harness();
     await logClaudeCliToolResults(

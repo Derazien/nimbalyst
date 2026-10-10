@@ -12,7 +12,9 @@ import { TranscriptSearchBar } from './TranscriptSearchBar';
 import { setSessionIsAtBottom, getSessionIsAtBottom } from '../../../store/atoms/transcriptScroll';
 import { isAppleMobileWebKit } from '../../../utils/platform';
 import { usePendingPermissionNavigation } from './usePendingPermissionNavigation';
-import { usePendingQuestionNavigation } from './usePendingQuestionNavigation';
+import { usePendingQuestionNavigation, findToolRowIndex } from './usePendingQuestionNavigation';
+import { AgentsStrip, useAgentStripEntries, type AgentStripEntry } from './AgentsStrip';
+import { useRevealToolCard } from './useRevealToolCard';
 import { useElapsedTimeRef } from './CustomToolWidgets/useElapsedTime';
 import type { SubagentChildContext, TranscriptToolShared } from './TranscriptToolCard';
 import { TranscriptMessageRow, computeTranscriptRowInfos, type TranscriptRowInfo } from './TranscriptMessageRow';
@@ -972,20 +974,31 @@ export const RichTranscriptView = React.forwardRef<
     }
   }, []);
 
-  // Auto-expand sub-agent (Task) tools. Keep the same Set when every id is
-  // already expanded: a new Set re-renders every row holding a tool card.
+  // Sub-agent cards start collapsed; the Agents strip is the way to find them.
+  // A card holding an unanswered prompt opens once per prompt so the prompt is
+  // never hidden, and the user can still collapse it afterwards. Keep the same
+  // Set when nothing opens: a new Set re-renders every row holding a tool card.
+  const agentEntries = useAgentStripEntries(messages);
+  const autoOpenedPromptsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    setExpandedTools(prev => {
-      let next: Set<string> | null = null;
-      for (const msg of messages) {
-        if (msg.type === 'subagent' && msg.subagentId && !prev.has(msg.subagentId)) {
-          next ??= new Set(prev);
-          next.add(msg.subagentId);
-        }
+    const toOpen: string[] = [];
+    for (const entry of agentEntries) {
+      for (const promptId of entry.pendingPromptIds) {
+        const key = `${entry.toolId}::${promptId}`;
+        if (autoOpenedPromptsRef.current.has(key)) continue;
+        autoOpenedPromptsRef.current.add(key);
+        toOpen.push(entry.toolId);
       }
-      return next ?? prev;
-    });
-  }, [messages]);
+    }
+    if (toOpen.length === 0) return;
+    setExpandedTools(prev => (toOpen.every(id => prev.has(id)) ? prev : new Set([...prev, ...toOpen])));
+  }, [agentEntries]);
+
+  const revealToolCard = useRevealToolCard({ vlistRef, scrollContainerRef });
+  const selectAgent = useCallback((entry: AgentStripEntry) => {
+    setExpandedTools(prev => (prev.has(entry.toolId) ? prev : new Set(prev).add(entry.toolId)));
+    revealToolCard(entry.toolId, findToolRowIndex(messages, entry.messageIndex));
+  }, [messages, revealToolCard]);
 
   const subagentContext = useMemo<SubagentChildContext>(
     () => ({ expandedTools, skippedQuestionIds, currentTeammates }),
@@ -1101,6 +1114,8 @@ export const RichTranscriptView = React.forwardRef<
             </div>
           </div>
         )}
+
+        <AgentsStrip entries={agentEntries} onSelect={selectAgent} />
 
         {/* Messages */}
         <div

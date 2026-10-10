@@ -350,7 +350,7 @@ export class TranscriptWriter {
   async updateSubagent(
     eventId: number,
     update: {
-      status: 'completed';
+      status: 'completed' | 'failed' | 'stopped';
       resultSummary?: string;
       toolCallCount?: number;
       durationMs?: number;

@@ -51,6 +51,7 @@ import {
   type ClaudeCliInterruptResult,
 } from './ai/claudeCliInterrupt';
 import { detectCliPickerInChunk } from './ai/claudeCliInteractiveCommands';
+import { ClaudeCliShadowScreen } from './ai/claudeCliShadowScreen';
 import { claudeCliInterruptGate } from './ai/claudeCliInterruptGate';
 import { broadcastClaudeCliRevealTerminal } from './ai/claudeCliRevealTerminal';
 import {
@@ -64,6 +65,8 @@ import {
 // Maximum scrollback buffer size (500KB)
 const MAX_SCROLLBACK_SIZE = 500 * 1024;
 const SCROLLBACK_PERSIST_DEBOUNCE_MS = 1000;
+/** Trailing delay before a Claude CLI shadow screen is read after output (mode chip refresh). */
+const SHADOW_SCREEN_NOTIFY_MS = 150;
 const TERMINAL_HISTORY_SUBDIR = 'terminal-history';
 
 // OSC 7 escape sequence pattern: \033]7;file://hostname/path\033\\ or \033]7;file://hostname/path\007
@@ -144,6 +147,11 @@ export interface TerminalProcess {
    * bytes). The Claude CLI mode tracker reads the permission-mode footer here.
    */
   onScreenLines?: (lines: string[]) => void;
+  /**
+   * Main's own emulation of a claude-code-cli screen, fed from the raw PTY bytes. Unlike
+   * `screenLines` it exists while the drawer is collapsed and the renderer has no terminal.
+   */
+  shadowScreen?: ClaudeCliShadowScreen;
 }
 
 export interface TerminalRestoreSnapshot {
@@ -1046,8 +1054,27 @@ export class TerminalSessionManager {
     // input-side detection — catches model-initiated / directly-typed pickers.
     // Throttled because a picker redraws on every keypress; reveal is idempotent.
     let lastPickerRevealAt = 0;
+    // The renderer only pushes screen lines while its terminal exists (drawer expanded at least
+    // once), so main keeps its own copy to read the plan dialog and mode footer from.
+    const shadowScreen = provider === 'claude-code-cli' ? new ClaudeCliShadowScreen(cols, rows) : undefined;
+    let shadowNotifyTimer: ReturnType<typeof setTimeout> | undefined;
     ptyProcess.onData((data: string) => {
       options.onOutput?.(data);
+      if (shadowScreen?.live) {
+        shadowScreen.write(data);
+        if (options.onScreenLines && !shadowNotifyTimer) {
+          shadowNotifyTimer = setTimeout(() => {
+            shadowNotifyTimer = undefined;
+            const lines = shadowScreen.lines();
+            if (!lines) return;
+            try {
+              options.onScreenLines?.(lines);
+            } catch (err) {
+              console.warn(`[TerminalSessionManager] onScreenLines failed for ${terminalId}:`, err);
+            }
+          }, SHADOW_SCREEN_NOTIFY_MS);
+        }
+      }
       if (provider !== 'claude-code-cli' || !detectCliPickerInChunk(data)) return;
       const now = Date.now();
       if (now - lastPickerRevealAt < 1500) return;
@@ -1074,6 +1101,7 @@ export class TerminalSessionManager {
       outputSequence: 0,
       readCliTurnState: options.readTurnState,
       onScreenLines: options.onScreenLines,
+      shadowScreen: shadowScreen?.live ? shadowScreen : undefined,
     };
 
     // Drive turn-level state off the CLI's PID file. node-pty's `pid` is the
@@ -1088,9 +1116,11 @@ export class TerminalSessionManager {
     }
     // Compose the PID-watcher teardown with any caller teardown (proxy stop).
     const onExit = options.onExit;
-    if (stopPidWatcher || onExit) {
+    if (stopPidWatcher || onExit || shadowScreen) {
       terminalProcess.cleanup = (exitCode: number) => {
         stopPidWatcher?.();
+        if (shadowNotifyTimer) clearTimeout(shadowNotifyTimer);
+        shadowScreen?.dispose();
         onExit?.(exitCode);
       };
     }
@@ -1183,6 +1213,7 @@ export class TerminalSessionManager {
       terminal.pty.resize(cols, rows);
       terminal.cols = cols;
       terminal.rows = rows;
+      terminal.shadowScreen?.resize(cols, rows);
       this.scheduleScrollbackPersist(sessionId);
     } catch (error) {
       // EBADF errors occur when the PTY file descriptor is no longer valid
@@ -1199,9 +1230,13 @@ export class TerminalSessionManager {
     return terminal?.scrollbackBuffer || null;
   }
 
-  /** The terminal emulator's latest visible lines, as pushed by the renderer; null when none yet. */
+  /**
+   * The terminal's latest visible lines: main's own shadow screen when the terminal has a live
+   * one, otherwise what the renderer's emulator last pushed; null when neither has any.
+   */
   getScreenLines(sessionId: string): string[] | null {
-    return this.terminals.get(sessionId)?.screenLines ?? null;
+    const terminal = this.terminals.get(sessionId);
+    return terminal?.shadowScreen?.lines() ?? terminal?.screenLines ?? null;
   }
 
   updateTerminalRenderState(

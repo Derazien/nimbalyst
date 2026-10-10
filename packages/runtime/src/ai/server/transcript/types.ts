@@ -188,7 +188,7 @@ export type InteractivePromptPayload =
 
 export interface SubagentPayload {
   agentType: string;
-  status: 'running' | 'completed';
+  status: 'running' | 'completed' | 'failed' | 'stopped';
   teammateName: string | null;
   teamName: string | null;
   teammateMode: string | null;

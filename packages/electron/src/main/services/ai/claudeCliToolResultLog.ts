@@ -25,6 +25,12 @@ export interface LogClaudeCliToolResultsInput {
   results: ObservedToolResult[];
   /** Caller-owned set of already-persisted tool_use_ids (one per observation session). */
   seen: Set<string>;
+  /**
+   * Results that are only the launch acknowledgement of a background agent. Their
+   * row is flagged so the transcript keeps the agent running instead of completing
+   * it; its real end arrives as a `nimbalyst_subagent_completion` row.
+   */
+  backgroundLaunchIds?: ReadonlySet<string>;
 }
 
 export interface LogClaudeCliToolResultsDeps {
@@ -46,6 +52,16 @@ const productionDeps: LogClaudeCliToolResultsDeps = {
   now: () => new Date(),
 };
 
+function buildResultContent(result: ObservedToolResult, backgroundLaunch: boolean): string {
+  const content = buildInteractivePromptToolResultContent({
+    toolUseId: result.toolUseId,
+    result: result.content,
+    isError: result.isError,
+  });
+  if (!backgroundLaunch) return content;
+  return JSON.stringify({ ...JSON.parse(content), background_launch: true });
+}
+
 /**
  * Persist the not-yet-seen tool_results and broadcast a single transcript reload
  * if any were new. Best-effort: a per-row failure is swallowed (the row stays
@@ -66,11 +82,7 @@ export async function logClaudeCliToolResults(
         sessionId: input.sessionId,
         source: 'claude-code',
         direction: 'output',
-        content: buildInteractivePromptToolResultContent({
-          toolUseId,
-          result: result.content,
-          isError: result.isError,
-        }),
+        content: buildResultContent(result, input.backgroundLaunchIds?.has(toolUseId) === true),
         hidden: false,
         createdAt: deps.now(),
       });

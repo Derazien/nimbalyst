@@ -1165,6 +1165,31 @@ describe('TranscriptTransformer', () => {
       expect(childTool!.subagentId).toBe('agent-1');
     });
 
+    it('keeps a background agent running through its launch ack and ends it with the status its completion row carries', async () => {
+      const row = (id: number, content: unknown) =>
+        makeRawMessage({ id, sessionId: SESSION_ID, direction: 'output', content: JSON.stringify(content) });
+      const rows = [
+        row(1, {
+          type: 'assistant',
+          message: { content: [{ type: 'tool_use', id: 'bg-1', name: 'Agent', input: { prompt: 'Research', run_in_background: true } }] },
+        }),
+        row(2, { type: 'nimbalyst_tool_result', tool_use_id: 'bg-1', result: 'Async agent launched successfully.', background_launch: true }),
+      ];
+      const transformer = new TranscriptTransformer(createMockRawStore(rows), transcriptStore, metadataStore);
+      const subagent = async () =>
+        (await transcriptStore.getSessionEvents(SESSION_ID)).find((e) => e.eventType === 'subagent')!.payload as any;
+
+      await transformer.processNewMessages(SESSION_ID, PROVIDER);
+      expect(await subagent()).toMatchObject({ status: 'running', isBackground: true });
+
+      // Arrives in a later batch, so the agent's identity is restored from the store.
+      rows.push(row(3, {
+        type: 'nimbalyst_subagent_completion', tool_use_id: 'bg-1', status: 'stopped', summary: 'Agent "Research" was stopped',
+      }));
+      await transformer.processNewMessages(SESSION_ID, PROVIDER);
+      expect(await subagent()).toMatchObject({ status: 'stopped', resultSummary: 'Agent "Research" was stopped' });
+    });
+
     it('does not set subagentId for tools without parent_tool_use_id', async () => {
       const rawStore = createMockRawStore([
         makeRawMessage({

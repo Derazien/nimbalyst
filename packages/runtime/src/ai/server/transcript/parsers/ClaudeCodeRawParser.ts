@@ -410,8 +410,11 @@ export class ClaudeCodeRawParser implements IRawMessageParser {
           tool_use_id: parsed.tool_use_id || parsed.id,
           content: parsed.result,
           is_error: parsed.is_error,
+          background_launch: parsed.background_launch === true,
         }, context);
         descriptors.push(...results);
+      } else if (parsed.type === 'nimbalyst_subagent_completion') {
+        descriptors.push(...this.parseSubagentCompletion(parsed, context));
       } else if (parsed.type === 'user' && parsed.message) {
         if (Array.isArray(parsed.message.content)) {
           for (const block of parsed.message.content) {
@@ -554,6 +557,12 @@ export class ClaudeCodeRawParser implements IRawMessageParser {
 
     // Check if this completes a subagent
     if (context.hasSubagent(toolUseId)) {
+      // A background launch's tool_result is only the acknowledgement; the agent
+      // is still running. Only a row whose writer knows a real completion signal
+      // will follow (the CLI observation path, via a nimbalyst_subagent_completion
+      // row) sets this flag. An unflagged ack keeps completing, because the
+      // Agent-SDK path has no later row to end the agent with.
+      if (block.background_launch === true) return [];
       const resultText = typeof block.content === 'string'
         ? block.content
         : JSON.stringify(block.content);
@@ -642,6 +651,30 @@ export class ClaudeCodeRawParser implements IRawMessageParser {
       attachmentFilename: staged.filename,
       attachmentStagingMode: staged.mode,
       attachmentDetection: 'reactive',
+    }];
+  }
+
+  /**
+   * A background agent's real end, written by a provider that observes the
+   * runtime's own completion notice (a finished, failed or stopped task). Keyed by
+   * the spawning tool_use id like a foreground result, but carries the status
+   * instead of assuming success. An id that is not a known subagent yields nothing,
+   * the same as a stray tool_result for it.
+   */
+  private parseSubagentCompletion(
+    parsed: any,
+    context: ParseContext,
+  ): CanonicalEventDescriptor[] {
+    const subagentId: unknown = parsed.tool_use_id;
+    if (typeof subagentId !== 'string' || !context.hasSubagent(subagentId)) return [];
+    const status = parsed.status === 'failed' || parsed.status === 'stopped' ? parsed.status : 'completed';
+    const text: string =
+      (typeof parsed.result === 'string' && parsed.result) || (typeof parsed.summary === 'string' ? parsed.summary : '');
+    return [{
+      type: 'subagent_completed',
+      subagentId,
+      status,
+      resultSummary: text.substring(0, 500),
     }];
   }
 

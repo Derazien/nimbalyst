@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 
 let userData: string;
 vi.mock('electron', () => ({
@@ -122,4 +123,53 @@ it('does not let an old process exiting late remove the terminal that replaced i
 
   await exitOld!({ exitCode: 0 });
   expect((manager as any).terminals.get(TERMINAL_ID)).toBe(replacement);
+});
+
+it('reads a claude-code-cli screen from its own copy of the PTY output, with no renderer push, and refreshes the mode chip', async () => {
+  const nodePty = createRequire(import.meta.url)('node-pty');
+  const dataListeners: Array<(data: string) => void> = [];
+  const feed = (data: string) => dataListeners.forEach((cb) => cb(data));
+  let exit!: (e: { exitCode: number }) => Promise<void>;
+  const resizes: Array<[number, number]> = [];
+  vi.spyOn(nodePty, 'spawn').mockImplementation((() => ({
+    pid: 1, kill: () => {}, write: () => {}, resize: (c: number, r: number) => resizes.push([c, r]),
+    onData: (cb: (data: string) => void) => { dataListeners.push(cb); },
+    onExit: (cb: typeof exit) => { exit = cb; },
+  })) as any);
+  const { TerminalSessionManager } = await import('../TerminalSessionManager');
+  const manager = new TerminalSessionManager();
+  const pushed: string[][] = [];
+  await manager.createClaudeCliTerminal(TERMINAL_ID, {
+    cwd: WORKSPACE, workspacePath: WORKSPACE, cols: 60, rows: 6,
+    spawnConfig: { executable: 'claude', args: [], env: {} } as any,
+    onScreenLines: (lines) => pushed.push(lines),
+  });
+
+  expect(manager.getScreenLines(TERMINAL_ID)).toHaveLength(6);
+  vi.useFakeTimers();
+  try {
+    feed('\x1b[2J\x1b[1;1H Would you like to proceed?\r\n \x1b[36m❯ 1. Yes\x1b[0m');
+    feed('\r\n   2. No');
+    expect(pushed).toHaveLength(0);
+    vi.advanceTimersByTime(200);
+  } finally {
+    vi.useRealTimers();
+  }
+  // One trailing notification for the burst, carrying the whole screen.
+  expect(pushed).toHaveLength(1);
+  expect(manager.getScreenLines(TERMINAL_ID)!.map((l) => l.trimEnd())).toEqual([
+    ' Would you like to proceed?', ' ❯ 1. Yes', '   2. No', '', '', '',
+  ]);
+
+  // A resize reaches the copy, and a renderer push does not replace it while the copy is live.
+  manager.resizeTerminal(TERMINAL_ID, 60, 8);
+  expect(manager.getScreenLines(TERMINAL_ID)).toHaveLength(8);
+  manager.updateTerminalRenderState(TERMINAL_ID, { screenLines: ['stale'] });
+  expect(manager.getScreenLines(TERMINAL_ID)![0]).toContain('Would you like');
+
+  // Exit disposes the copy; the timer is cleared with it, so nothing fires afterwards.
+  const shadow = (manager as any).terminals.get(TERMINAL_ID).shadowScreen;
+  expect(shadow.live).toBe(true);
+  await exit({ exitCode: 0 });
+  expect(shadow.live).toBe(false);
 });

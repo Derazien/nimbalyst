@@ -333,7 +333,9 @@ function projectEvent(
       base.toolCall = {
         toolName: 'Task',
         toolDisplayName: 'Task',
-        status: p.status === 'completed' ? 'completed' : 'running',
+        // A stopped agent is no longer running, and the card's own subagent.status
+        // says it was stopped; only a failure reads as a tool error.
+        status: p.status === 'running' ? 'running' : p.status === 'failed' ? 'error' : 'completed',
         description: null,
         arguments: {
           prompt: p.prompt,

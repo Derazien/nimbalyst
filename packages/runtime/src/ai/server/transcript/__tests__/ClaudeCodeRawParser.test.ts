@@ -1129,6 +1129,52 @@ describe('ClaudeCodeRawParser', () => {
     });
   });
 
+  describe('sub-agent completion', () => {
+    const known = makeContext({ hasSubagent: (id) => id === 'toolu_agent' });
+    const resultRow = (extra: Record<string, unknown>) => makeRawMessage({
+      content: JSON.stringify({ type: 'nimbalyst_tool_result', tool_use_id: 'toolu_agent', ...extra }),
+    });
+    const ack = 'Async agent launched successfully. The agent is working in the background. output_file: /t/tasks/a1.output';
+
+    it('a foreground result completes the agent, and so does an unflagged launch ack (the SDK lane has no later signal)', async () => {
+      const parser = new ClaudeCodeRawParser();
+      expect(await parser.parseMessage(resultRow({ result: 'All done' }), known)).toEqual([
+        { type: 'subagent_completed', subagentId: 'toolu_agent', status: 'completed', resultSummary: 'All done' },
+      ]);
+      const sdkAck = makeRawMessage({
+        content: JSON.stringify({
+          type: 'user',
+          message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_agent', content: [{ type: 'text', text: ack }] }] },
+        }),
+      });
+      const [done] = await parser.parseMessage(sdkAck, known);
+      expect(done).toMatchObject({ type: 'subagent_completed', status: 'completed' });
+    });
+
+    it('a flagged background launch ack leaves the agent running', async () => {
+      const parser = new ClaudeCodeRawParser();
+      expect(await parser.parseMessage(resultRow({ result: ack, background_launch: true }), known)).toEqual([]);
+    });
+
+    it.each(['completed', 'failed', 'stopped'] as const)('a completion row ends the agent as %s with its summary', async (status) => {
+      const parser = new ClaudeCodeRawParser();
+      const msg = makeRawMessage({
+        content: JSON.stringify({
+          type: 'nimbalyst_subagent_completion', tool_use_id: 'toolu_agent', status, summary: 'Agent "X" ended', result: 'Final report',
+        }),
+      });
+      expect(await parser.parseMessage(msg, known)).toEqual([
+        { type: 'subagent_completed', subagentId: 'toolu_agent', status, resultSummary: 'Final report' },
+      ]);
+      // Without a result the summary line stands in; an unknown agent yields nothing.
+      const noResult = makeRawMessage({
+        content: JSON.stringify({ type: 'nimbalyst_subagent_completion', tool_use_id: 'toolu_agent', status, summary: 'Agent "X" ended' }),
+      });
+      expect(await parser.parseMessage(noResult, known)).toMatchObject([{ resultSummary: 'Agent "X" ended' }]);
+      expect(await parser.parseMessage(msg, makeContext())).toEqual([]);
+    });
+  });
+
   describe('system/informational (SDK 0.3.283+)', () => {
     // Shape captured live from CLI 2.1.284 (a UserPromptSubmit hook systemMessage).
     const informational = (level: string, content = 'UserPromptSubmit says: probe hook system message') => makeRawMessage({

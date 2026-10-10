@@ -61,6 +61,8 @@ import {
   peekAttributionSummary,
 } from './claudeCliAttributionStats';
 import { createAttributedTurnQueue, type AttributedTurnQueue } from './claudeCliAttributedTurnQueue';
+import { createSubagentSpawnRegistry } from './claudeCliSubagentSpawnRegistry';
+import { createSubagentCompletionLogger, loadSeenCompletionKeys } from './claudeCliTaskNotifications';
 import { resolveClaudeCliSubagentsDir } from './claudeCliJsonlPath';
 import { broadcastSideNote, claimSideAnswer, clearSideQuestions } from './claudeCliSideQuestion';
 import { resolveClaudeConfigDir } from '@nimbalyst/runtime/ai/server/providers/claudeCode/claudeConfigDir';
@@ -244,6 +246,20 @@ export async function startClaudeCliProxyObservation(opts: {
     seenToolResultIds.add(id);
   }
 
+  // Launch details of every Agent/Task call, so a sub-agent's request can be
+  // attributed from its opening prompt the moment it arrives (see the registry).
+  const spawnRegistry = createSubagentSpawnRegistry();
+  // A background agent ends with a <task-notification> in a later request body;
+  // each one becomes one completion row, deduped across the requests that replay it.
+  const completionLogger = createSubagentCompletionLogger({
+    sessionId,
+    workspacePath,
+    seen: await loadSeenCompletionKeys(sessionId),
+  });
+  // Rows that complete a spawn's card must land after the turn that carries the
+  // spawn, and in request order, so they are chained behind the turn queue.
+  let observedRowChain: Promise<void> = Promise.resolve();
+
   // Failed-turn surfacing policy (NIM-808 / NIM-815): collapses retry storms
   // into one transcript row per episode and swallows transient startup errors
   // (cold-connection 429/529 plus a small budget of api_error/generic) until
@@ -284,6 +300,7 @@ export async function startClaudeCliProxyObservation(opts: {
   const turnQueue: AttributedTurnQueue<AssembledAssistantMessage> =
     createAttributedTurnQueue<AssembledAssistantMessage>({
     // Sessions that never spawn an agent skip the sidecar read entirely.
+    // Only consulted for turns the request did not already attribute.
     shouldAttribute: () => hasAnySubagentSpawn(sessionId),
     resolveParentToolUseId: async (turn) => {
       const result = await sidecarReader.waitForParentToolUseId({
@@ -355,10 +372,24 @@ export async function startClaudeCliProxyObservation(opts: {
   const observation = new ClaudeCliProxyObservation({
     sessionId,
     upstreamUrl: apiUpstreamUrl,
-    onAssistantMessage: (msg) => {
+    // Runs before the response streams, so the turn assembled from it carries its
+    // parent with no sidecar wait. The replayed history teaches a resumed session
+    // the spawns it made before this launch.
+    attributeRequest: (body) => {
+      spawnRegistry.noteRequestHistory(body);
+      const messages = Array.isArray(body.messages) ? (body.messages as Array<{ role?: string; content?: unknown }>) : [];
+      for (const message of messages) {
+        if (message?.role === 'assistant' && Array.isArray(message.content)) {
+          noteAssistantSubagentSpawns(sessionId, { content: message.content });
+        }
+      }
+      return spawnRegistry.matchRequest(body);
+    },
+    onAssistantMessage: (msg, meta) => {
       // Record this turn's `Agent`/`Task` calls before anything else: a later
       // turn's attribution can depend on a spawn observed in this one.
       noteAssistantSubagentSpawns(sessionId, msg);
+      spawnRegistry.noteToolUses(msg.content);
       todoCapture.noteAssistantToolUses(sessionId, msg.content);
       // A produced turn means the session is unblocked, so let the next failure
       // episode surface. Whether it counts as VISIBLE output waits for
@@ -368,7 +399,7 @@ export async function startClaudeCliProxyObservation(opts: {
       void logClaudeCliContextUsage({ sessionId, usage: msg.usage });
       // Persistence goes through the serial queue so transcript order follows
       // observation order regardless of how long each attribution takes.
-      turnQueue.enqueue({ messageId: msg.id, message: msg });
+      turnQueue.enqueue({ messageId: msg.id, message: msg, knownParentToolUseId: meta?.parentToolUseId });
     },
     onRequestBody: (body, info) => {
       // The CLI decides per account + model whether to request the 1M window, and
@@ -379,6 +410,7 @@ export async function startClaudeCliProxyObservation(opts: {
       // The tee'd SSE only carries the assistant's tool_use calls; the matching
       // tool_results ride in the next request body's trailing user message.
       const results = extractToolResults(body);
+      const launchAcks = spawnRegistry.backgroundLaunchAcks(results);
       if (results.length > 0) {
         // An `Agent`/`Task` result carries the mailbox handle that ties an
         // in-process teammate to the call that spawned it, so capture it before
@@ -389,7 +421,28 @@ export async function startClaudeCliProxyObservation(opts: {
         // ones. They used to be dropped because they would orphan against hidden
         // rows; the rows are no longer hidden, so each result completes the tool
         // card sitting under its agent in the tree.
-        void logClaudeCliToolResults({ sessionId, workspacePath, results, seen: seenToolResultIds });
+        // Behind the turn queue: a sub-agent's result row written ahead of its
+        // turn's row would find no tool card to complete and be dropped.
+        observedRowChain = observedRowChain
+          .then(() => turnQueue.settled())
+          .then(() =>
+            logClaudeCliToolResults({
+              sessionId,
+              workspacePath,
+              results,
+              seen: seenToolResultIds,
+              backgroundLaunchIds: launchAcks,
+            }),
+          )
+          .catch((err) => console.warn('[ClaudeCliObservation] tool_result logging failed:', err));
+      }
+      if (hasAnySubagentSpawn(sessionId)) {
+        // A background agent's finish / failure / stop, announced to the lead.
+        observedRowChain = observedRowChain
+          .then(() => turnQueue.settled())
+          .then(() => completionLogger.log(body, getSubagentSpawns(sessionId)))
+          .then(() => undefined)
+          .catch((err) => console.warn('[ClaudeCliObservation] sub-agent completion logging failed:', err));
       }
     },
     onError: (err) => {

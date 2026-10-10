@@ -161,7 +161,8 @@ export interface SubagentStartedDescriptor {
 export interface SubagentCompletedDescriptor {
   type: 'subagent_completed';
   subagentId: string;
-  status: 'completed';
+  /** Foreground and legacy completions are always 'completed'; a background agent can also fail or be stopped. */
+  status: 'completed' | 'failed' | 'stopped';
   resultSummary?: string;
   model?: string | null;
   reasoningEffort?: string | null;
