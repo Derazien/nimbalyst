@@ -11,7 +11,7 @@ vi.mock('@nimbalyst/runtime/storage/repositories/AISessionsRepository', () => ({
   AISessionsRepository: { create: vi.fn(), updateMetadata: vi.fn(), get: vi.fn() },
 }));
 vi.mock('@nimbalyst/runtime/storage/repositories/AgentMessagesRepository', () => ({
-  AgentMessagesRepository: { list: vi.fn(), create: vi.fn() },
+  AgentMessagesRepository: { list: vi.fn(), listTail: vi.fn(), create: vi.fn() },
 }));
 vi.mock('@nimbalyst/runtime/storage/repositories/SessionFilesRepository', () => ({
   SessionFilesRepository: { getFilesBySession: vi.fn().mockResolvedValue([]) },
@@ -307,6 +307,7 @@ describe('list_spawned_sessions across projects', () => {
     vi.mocked(database.query).mockClear();
     // buildSessionResultData walks each row's messages; empty is enough here.
     vi.mocked(AgentMessagesRepository.list).mockResolvedValue([] as never);
+    vi.mocked(AgentMessagesRepository.listTail).mockResolvedValue([] as never);
   });
 
   it('stays scoped to the caller project unless asked otherwise', async () => {
