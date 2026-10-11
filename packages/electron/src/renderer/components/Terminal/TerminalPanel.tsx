@@ -19,6 +19,7 @@ import {
   waitUntilTerminalPainted,
 } from './terminalVisibility';
 import { setTerminalPainting } from './terminalRenderGate';
+import { captureDocumentListeners } from './documentListenerScope';
 import { canPersistTerminalRenderState } from './terminalRenderState';
 import { TERMINAL_KEY_SURFACE_ATTR } from '../../utils/terminalKeyTarget';
 
@@ -297,6 +298,8 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
     let renderStatePersistTimer: ReturnType<typeof setTimeout> | null = null;
     let renderStateReadyToPersist = false;
     let wasmTrapped = false;
+    // ghostty-web leaves document listeners behind after dispose(); see documentListenerScope.ts.
+    let releaseDocumentListeners: (() => void) | null = null;
 
     const handleWasmTrap = (error: unknown) => {
       if (wasmTrapped) return;
@@ -460,7 +463,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
         terminal.loadAddon(fitAddon);
 
         if (terminalRef.current && !disposed) {
-          terminal.open(terminalRef.current);
+          releaseDocumentListeners = captureDocumentListeners(() => terminal!.open(terminalRef.current!)).release;
           await new Promise((resolve) => setTimeout(resolve, 0));
           // #1818: the panel may have been removed during this wait. Do not
           // start a terminal backend for a panel nobody is looking at.
@@ -879,6 +882,9 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
       unsubscribeOutput?.();
       unsubscribeExited?.();
       inputDisposable?.dispose();
+      // Before dispose: a dispose() that throws must not strand the listeners.
+      releaseDocumentListeners?.();
+      releaseDocumentListeners = null;
       if (wasmTrapped) {
         // free() on a trapped instance can trap again. ghostty-web removes the
         // canvas and DOM listeners before it frees, and the instance memory is

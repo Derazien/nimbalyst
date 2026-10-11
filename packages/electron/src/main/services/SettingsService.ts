@@ -34,6 +34,7 @@ import {
   type SettingStorage,
 } from '../../shared/settings/keys';
 import { logger } from '../utils/logger';
+import { WATCHED_SETTING_KEYS, describeWatchedSettingChange, settingChangeCaller } from './watchedSettingChanges';
 import { getProviderCredentials } from './credentials/providerCredentials';
 import { isProviderCredentialKey, SAVED_CREDENTIAL } from '../../shared/providerCredentials';
 
@@ -172,7 +173,11 @@ class SettingsServiceImpl {
     // broadcast both reflect the persisted truth, not whatever transient UI
     // state the caller happened to send. See sanitizeProviderConfig.
     const sanitized = sanitizeProviderConfig(key, parsed.data);
+    const change = WATCHED_SETTING_KEYS.has(key)
+      ? describeWatchedSettingChange(key, this.get(key), sanitized, settingChangeCaller())
+      : null;
     this.getStore(desc.storage.store).set(desc.storage.path, sanitized);
+    if (change) logger.main?.info?.(change);
     this.notify(key, sanitized);
   }
 

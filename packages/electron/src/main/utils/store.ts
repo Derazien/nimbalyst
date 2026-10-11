@@ -23,6 +23,7 @@ import {
 } from '../../shared/orgProjectWalk';
 import { omitModelsField } from '@nimbalyst/runtime/ai/server/utils/modelConfigUtils';
 import { planWorkstreamStatePrune } from './workstreamStatePrune';
+import { describeWatchedSettingChange, settingChangeCaller } from '../services/watchedSettingChanges';
 import type { OpenCodeModelCatalogCache } from '@nimbalyst/runtime/ai/server';
 
 // Theme can be a built-in theme or an extension theme ID (format: "extensionId:themeId")
@@ -2999,6 +3000,8 @@ export function setAlphaFeatures(features: Record<AlphaFeatureTag, boolean>): vo
   const current = getAlphaFeatures();
   const merged = { ...current, ...features };
   getAppStore().set('alphaFeatures', merged);
+  const change = describeWatchedSettingChange('alphaFeatures.cross-project', current['cross-project'], merged['cross-project'], settingChangeCaller());
+  if (change) logger.main?.info?.(change);
 }
 
 // Beta Feature Flags

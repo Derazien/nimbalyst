@@ -307,7 +307,8 @@ export const SETTINGS_REGISTRY = {
   'agent.crossWorkspaceMessaging': setting(
     z.enum(['off', 'creator', 'allow']),
     { store: 'app-settings', path: 'crossWorkspaceMessaging' },
-    'off',
+    // Fork default: allow. Upstream ships 'off'.
+    'allow',
   ),
   'team.presence.status': setting(
     z.enum(['online', 'away']),

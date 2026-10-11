@@ -18,6 +18,8 @@ export interface AlphaFeatureDefinition {
   description: string;
   /** Icon name for the settings UI */
   icon?: string;
+  /** On when the user has never set it (fork-only; upstream defaults every feature off). */
+  defaultEnabled?: boolean;
 }
 
 /**
@@ -52,6 +54,8 @@ export const ALPHA_FEATURES: readonly AlphaFeatureDefinition[] = [
     description:
       "Let an agent spawn, list and open sessions in your other open projects. Reach is still governed by the Cross-workspace messaging setting.",
     icon: "workspaces",
+    // Fork default: on. Cross-project work is how this estate runs.
+    defaultEnabled: true,
   },
 ] as const;
 
@@ -65,7 +69,7 @@ export type AlphaFeatureTag = (typeof ALPHA_FEATURES)[number]["tag"];
  */
 export function getDefaultAlphaFeatures(): Record<AlphaFeatureTag, boolean> {
   return ALPHA_FEATURES.reduce((acc, feature) => {
-    acc[feature.tag] = false;
+    acc[feature.tag] = (feature as AlphaFeatureDefinition).defaultEnabled === true;
     return acc;
   }, {} as Record<AlphaFeatureTag, boolean>);
 }
