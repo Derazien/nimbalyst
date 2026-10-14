@@ -285,3 +285,36 @@ describe('RichTranscriptView permission review banner', () => {
     expect(vlistState.scrollToIndex.mock.calls[0][0]).toBeLessThan(vlistState.childCount);
   });
 });
+
+describe('sub-agent cards', () => {
+  // Same as the SDK lane: an agent card opens on its own and shows its steps,
+  // and there is no separate agents list.
+  it('render expanded with their child steps', () => {
+    vi.stubGlobal('requestAnimationFrame', () => 1);
+    vi.stubGlobal('cancelAnimationFrame', () => undefined);
+    vi.stubGlobal('CSS', { highlights: { delete: vi.fn(), set: vi.fn() } });
+    const call = (name: string, id: string, args: Record<string, unknown>) => ({
+      toolName: name, toolDisplayName: name, status: 'running' as const, description: null, arguments: args,
+      targetFilePath: null, mcpServer: null, mcpTool: null, providerToolCallId: id, progress: [],
+    });
+    const read = makeMessage(10, { type: 'tool_call', subagentId: 'agent-a', toolCall: call('Read', 'read-1', { file_path: 'src/a.ts' }) as any });
+    const agent = makeMessage(1, {
+      type: 'subagent',
+      subagentId: 'agent-a',
+      toolCall: call('Task', 'agent-a', { description: 'Map the repo', prompt: 'work', run_in_background: true }) as any,
+      subagent: {
+        agentType: 'general-purpose', status: 'running', model: 'sonnet', teammateName: null, teamName: null,
+        teammateMode: null, reasoningEffort: null, color: null, isBackground: true, prompt: 'work', childEvents: [read],
+      } as TranscriptViewMessage['subagent'],
+    });
+    render(
+      <RichTranscriptView
+        sessionId="agents" sessionStatus="running" isProcessing
+        messages={[makeMessage(0, { type: 'user_message', text: 'go' }), agent, makeMessage(2, { text: 'launched' })]}
+        provider="claude-code-cli" persistScrollState={false}
+      />,
+    );
+    expect(screen.queryByTestId('agents-strip-row')).toBeNull();
+    expect(screen.getByText(/Sub-agent Actions \(1\)/)).toBeTruthy();
+  });
+});

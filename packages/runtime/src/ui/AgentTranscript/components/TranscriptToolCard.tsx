@@ -11,8 +11,6 @@ import { formatToolDisplayName } from '../utils/toolNameFormatter';
 import { getCustomToolWidget, ToolWidgetErrorBoundary } from './CustomToolWidgets';
 import { useTranscriptToolWidgetRegistryVersion } from '../contributions';
 import { ToolCallChanges } from './ToolCallChanges';
-import { isQuestionTool } from '../../../ai/server/interactivePromptTools';
-import { getSubagentDisplayName, isSiblingErroredTask } from '../utils/subagentDisplay';
 
 /**
  * One tool call in the transcript: a registered custom widget, an edit diff
@@ -61,8 +59,6 @@ export interface TranscriptToolCardProps {
   skipped?: boolean;
   shared: TranscriptToolShared;
   subagentContext?: SubagentChildContext;
-  /** Set on cards rendered inside a sub-agent card: the name of the agent they belong to. */
-  parentAgentName?: string;
 }
 
 /** The id `expandedTools` is keyed by. */
@@ -585,7 +581,6 @@ export const TranscriptToolCard = React.memo(function TranscriptToolCard({
   skipped,
   shared,
   subagentContext,
-  parentAgentName,
 }: TranscriptToolCardProps): JSX.Element | null {
   // The card is memoized, so it subscribes to the widget registry itself:
   // extension enable/disable must swap widgets without a session reload.
@@ -620,13 +615,19 @@ export const TranscriptToolCard = React.memo(function TranscriptToolCard({
 
   if (!tool) return null;
 
-  // Hide Task tool calls that were cancelled as siblings of a parallel spawn;
-  // they were never actually started.
-  if (isSiblingErroredTask(toolMsg)) return null;
+  // Hide Task tool calls that were cancelled as siblings of a parallel spawn.
+  // These get exactly "<tool_use_error>Sibling tool call errored</tool_use_error>"
+  // as their result and were never actually started.
+  if (tool.toolName === 'Task' && toolMsg.isError) {
+    const result = tool.result;
+    const resultStr = typeof result === 'string' ? result : '';
+    if (/^\s*(<tool_use_error>)?\s*Sibling tool call errored\s*(<\/tool_use_error>)?\s*$/.test(resultStr)) {
+      return null;
+    }
+  }
 
   const isSubAgent = toolMsg.type === 'subagent';
   const isTeammate = isSubAgent && !!(toolMsg.subagent?.teammateName || toolMsg.subagent?.teamName);
-  const subagentName = isSubAgent ? getSubagentDisplayName(toolMsg) : undefined;
   const hasChildren = isSubAgent && toolMsg.subagent?.childEvents && toolMsg.subagent.childEvents.length > 0;
 
   if (CustomWidget) {
@@ -636,15 +637,6 @@ export const TranscriptToolCard = React.memo(function TranscriptToolCard({
         className={`rich-transcript-tool-container mb-2 ${depth > 0 ? 'nested ml-0' : ''}`}
         style={{ marginLeft: depth > 0 ? '1rem' : '0' }}
       >
-        {parentAgentName && isQuestionTool(tool.toolName) && (
-          <div
-            className="subagent-question-origin mb-1 flex items-center gap-1 text-xs text-[var(--nim-text-muted)]"
-            data-testid="subagent-question-origin"
-          >
-            <MaterialSymbol icon="cloud_sync" size={14} className="shrink-0 text-[var(--nim-primary)]" />
-            <span className="min-w-0 truncate">Question from agent {parentAgentName}</span>
-          </div>
-        )}
         <ToolWidgetErrorBoundary toolName={tool.toolName}>
           <CustomWidget
             message={toolMsg}
@@ -702,11 +694,7 @@ export const TranscriptToolCard = React.memo(function TranscriptToolCard({
         : 'rich-transcript-tool-card rounded border border-[var(--nim-border)] overflow-hidden bg-[var(--nim-bg-secondary)]';
 
   return (
-    <div
-      data-transcript-tool-id={depth === 0 && !superseded ? tool.providerToolCallId ?? undefined : undefined}
-      className={`rich-transcript-tool-container mb-2 ${depth > 0 ? 'nested ml-0' : ''}`}
-      style={{ marginLeft: depth > 0 ? '1rem' : '0' }}
-    >
+    <div className={`rich-transcript-tool-container mb-2 ${depth > 0 ? 'nested ml-0' : ''}`} style={{ marginLeft: depth > 0 ? '1rem' : '0' }}>
       <div className={cardClass}>
         <button onClick={onToggle} className="rich-transcript-tool-button w-full py-1 px-2 flex items-center gap-1.5 text-left border-none cursor-pointer text-sm bg-transparent">
           {isTeammate ? (
@@ -905,7 +893,6 @@ export const TranscriptToolCard = React.memo(function TranscriptToolCard({
                         skipped={childCallId ? (subagentContext?.skippedQuestionIds.has(childCallId) ?? false) : undefined}
                         shared={shared}
                         subagentContext={childMsg.type === 'subagent' ? subagentContext : undefined}
-                        parentAgentName={subagentName}
                       />
                     );
                   })}

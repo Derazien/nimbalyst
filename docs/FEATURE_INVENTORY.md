@@ -500,7 +500,6 @@ Companion app; pairs with a desktop over encrypted sync. Voice mode is not inclu
 - Claude Code CLI sessions: mid-session model switching from the model picker (drives the CLI's `/model` command; idle turns only)
 - Claude Code CLI sessions: plan mode. New sessions can start in plan with bypass one approval away (setting, on by default); a mode chip shows and switches the CLI's live permission mode; the focused terminal receives every key including Shift+Tab
 - Claude Code CLI sessions: the agent's todo checklist and task list feed the Todo and Task List side panels
-- Claude Code CLI sessions: background sub-agents are listed in an Agents strip at the top of the transcript (status running/done/failed/stopped, jump to the agent, flag when one is waiting on a question); questions a sub-agent raises name the agent
 
 ## Settings
 

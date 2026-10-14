@@ -160,6 +160,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Saving a synced document without changing its content no longer uploads it again
 - Session groups in the session list no longer show a count of unread child sessions, which took up row space
 - The table of contents menu in a document's header now indents each heading under the heading it belongs to, and shows deeper headings in smaller, lighter text
+- Thinking is shown open by default in Claude Code CLI sessions.
 
 ### Fixed
 <!-- Bug fixes go here -->
@@ -286,6 +287,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Moving a local wiki to a team (`/nimbalyst-wiki:team` or `nim wiki move-to-team`) now also moves drawings, mind maps, spreadsheets and the other editor pages, plus the images and attachments pages link to, when `@nimbalyst/wiki-web` is installed. Before, they stayed in the local wiki and links to them broke.
 - Excalidraw diagrams drawn by the AI no longer clip or cram their labels: text wraps inside each box with padding, boxes grow to fit, and a cramped board can be repaired in one step.
 - Approving a Claude Code CLI plan from the plan card works on the first click with the terminal collapsed, and background sub-agents stay in their own rows (with an Agents list at the top, a live running/done/stopped status, and questions labelled with the agent that asked) instead of spilling into the main conversation.
+- Approving a Claude Code CLI plan from the plan card works on the first click with the terminal collapsed, and background sub-agents stay in their own cards, shown the same way as in regular sessions with a live running, done or stopped status, instead of spilling into the main conversation.
 - Sessions started by agents, extensions, companions and super loops start ready to work instead of in Claude Code CLI plan mode; only sessions you open yourself follow the plan-mode setting.
 - In Claude Code CLI sessions a sub-agent's text and thinking stay inside its own card, including while it is still running.
 - Terminals no longer start failing with "Failed to fetch" after a long session: closed terminals now release their display engine.

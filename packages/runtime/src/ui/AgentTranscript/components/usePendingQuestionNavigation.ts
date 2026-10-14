@@ -9,23 +9,18 @@ interface PendingQuestion {
   rowIndex: number;
 }
 
-/**
- * The row that renders a tool message: the assistant row that encloses its
- * contiguous tool group, else the tool's own (orphan) row.
- */
-export function findToolRowIndex(messages: readonly TranscriptViewMessage[], index: number): number {
-  let rowIndex = index;
-  while (rowIndex < messages.length && isToolLikeMessage(messages[rowIndex])) rowIndex++;
-  return messages[rowIndex]?.type === 'assistant_message' ? rowIndex : index;
-}
-
 // Permission, plan and commit prompts intentionally have separate navigation.
 // A question the user moved past by sending a new message is closed, so only
 // open questions drive the Jump button and auto-scroll.
 function findPendingQuestions(messages: TranscriptViewMessage[]): PendingQuestion[] {
   return partitionUnansweredQuestions(messages).open
     .filter(({ index }) => isToolLikeMessage(messages[index]))
-    .map(({ id, index }) => ({ id, rowIndex: findToolRowIndex(messages, index) }));
+    .map(({ id, index }) => {
+      // Target the assistant row that encloses the contiguous tool group.
+      let rowIndex = index;
+      while (rowIndex < messages.length && isToolLikeMessage(messages[rowIndex])) rowIndex++;
+      return { id, rowIndex: messages[rowIndex]?.type === 'assistant_message' ? rowIndex : index };
+    });
 }
 
 export function usePendingQuestionNavigation({ messages, sessionId, ready, vlistRef, scrollContainerRef }: {
