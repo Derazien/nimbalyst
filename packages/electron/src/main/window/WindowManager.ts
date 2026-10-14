@@ -45,6 +45,7 @@ import {
     titleBarOptionsForWindow,
 } from './windowChrome';
 import { cascadeWindowBounds, restoreVisibleWindowBounds } from './windowBounds';
+import { installTerminalMenuShortcutGuard } from './terminalMenuShortcutGuard';
 
 // Window management
 export { windows, windowStates };
@@ -283,6 +284,8 @@ export function createWindow(
         }
 
         const window = new BrowserWindow(windowOptions);
+        // A focused terminal gets menu shortcut keys (Ctrl+S) instead of the menu.
+        installTerminalMenuShortcutGuard(window);
         if (isWorkspaceMode) {
             registerCustomTitleBarWindow(window);
             registerFullScreenChrome(window);

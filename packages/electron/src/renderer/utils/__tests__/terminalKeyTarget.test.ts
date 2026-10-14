@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from 'vitest';
-import { TERMINAL_KEY_SURFACE_ATTR, terminalOwnsKey } from '../terminalKeyTarget';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { initTerminalFocusReporter, TERMINAL_KEY_SURFACE_ATTR, terminalOwnsKey } from '../terminalKeyTarget';
 
 function keyOn(el: Element, init: KeyboardEventInit): KeyboardEvent {
   const event = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init });
@@ -52,5 +52,19 @@ describe('terminalOwnsKey', () => {
     const event = new KeyboardEvent('keydown', { key: 'l', ctrlKey: true });
     window.dispatchEvent(event);
     expect(terminalOwnsKey(event)).toBe(true);
+  });
+});
+
+describe('initTerminalFocusReporter', () => {
+  it('tells main when the terminal gains and loses focus, once per change', async () => {
+    document.body.innerHTML = `<div ${TERMINAL_KEY_SURFACE_ATTR}><textarea id="t"></textarea></div><input id="o" />`;
+    const send = vi.fn();
+    const stop = initTerminalFocusReporter(send);
+    (document.getElementById('t') as HTMLElement).focus();
+    (document.getElementById('t') as HTMLElement).focus();
+    (document.getElementById('o') as HTMLElement).focus();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    stop();
+    expect(send.mock.calls).toEqual([['terminal:focus-changed', true], ['terminal:focus-changed', false]]);
   });
 });

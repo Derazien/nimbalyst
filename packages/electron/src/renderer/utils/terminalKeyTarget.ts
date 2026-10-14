@@ -42,6 +42,33 @@ export function shouldTerminalKeepKey(event: KeyboardEvent): boolean {
   return false;
 }
 
+/**
+ * Tell the main process whether a terminal has focus, so application-menu
+ * shortcuts (File > Save is Ctrl+S) yield to the terminal the way window
+ * listeners already do. Menu accelerators run in main before the page sees the
+ * key, so `terminalOwnsKey` alone cannot keep them. Returns a cleanup.
+ */
+export function initTerminalFocusReporter(send: (channel: string, focused: boolean) => void): () => void {
+  let reported = false;
+  const report = () => {
+    const active = typeof document !== 'undefined' ? document.activeElement : null;
+    const focused = !!active && active.closest(TERMINAL_SELECTOR) !== null;
+    if (focused === reported) return;
+    reported = focused;
+    send('terminal:focus-changed', focused);
+  };
+  // focusout fires before the next element is focused; read it on the next tick.
+  const onFocusOut = () => setTimeout(report, 0);
+  document.addEventListener('focusin', report, true);
+  document.addEventListener('focusout', onFocusOut, true);
+  window.addEventListener('blur', onFocusOut);
+  return () => {
+    document.removeEventListener('focusin', report, true);
+    document.removeEventListener('focusout', onFocusOut, true);
+    window.removeEventListener('blur', onFocusOut);
+  };
+}
+
 /** True when the focused terminal should receive this key and window shortcuts must not. */
 export function terminalOwnsKey(event: KeyboardEvent): boolean {
   return isTerminalKeyTarget(event) && !shouldTerminalKeepKey(event);

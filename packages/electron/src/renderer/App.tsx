@@ -119,6 +119,7 @@ import { initOpenProjects } from './store/atoms/openProjects';
 import { initWorkspaceStatePruner } from './store/workspaceStatePruner';
 import { initActionPromptListeners } from './store/listeners/actionPromptListeners';
 import { initAiCommandListeners } from './store/listeners/aiCommandListeners';
+import { initTerminalFocusReporter } from './utils/terminalKeyTarget';
 import { initAppCommandListeners } from './store/listeners/appCommandListeners';
 import { initClaudeUsageListeners } from './store/listeners/claudeUsageListeners';
 import { initPromptSuggestionListeners } from './store/listeners/promptSuggestionListeners';
@@ -431,6 +432,7 @@ export default function App() {
     const cleanupClaude = initClaudeUsageListeners();
     const cleanupPromptSuggestion = initPromptSuggestionListeners();
     const cleanupClaudeCliTerminal = initClaudeCliTerminalListeners();
+    const cleanupTerminalFocus = initTerminalFocusReporter((channel, focused) => window.electronAPI.send(channel, focused));
     const cleanupClaudeCliSideNotes = initClaudeCliSideNoteListeners();
     const cleanupWindowFocus = initWindowFocusListeners();
     const cleanupCodex = initCodexUsageListeners();
@@ -486,6 +488,7 @@ export default function App() {
       cleanupClaude?.();
       cleanupPromptSuggestion?.();
       cleanupClaudeCliTerminal?.();
+      cleanupTerminalFocus();
       cleanupClaudeCliSideNotes?.();
       cleanupWindowFocus?.();
       cleanupCodex?.();
