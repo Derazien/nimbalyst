@@ -108,3 +108,16 @@ describe('claudeCliSubagentSpawnRegistry', () => {
     expect(registry.matchRequest(body([{ role: 'user', content: 'anything' }]))).toBeUndefined();
   });
 });
+
+describe('claudeCliSubagentSpawnRegistry with a teammate', () => {
+  // A teammate's first message is wrapped as <teammate-message ...>PROMPT</teammate-message>.
+  it('matches through the teammate-message wrapper', () => {
+    const registry = createSubagentSpawnRegistry();
+    registry.noteToolUses([agentUse('toolu_t', { prompt: 'Build the comments widget', run_in_background: 'true', name: 'panel-comments-widget' })]);
+    expect(registry.matchRequest(body([{
+      role: 'user',
+      content: '<teammate-message teammate_id="team-lead" summary="Build it">\nBuild the comments widget\n</teammate-message>',
+    }]))).toBe('toolu_t');
+    expect(registry.get('toolu_t')?.runInBackground).toBe(true);
+  });
+});

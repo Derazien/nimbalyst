@@ -291,7 +291,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A message sent while a Claude Code CLI session is busy goes straight into the terminal's own queue and is picked up at the agent's next step. The queue row shows when Claude Code has it and clears when Claude Code takes it, Edit pulls it back into the terminal to change it, and Send now no longer stops the turn.
 - Keys typed into a focused terminal are no longer taken by Nimbalyst's menu shortcuts, so Ctrl+S and Claude Code's Ctrl+X Ctrl+S reach the terminal.
 - Sessions started by agents, extensions, companions and super loops start ready to work instead of in Claude Code CLI plan mode; only sessions you open yourself follow the plan-mode setting.
-- In Claude Code CLI sessions a sub-agent's text and thinking stay inside its own card, including while it is still running.
+- In Claude Code CLI sessions a sub-agent's or teammate's text, thinking and tool calls stay inside its own card, including while it is still running.
 - Terminals no longer start failing with "Failed to fetch" after a long session: closed terminals now release their display engine.
 - Agent sessions in a project folder close to the drive root, such as `C:\work`, no longer fail on their first message.
 - Nimbalyst no longer stalls or stops responding while terminals and agent sessions are producing output or while the disk is busy, including when switching projects.

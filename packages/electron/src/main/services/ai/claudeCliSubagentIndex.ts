@@ -265,7 +265,13 @@ export function buildClaudeCliSubagentIndex(input: {
       continue;
     }
     const viaOutputFile = spawnByOutputFileAgentId.get(agentId);
-    if (viaOutputFile) spawnByAgentId.set(agentId, viaOutputFile);
+    if (viaOutputFile) {
+      spawnByAgentId.set(agentId, viaOutputFile);
+      continue;
+    }
+    // CLI 2.1.299 reports a teammate's `agent_id` as the sidecar id itself.
+    const viaAgentIdHandle = spawnByTeammateHandle.get(agentId);
+    if (viaAgentIdHandle) spawnByAgentId.set(agentId, viaAgentIdHandle);
   }
 
   const agentBySpawn = new Map<string, string>();

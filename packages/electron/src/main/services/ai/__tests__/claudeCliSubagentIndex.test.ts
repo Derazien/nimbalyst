@@ -254,3 +254,20 @@ describe('isSubagentToolName', () => {
     expect(isSubagentToolName(undefined)).toBe(false);
   });
 });
+
+describe('buildClaudeCliSubagentIndex with CLI 2.1.299 teammates', () => {
+  // Live shape (session ffa4af0b, 14 Oct): the spawn result now reports the
+  // sidecar's own id, not name@teamName, and carries no tasks/*.output path.
+  // Every turn of the teammate landed in the main conversation.
+  it('resolves a teammate whose spawn result reports the sidecar agent id itself', () => {
+    const index = buildClaudeCliSubagentIndex({
+      sidecars: [{
+        agentId: 'apanel-comments-widget-89a50dd6cf42da1c',
+        meta: { agentType: 'general-purpose', name: 'panel-comments-widget', taskKind: 'in_process_teammate', spawnDepth: 0 },
+        messageIds: ['msg_011Cg292LPdXEo2ToZ5nYTSM'],
+      }],
+      spawns: [{ toolUseId: 'toolu_01NCy8qKArG2Yi9BUJskkiAk', resultText: 'Spawned successfully.\nagent_id: apanel-comments-widget-89a50dd6cf42da1c' }],
+    });
+    expect(index.parentToolUseIdForMessageId('msg_011Cg292LPdXEo2ToZ5nYTSM')).toBe('toolu_01NCy8qKArG2Yi9BUJskkiAk');
+  });
+});

@@ -99,6 +99,18 @@ function asMessages(body: Record<string, unknown>): MessageLike[] {
   return Array.isArray(body.messages) ? (body.messages as MessageLike[]) : [];
 }
 
+/**
+ * An in-process teammate's opening message arrives wrapped as
+ * `<teammate-message teammate_id="…" summary="…">PROMPT</teammate-message>`
+ * (CLI 2.1.299); the spawn prompt is what is inside.
+ */
+const TEAMMATE_MESSAGE = /^\s*<teammate-message\b[^>]*>([\s\S]*?)<\/teammate-message>\s*$/;
+
+function unwrapTeammateMessage(text: string): string | null {
+  const match = TEAMMATE_MESSAGE.exec(text);
+  return match ? match[1] : null;
+}
+
 /** Normalized texts the first user message could be matched as. */
 function firstUserMessageCandidates(body: Record<string, unknown>): string[] {
   const first = asMessages(body).find((m) => m?.role === 'user');
@@ -114,7 +126,8 @@ function firstUserMessageCandidates(body: Record<string, unknown>): string[] {
     raw.push(...texts);
     if (texts.length > 1) raw.push(texts.join('\n'));
   }
-  return raw.map((t) => normalize(stripLeadingReminders(t))).filter((t) => t.length > 0);
+  const unwrapped = raw.map((t) => unwrapTeammateMessage(stripLeadingReminders(t))).filter((t): t is string => t !== null);
+  return [...raw, ...unwrapped].map((t) => normalize(stripLeadingReminders(t))).filter((t) => t.length > 0);
 }
 
 /** tool_use ids the request's assistant history already contains. */
@@ -151,7 +164,8 @@ export function createSubagentSpawnRegistry(): SubagentSpawnRegistry {
         description: str(input.description),
         subagentType: str(input.subagent_type),
         model: str(input.model),
-        runInBackground: input.run_in_background === true,
+        // Seen sent as the string "true" as well as the boolean.
+        runInBackground: input.run_in_background === true || input.run_in_background === 'true',
       });
       normalizedPrompts.set(block.id, normalize(prompt));
     }
