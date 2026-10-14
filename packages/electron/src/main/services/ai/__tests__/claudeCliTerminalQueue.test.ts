@@ -91,3 +91,16 @@ describe('readCliTerminalQueueMarker', () => {
     expect(readCliTerminalQueueMarker(undefined)).toBeNull();
   });
 });
+
+describe('matchCliQueueEntries with a long paste (CLI 2.1.299 wraps it)', () => {
+  // Real shape from a live session: the CLI logs a long pasted prompt inside
+  // <pasted_content id="..."> tags, which never matched the bare typed text.
+  it('matches the typed text through the pasted_content wrapper', () => {
+    const typed = 'Raed chose "Ask the session" on your card.\nDo it now.';
+    const entries = [
+      { type: 'queue-operation', operation: 'enqueue', content: `<pasted_content id="eeae">\n${typed}\n</pasted_content id="eeae">` },
+      { type: 'queue-operation', operation: 'remove', reason: 'absorbed_mid_turn', content: `<pasted_content id="eeae">\n${typed}\n</pasted_content id="eeae">` },
+    ];
+    expect(matchCliQueueEntries(entries, [{ id: 'q1', typedText: typed, typedAt: 1 }])).toEqual({ queued: ['q1'], consumed: ['q1'] });
+  });
+});

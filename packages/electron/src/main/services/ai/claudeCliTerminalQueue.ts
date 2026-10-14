@@ -110,8 +110,14 @@ export function cliShowsQueuedMessages(lines: readonly string[] | null | undefin
 // jsonl
 // ---------------------------------------------------------------------------
 
+/**
+ * CLI 2.1.299 logs a long pasted prompt inside `<pasted_content id="eeae">` ...
+ * `</pasted_content id="eeae">`; the typed text has no such tags.
+ */
+const PASTED_CONTENT_TAG = /<\/?pasted_content(?:\s+id="[^"]*")?>/g;
+
 export function normalizePromptText(text: string): string {
-  return text.replace(/\r\n?/g, '\n').trim();
+  return text.replace(/\r\n?/g, '\n').replace(PASTED_CONTENT_TAG, '').trim();
 }
 
 function userEntryText(entry: Record<string, any>): string | null {
