@@ -18,6 +18,7 @@ import { publishQueuedPromptClaim } from './queuedPromptClaimEvents';
 import { publishQueuedPromptsToSync } from './queuedPromptSyncPublisher';
 import { claudeCliSubmitLatch } from './claudeCliSubmitLatch';
 import { claudeCliInterruptGate } from './claudeCliInterruptGate';
+import { isClaudeCliTerminalRowTracked } from './claudeCliTerminalQueueSingleton';
 
 /** Per-session guard so two close `idle` events can't double-flush. */
 const flushInFlight = new Set<string>();
@@ -101,6 +102,8 @@ export async function flushNextClaudeCliQueuedPromptForSession(
         submit: (i) => submitClaudeCliPromptProduction(i),
         isSubmitInFlight: () => claudeCliSubmitLatch.isInFlight(sessionId),
         isInterruptInFlight: () => claudeCliInterruptGate.isInFlight(sessionId),
+        isTerminalRowTracked: (promptId) => isClaudeCliTerminalRowTracked(sessionId, promptId),
+        releaseTerminalRow: (promptId) => store.setCliTerminalQueueMarker(promptId, null),
         // The flush runs from the PID-idle transition with no originating IPC
         // event, so there is no single target window; broadcasting is safe
         // because the renderer filters by sessionId (NIM-830).

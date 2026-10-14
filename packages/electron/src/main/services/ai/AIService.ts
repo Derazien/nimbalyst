@@ -44,6 +44,7 @@ import {
 import { ToolExecutor, toolRegistry, BUILT_IN_TOOLS } from './tools';
 import { getTerminalSessionManager } from '../TerminalSessionManager';
 import { flushNextClaudeCliQueuedPromptForSession } from './claudeCliQueueFlushSingleton';
+import { sendClaudeCliQueuedNow } from './claudeCliTerminalQueueSingleton';
 import { logger } from '../../utils/logger';
 import { getSettingsService } from '../SettingsService';
 import { subscribeProviderSettingsInvalidation } from './providerSettingsCacheInvalidation';
@@ -138,7 +139,7 @@ export interface InterruptCurrentTurnResult {
   success: boolean;
   error?: string;
   /** How the turn was stopped; absent when `success` is false. */
-  method?: 'interrupt' | 'abort' | 'terminal-ctrl-c';
+  method?: 'interrupt' | 'abort' | 'terminal-ctrl-c' | 'terminal-send-now';
   /** True when the session was forced idle because no completion event could arrive. */
   forcedIdle?: boolean;
   /** #1682: held until the in-flight commit proposal call settles, then replayed. */
@@ -529,6 +530,14 @@ export class AIService {
       const terminalManager = getTerminalSessionManager();
       if (!terminalManager.isTerminalActive(sessionId)) {
         return { success: false, error: 'No active terminal for session' };
+      }
+
+      if (session.provider === 'claude-code-cli') {
+        // Claude's CLI holds queued prompts itself; its send-now (Ctrl+Enter)
+        // runs them without killing the turn or its agents.
+        const { sent } = await sendClaudeCliQueuedNow(sessionId);
+        logger.main.info(`[AIService] Sent queued prompts now in the Claude CLI for session ${sessionId} (sent=${sent})`);
+        return { success: true, method: 'terminal-send-now' };
       }
 
       terminalManager.writeToTerminal(sessionId, '\x03');

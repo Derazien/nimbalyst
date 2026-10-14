@@ -182,6 +182,7 @@ function memoryQueue(): QueuedPromptsStore {
     async sweepExecutingOnBoot() { return { completed: 0, failed: 0, rolledBack: 0 }; },
     async sweepExecutingForSession() { return { completed: 0, failed: 0, rolledBack: 0 }; },
     async cleanup() { return 0; },
+    async setCliTerminalQueueMarker() {},
   };
 }
 

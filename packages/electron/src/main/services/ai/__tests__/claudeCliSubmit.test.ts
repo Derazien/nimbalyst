@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   submitClaudeCliPrompt,
+  typeIntoClaudeCliQueue,
   submitWriteGapMs,
   SUBMIT_WRITE_GAP_MS,
   SUBMIT_WRITE_GAP_MAX_MS,
@@ -374,5 +375,45 @@ describe('submitClaudeCliPrompt /btw side questions', () => {
     );
 
     expect(logUserPrompt).toHaveBeenCalledOnce();
+  });
+});
+
+describe('typeIntoClaudeCliQueue (a prompt sent while the CLI is busy)', () => {
+  it('pastes and presses Enter once, never logs the prompt, and returns the typed text', async () => {
+    const h = harness();
+    const typed = await typeIntoClaudeCliQueue(
+      { sessionId: 's1', workspacePath: '/w', prompt: '  queued note  ' },
+      { writeToTerminal: h.deps.writeToTerminal, delay: h.deps.delay, isInputEmpty: () => true },
+    );
+    expect(typed).toBe('queued note');
+    expect(h.writes.map(([, d]) => d)).toEqual([pasted('queued note'), '\r']);
+    expect(h.logUserPrompt).not.toHaveBeenCalled();
+  });
+
+  it('presses Enter again only while the text is still sitting in the input box', async () => {
+    const h = harness();
+    let enters = 0;
+    await typeIntoClaudeCliQueue(
+      { sessionId: 's1', workspacePath: '/w', prompt: 'look', attachments: [img('/tmp/a.png')] },
+      {
+        delay: h.deps.delay,
+        writeToTerminal: (sessionId: string, data: string) => {
+          h.writes.push([sessionId, data]);
+          if (data === '\r') enters += 1;
+        },
+        isInputEmpty: () => enters >= 2,
+      },
+    );
+    expect(enters).toBe(2);
+  });
+
+  it('returns null and writes nothing for an empty prompt', async () => {
+    const h = harness();
+    const typed = await typeIntoClaudeCliQueue(
+      { sessionId: 's1', workspacePath: '/w', prompt: '   ' },
+      { writeToTerminal: h.deps.writeToTerminal, delay: h.deps.delay, isInputEmpty: () => true },
+    );
+    expect(typed).toBeNull();
+    expect(h.writes).toEqual([]);
   });
 });

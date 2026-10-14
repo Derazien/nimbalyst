@@ -47,3 +47,24 @@ describe('editing a queued prompt', () => {
     expect(mergeRestoredDraftAttachments([IMAGE], undefined)).toEqual([IMAGE]);
   });
 });
+
+describe('a queued prompt already typed into the Claude CLI', () => {
+  it('cannot be edited or cancelled from Nimbalyst, but can still be sent now', () => {
+    const onSendNow = vi.fn();
+    render(
+      <PromptQueueList
+        queue={[
+          { id: 'q1', prompt: 'in the CLI', timestamp: 1, inTerminal: true, cliQueued: true },
+          { id: 'q2', prompt: 'still here', timestamp: 2 },
+        ]}
+        onCancel={vi.fn()}
+        onEdit={vi.fn()}
+        onSendNow={onSendNow}
+      />,
+    );
+    expect(screen.getAllByTitle('Edit this prompt')).toHaveLength(1);
+    expect(screen.getAllByTitle('Cancel this prompt')).toHaveLength(1);
+    fireEvent.click(screen.getAllByTitle(/send now/i)[0]);
+    expect(onSendNow).toHaveBeenCalledWith('q1', 'in the CLI');
+  });
+});

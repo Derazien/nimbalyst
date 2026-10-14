@@ -34,6 +34,12 @@ vi.mock('../../../utils/store', () => ({ getDefaultEffortLevel: () => undefined 
 // import cost ~7s and tripped the 20s timeout under a parallel run.
 vi.mock('../../SettingsService', () => ({ getSettingsService: () => ({ get: () => undefined }) }));
 vi.mock('../claudeCliModeSingleton', () => ({ getClaudeCliModeTracker: () => undefined }));
+vi.mock('../claudeCliTerminalQueueSingleton', () => ({
+  forwardPendingIntoClaudeCli: vi.fn(),
+  noteClaudeCliTerminalQueueScreen: vi.fn(),
+  registerClaudeCliTerminalQueue: vi.fn(),
+  releaseClaudeCliTerminalQueue: vi.fn(),
+}));
 vi.mock('../../attachments/attachmentStagingRoot', () => ({
   resolveAttachmentStagingAllowDirectories: () => [],
 }));

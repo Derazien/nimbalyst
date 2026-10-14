@@ -268,3 +268,48 @@ export async function submitClaudeCliPrompt(
 
   return { submitted: true };
 }
+
+export interface TypeIntoClaudeCliQueueDeps {
+  writeToTerminal: (sessionId: string, data: string) => void;
+  delay: (ms: number) => Promise<void>;
+  /** The CLI's input box is empty again, i.e. it took the text (`claudeCliTerminalQueue`). */
+  isInputEmpty: (sessionId: string) => boolean | Promise<boolean>;
+}
+
+/**
+ * Type a prompt into a BUSY CLI, which queues it in its own queue. Same paste
+ * as `submitClaudeCliPrompt`, but no turn-start confirmation (the turn is
+ * already running, so the PID never changes) and no transcript row: the row is
+ * written when the CLI's jsonl shows it consumed the prompt. An extra Enter is
+ * pressed only while the text still sits in the input box, which happens when
+ * an attachment makes the CLI swallow the first one; Enter on an empty box is
+ * never sent. Returns the exact text typed, or null when there was nothing.
+ */
+export async function typeIntoClaudeCliQueue(
+  input: SubmitClaudeCliPromptInput,
+  deps: TypeIntoClaudeCliQueueDeps,
+): Promise<string | null> {
+  const ptyText = composeClaudeCliPtySubmission({
+    prompt: (input.prompt ?? '').trim(),
+    attachments: input.attachments ?? [],
+    documentContext: input.documentContext,
+  });
+  if (!ptyText) return null;
+
+  deps.writeToTerminal(input.sessionId, BRACKETED_PASTE_START + ptyText + BRACKETED_PASTE_END);
+  await deps.delay(submitWriteGapMs(Buffer.byteLength(ptyText, 'utf8')));
+  deps.writeToTerminal(input.sessionId, SUBMIT_TERMINATOR);
+
+  for (let attempt = 0; attempt <= ENTER_RETRIES; attempt++) {
+    for (let poll = 0; poll < ENTER_CONFIRM_POLLS; poll++) {
+      try {
+        if (await deps.isInputEmpty(input.sessionId)) return ptyText;
+      } catch {
+        return ptyText;
+      }
+      await deps.delay(ENTER_CONFIRM_POLL_MS);
+    }
+    if (attempt < ENTER_RETRIES) deps.writeToTerminal(input.sessionId, SUBMIT_TERMINATOR);
+  }
+  return ptyText;
+}

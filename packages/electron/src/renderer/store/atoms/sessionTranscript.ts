@@ -44,6 +44,10 @@ export interface QueuedPrompt {
   timestamp: number;
   documentContext?: any;
   attachments?: any[];
+  /** Typed into the Claude CLI, which holds it now. */
+  inTerminal?: boolean;
+  /** The CLI shows it in its own queue. */
+  cliQueued?: boolean;
 }
 
 export const sessionQueuedPromptsAtom = atomFamily((_sessionId: string) =>

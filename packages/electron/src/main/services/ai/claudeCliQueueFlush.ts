@@ -18,6 +18,7 @@
 
 import type { ChatAttachment } from '@nimbalyst/runtime/ai/server/types';
 import type { ClaudeCliDocumentContext } from './claudeCliPromptComposer';
+import { readCliTerminalQueueMarker } from './claudeCliTerminalQueue';
 
 export interface FlushQueuedPrompt {
   id: string;
@@ -63,6 +64,13 @@ export interface FlushClaudeCliQueueDeps {
    * until the escalation is over.
    */
   isInterruptInFlight?: () => boolean;
+  /**
+   * True when this app run typed the row into the CLI and is watching for the
+   * CLI to take it. A marked row nobody is watching was left by an earlier run;
+   * that CLI and its queue are gone, so the row is released and sent normally.
+   */
+  isTerminalRowTracked?: (promptId: string) => boolean;
+  releaseTerminalRow?: (promptId: string) => Promise<void>;
 }
 
 /**
@@ -82,6 +90,18 @@ export async function flushNextClaudeCliQueuedPrompt(
 
   const pending = await deps.listPending(args.sessionId);
   if (pending.length === 0) return false;
+  // A row typed into the busy CLI sits in the CLI's own queue, and the CLI runs
+  // it itself. Wait for it to be consumed (`claudeCliTerminalQueue`) rather
+  // than typing anything else in ahead of it or sending it twice.
+  for (const row of pending) {
+    if (!readCliTerminalQueueMarker(row.documentContext)) continue;
+    if (deps.isTerminalRowTracked && !deps.isTerminalRowTracked(row.id)) {
+      await deps.releaseTerminalRow?.(row.id);
+      row.documentContext = { ...(row.documentContext as object), cliTerminalQueue: undefined } as ClaudeCliDocumentContext;
+      continue;
+    }
+    return false;
+  }
 
   const claimed = await deps.claim(pending[0].id);
   if (!claimed) return false;

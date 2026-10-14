@@ -395,3 +395,37 @@ describe('PGLiteQueuedPromptsStore.cleanup', () => {
     }
   });
 });
+
+describe('PGLiteQueuedPromptsStore CLI terminal queue marker', () => {
+  it('merges the marker into the pending row and clears it again, keeping the rest of the context', async () => {
+    const writes: any[][] = [];
+    let context: any = JSON.stringify({ promptProvenance: { queuedPromptId: 'p1' } });
+    const db: DbStub = {
+      query: (async (sql: string, params?: any[]) => {
+        if (sql.startsWith('SELECT')) return { rows: [{ id: 'p1', session_id: 's', prompt: 'x', status: 'pending', document_context: context, created_at: new Date() }] };
+        expect(sql).toContain("status = 'pending'");
+        writes.push(params!);
+        context = params![1];
+        return { rows: [] };
+      }) as any,
+    };
+    const store = createPGLiteQueuedPromptsStore(db);
+    await store.setCliTerminalQueueMarker('p1', { typedText: 'x', jsonlPath: '/j', jsonlOffset: 3, typedAt: 1 });
+    expect(JSON.parse(writes[0][1])).toEqual({
+      promptProvenance: { queuedPromptId: 'p1' },
+      cliTerminalQueue: { typedText: 'x', jsonlPath: '/j', jsonlOffset: 3, typedAt: 1 },
+    });
+    await store.setCliTerminalQueueMarker('p1', null);
+    expect(JSON.parse(writes[1][1])).toEqual({ promptProvenance: { queuedPromptId: 'p1' } });
+  });
+
+  it('delete refuses a row that was typed into the terminal', async () => {
+    const db: DbStub = {
+      query: (async (sql: string) => {
+        expect(sql).toContain("document_context->'cliTerminalQueue' IS NULL");
+        return { rows: [] };
+      }) as any,
+    };
+    await expect(createPGLiteQueuedPromptsStore(db).delete('p1')).rejects.toThrow(/sent to the terminal/);
+  });
+});

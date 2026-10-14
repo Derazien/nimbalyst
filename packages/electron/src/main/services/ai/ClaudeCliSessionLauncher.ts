@@ -195,6 +195,8 @@ export interface LaunchClaudeCliSessionInput {
    * of "running" even if the CLI dies before the PID watcher reports idle.
    */
   onExit?: (exitCode: number) => void;
+  /** Throttled shadow-screen lines of the CLI terminal (main-side ghostty screen). */
+  onScreenLines?: (lines: string[]) => void;
 }
 
 export interface LaunchClaudeCliSessionResult {
@@ -390,8 +392,11 @@ export class ClaudeCliSessionLauncher {
         cols: input.cols,
         rows: input.rows,
         onTurnState: input.onTurnState,
-        onScreenLines: modeTracker
-          ? (lines) => modeTracker.noteScreen(sessionId, workspacePath, lines)
+        onScreenLines: modeTracker || input.onScreenLines
+          ? (lines) => {
+              modeTracker?.noteScreen(sessionId, workspacePath, lines);
+              input.onScreenLines?.(lines);
+            }
           : undefined,
         onExit: observation || input.onExit || modeTracker
           ? (exitCode) => {

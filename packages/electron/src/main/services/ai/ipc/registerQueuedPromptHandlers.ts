@@ -10,6 +10,8 @@ import { type AIServiceContext } from './AIServiceContext';
 import { getSessionStateManager } from '@nimbalyst/runtime/ai/server/SessionStateManager';
 import { remoteSessions } from '../remoteSessions';
 import { canDispatchIntoDrain } from '../drainFollowUp';
+import { readCliTerminalQueueMarker } from '../claudeCliTerminalQueue';
+import { forwardPendingIntoClaudeCli } from '../claudeCliTerminalQueueSingleton';
 
 /**
  * Queued-prompt lifecycle: claim, complete, fail, list, create, delete, and the
@@ -94,13 +96,20 @@ export function registerQueuedPromptHandlers(ctx: AIServiceContext): void {
     const { getQueuedPromptsStore } = await import('../../RepositoryManager');
     const queueStore = getQueuedPromptsStore();
     const pending = await queueStore.listPending(sessionId);
-    return pending.map(p => ({
-      id: p.id,
-      prompt: p.prompt,
-      timestamp: p.createdAt,
-      attachments: p.attachments,
-      documentContext: p.documentContext,
-    }));
+    return pending.map(p => {
+      // Typed into a busy Claude CLI: the terminal holds it, so it can no
+      // longer be edited or cancelled from here.
+      const cliMarker = readCliTerminalQueueMarker(p.documentContext);
+      return {
+        id: p.id,
+        prompt: p.prompt,
+        timestamp: p.createdAt,
+        inTerminal: !!cliMarker,
+        cliQueued: !!cliMarker?.queuedAt,
+        attachments: p.attachments,
+        documentContext: p.documentContext,
+      };
+    });
   });
 
   // Create a new queued prompt (for local queuing)
@@ -206,6 +215,9 @@ export function registerQueuedPromptHandlers(ctx: AIServiceContext): void {
           void terminalManager.getClaudeCliLiveTurnState(sessionId).then((live) => {
             if (live === 'idle') {
               void flushNextClaudeCliQueuedPromptForSession(sessionId, workspacePath);
+            } else if (live === 'running' && queuedSession?.provider === 'claude-code-cli') {
+              // Busy: type it into the CLI's own queue now, no stop and resend.
+              void forwardPendingIntoClaudeCli(sessionId);
             }
           }).catch(() => {});
         }

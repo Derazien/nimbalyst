@@ -1646,6 +1646,12 @@ const LocalSessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscrip
 
   const handleSendNowQueuedPrompt = useCallback(async (_id: string, _prompt: string) => {
     try {
+      if (provider === 'claude-code-cli') {
+        // The CLI's own send-now (Ctrl+Enter) runs what its queue holds,
+        // typing in any row it does not have yet. Never Ctrl+C.
+        await window.electronAPI.invoke('claude-cli:send-queued-now', sessionId);
+        return;
+      }
       // Two-step send-now: (1) interrupt the current turn (graceful for
       // Claude Code, hard abort for other providers via the BaseAIProvider
       // default); (2) explicitly trigger queue processing. The natural
@@ -1660,7 +1666,7 @@ const LocalSessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscrip
     } catch (error) {
       console.error('[SessionTranscript] Failed to interrupt for send-now:', error);
     }
-  }, [sessionId, workspacePath]);
+  }, [sessionId, workspacePath, provider]);
 
   const handleCloseAndArchive = useCallback(async () => {
     // The helper shows an error message itself if the save fails. Stop here so the screen never says "archived" when it was not saved.

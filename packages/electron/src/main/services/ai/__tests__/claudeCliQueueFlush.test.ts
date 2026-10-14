@@ -121,3 +121,28 @@ describe('flushNextClaudeCliQueuedPrompt', () => {
     expect(h.notifyClaimed).toHaveBeenCalledWith('q1');
   });
 });
+
+describe('flushNextClaudeCliQueuedPrompt with rows already typed into the CLI', () => {
+  it('sends nothing while the CLI still holds a row it was given, since it runs that row itself', async () => {
+    const typed = { id: 'q1', prompt: 'in the CLI', documentContext: { cliTerminalQueue: { typedText: 'in the CLI', jsonlPath: '/j', jsonlOffset: 0, typedAt: 1 } } as any };
+    const h = harness([typed, { id: 'q2', prompt: 'held' }]);
+    expect(await flushNextClaudeCliQueuedPrompt({ sessionId: 's1', workspacePath: '/w' }, h.deps)).toBe(false);
+    expect(h.claim).not.toHaveBeenCalled();
+    expect(h.submit).not.toHaveBeenCalled();
+  });
+});
+
+describe('flushNextClaudeCliQueuedPrompt with a row marked by an earlier app run', () => {
+  it('releases the stale marker and sends the row normally', async () => {
+    const stale = { id: 'q1', prompt: 'left over', documentContext: { cliTerminalQueue: { typedText: 'left over', jsonlPath: '/j', jsonlOffset: 0, typedAt: 1 } } as any };
+    const h = harness([stale]);
+    const releaseTerminalRow = vi.fn(async () => undefined);
+    const sent = await flushNextClaudeCliQueuedPrompt(
+      { sessionId: 's1', workspacePath: '/w' },
+      { ...h.deps, isTerminalRowTracked: () => false, releaseTerminalRow },
+    );
+    expect(sent).toBe(true);
+    expect(releaseTerminalRow).toHaveBeenCalledWith('q1');
+    expect(h.submit).toHaveBeenCalledWith(expect.objectContaining({ prompt: 'left over' }));
+  });
+});

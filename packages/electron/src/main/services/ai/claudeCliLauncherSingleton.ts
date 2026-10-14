@@ -35,6 +35,12 @@ import { getSettingsService } from '../SettingsService';
 import { getClaudeCliModeTracker } from './claudeCliModeSingleton';
 import { startClaudeCliProxyObservation, fireClaudeCliTurnCompletion } from './claudeCliObservationSingleton';
 import { flushNextClaudeCliQueuedPromptForSession } from './claudeCliQueueFlushSingleton';
+import {
+  forwardPendingIntoClaudeCli,
+  noteClaudeCliTerminalQueueScreen,
+  registerClaudeCliTerminalQueue,
+  releaseClaudeCliTerminalQueue,
+} from './claudeCliTerminalQueueSingleton';
 import { claudeCliSubmitLatch } from './claudeCliSubmitLatch';
 import { maybeAutoNameClaudeCliSessionProduction } from './claudeCliSessionAutoNameSingleton';
 import type { ClaudeTurnState } from './claudeCliPidState';
@@ -365,6 +371,14 @@ export async function ensureClaudeCliSession(
       // fresh launch so the global plan-mode default only applies to manual sessions.
       const startInPlanMode = await readSessionStartInPlanModeOverride(input.sessionId);
 
+      // Busy-time prompts go into the CLI's own queue; it needs to know which
+      // jsonl this CLI writes to see when the CLI takes them.
+      registerClaudeCliTerminalQueue({
+        sessionId: input.sessionId,
+        workspacePath: input.workspacePath,
+        cwd: resolvedCwd ?? input.workspacePath,
+        cliSessionId: input.resumeSessionId ?? input.sessionId,
+      });
 
       await launcher.launch({
         sessionId: input.sessionId,
@@ -404,6 +418,9 @@ export async function ensureClaudeCliSession(
             void flushNextClaudeCliQueuedPromptForSession(input.sessionId, input.workspacePath);
           } else if (state === 'running') {
             void stateManager.updateActivity({ sessionId: input.sessionId, status: 'running', isStreaming: true });
+            // Anything sent while the CLI was idle-then-busy, or held behind a
+            // dialog that is now answered, goes into the CLI's own queue.
+            void forwardPendingIntoClaudeCli(input.sessionId);
             // Idempotent; cancels any pending scheduled-stop from a prior turn.
             void cliFileWatcher
               .ensureForSession(input.sessionId, watchRoot)
@@ -412,8 +429,10 @@ export async function ensureClaudeCliSession(
             void stateManager.updateActivity({ sessionId: input.sessionId, status: 'waiting_for_input', isStreaming: false });
           }
         },
+        onScreenLines: (lines) => noteClaudeCliTerminalQueueScreen(input.sessionId, lines),
         onExit: (exitCode) => {
           console.log(`[ClaudeCliLauncher] Claude CLI exited for ${input.sessionId} with code ${exitCode}; ending AI session state`);
+          void releaseClaudeCliTerminalQueue(input.sessionId);
           void cliFileWatcher.stopForSession(input.sessionId).catch(() => {});
           void stateManager.endSession(input.sessionId).catch((err) => {
             console.warn('[ClaudeCliLauncher] Failed to end session after CLI exit:', err);

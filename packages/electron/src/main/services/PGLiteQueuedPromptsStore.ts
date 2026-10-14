@@ -90,8 +90,15 @@ export interface QueuedPromptsStore {
   /** Mark a prompt as failed with an error message */
   fail(id: string, errorMessage: string): Promise<void>;
 
-  /** Delete a queued prompt */
+  /** Delete a queued prompt. Refuses a row already typed into a Claude CLI terminal. */
   delete(id: string): Promise<void>;
+
+  /**
+   * Set (or clear, with null) the marker saying a pending row was typed into a
+   * busy Claude CLI and now waits in the CLI's own queue
+   * (`claudeCliTerminalQueue.ts`). Only touches pending rows.
+   */
+  setCliTerminalQueueMarker(id: string, marker: Record<string, unknown> | null): Promise<void>;
 
   /**
    * Reset any rows stuck in 'executing' back to 'pending' for the given
@@ -365,12 +372,26 @@ export function createPGLiteQueuedPromptsStore(
       await ensureReady();
 
       const deleted = await db.query(
-        `DELETE FROM queued_prompts WHERE id = $1 AND status = 'pending' RETURNING id`,
+        `DELETE FROM queued_prompts WHERE id = $1 AND status = 'pending' AND document_context->'cliTerminalQueue' IS NULL RETURNING id`,
         [id]
       );
 
-      if (!deleted.rows.length) throw new Error('Queued prompt was already claimed or removed; refresh the queue before editing it');
+      if (!deleted.rows.length) throw new Error('Queued prompt was already claimed, sent to the terminal, or removed; refresh the queue before editing it');
       console.log(`[QueuedPromptsStore] Deleted prompt ${id}`);
+    },
+
+    async setCliTerminalQueueMarker(id: string, marker: Record<string, unknown> | null): Promise<void> {
+      await ensureReady();
+
+      // Merged in JS: sub-extraction differs between PGLite and SQLite.
+      const { rows } = await db.query<any>(`SELECT * FROM queued_prompts WHERE id = $1`, [id]);
+      if (rows.length === 0) return;
+      const { cliTerminalQueue: _previous, ...rest } = (rowToQueuedPrompt(rows[0]).documentContext ?? {}) as Record<string, unknown>;
+      const next = marker ? { ...rest, cliTerminalQueue: marker } : rest;
+      await db.query(
+        `UPDATE queued_prompts SET document_context = $2 WHERE id = $1 AND status = 'pending'`,
+        [id, JSON.stringify(next)]
+      );
     },
 
     async rollbackExecuting(sessionId: string): Promise<number> {

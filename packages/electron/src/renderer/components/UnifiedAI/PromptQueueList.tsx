@@ -12,6 +12,10 @@ export interface QueuedPrompt {
   prompt: string;
   timestamp: number;
   attachments?: QueuedPromptAttachment[];
+  /** Typed into the Claude CLI, which holds it now; edit it there with Up. */
+  inTerminal?: boolean;
+  /** The CLI shows it in its own queue. */
+  cliQueued?: boolean;
 }
 
 interface PromptQueueListProps {
@@ -73,11 +77,19 @@ export function PromptQueueList({ queue, onCancel, onEdit, onSendNow }: PromptQu
             {item.attachments && item.attachments.length > 0 && (
               <AttachmentIndicator attachments={item.attachments} />
             )}
+            {item.inTerminal && (
+              <span
+                className="prompt-queue-in-terminal shrink-0 text-[11px] text-nim-muted"
+                title="Already in the terminal; press Up there to edit it"
+              >
+                {item.cliQueued ? "in Claude Code's queue" : 'sent to Claude Code'}
+              </span>
+            )}
             {onSendNow && (
               <button
                 className="prompt-queue-send-now shrink-0 w-5 h-5 flex items-center justify-center bg-transparent border-none rounded text-nim-muted cursor-pointer text-sm leading-none p-0 transition-all duration-150 hover:bg-nim-hover hover:text-nim-accent"
                 onClick={() => onSendNow(item.id, item.prompt)}
-                title="Interrupt and send now"
+                title={item.inTerminal ? 'Send now' : 'Interrupt and send now'}
                 type="button"
               >
                 <svg width="12" height="12" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -85,7 +97,7 @@ export function PromptQueueList({ queue, onCancel, onEdit, onSendNow }: PromptQu
                 </svg>
               </button>
             )}
-            {onEdit && (
+            {onEdit && !item.inTerminal && (
               <button
                 className="prompt-queue-edit shrink-0 w-5 h-5 flex items-center justify-center bg-transparent border-none rounded text-nim-muted cursor-pointer text-sm leading-none p-0 transition-all duration-150 hover:bg-nim-hover hover:text-nim-primary"
                 onClick={() => onEdit(item.id, item.prompt, item.attachments)}
@@ -95,6 +107,7 @@ export function PromptQueueList({ queue, onCancel, onEdit, onSendNow }: PromptQu
                 &#x270E;
               </button>
             )}
+            {!item.inTerminal && (
             <button
               className="prompt-queue-cancel shrink-0 w-5 h-5 flex items-center justify-center bg-transparent border-none rounded text-nim-muted cursor-pointer text-lg leading-none p-0 transition-all duration-150 hover:bg-nim-hover hover:text-nim-primary"
               onClick={() => onCancel(item.id)}
@@ -103,6 +116,7 @@ export function PromptQueueList({ queue, onCancel, onEdit, onSendNow }: PromptQu
             >
               ×
             </button>
+            )}
           </div>
         ))}
       </div>
