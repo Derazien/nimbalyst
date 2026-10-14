@@ -6,6 +6,8 @@ import { TranscriptRuntime } from '@nimbalyst/runtime/ai/server/transcript/Trans
 import type { RawMessage } from '@nimbalyst/runtime/ai/server/transcript/TranscriptTransformer';
 import type { TranscriptViewMessage } from '@nimbalyst/runtime/ai/server/transcript/TranscriptProjector';
 import type { TranscriptEvent } from '@nimbalyst/runtime/ai/server/transcript/types';
+import { TranscriptTransformer } from '@nimbalyst/runtime/ai/server/transcript/TranscriptTransformer';
+import { InMemoryTranscriptEventStore } from '@nimbalyst/runtime/ai/server/transcript/InMemoryTranscriptEventStore';
 
 const SESSION_ID = 'test-session';
 
@@ -616,5 +618,54 @@ describe('TranscriptStreamAccumulator', () => {
       expect(m?.text).toBe('new-text');
       expect(h.lastEmit?.messages).toHaveLength(1);
     });
+  });
+});
+
+describe('TranscriptStreamAccumulator: a background agent loaded before its children', () => {
+  // Real CLI row shapes (session 3c5f24db): the agent's card is in the loaded
+  // snapshot, its later steps arrive live. They belonged inside the card but
+  // were shown in the main conversation.
+  it('nests live children under the snapshot agent card', async () => {
+    let n = 0;
+    const row = (content: object): RawMessage => ({ id: ++n, sessionId: SESSION_ID, source: 'claude-code', direction: 'output', content: JSON.stringify(content), createdAt: new Date(1_800_000_000_000 + n * 1000) });
+    const all: RawMessage[] = [];
+    const store = new InMemoryTranscriptEventStore();
+    let status: any = { transformVersion: null, lastRawMessageId: null, lastTransformedAt: null, transformStatus: null };
+    const transformer = new TranscriptTransformer(
+      { getMessages: async (_s: string, afterId = 0) => all.filter((m) => m.id > afterId) } as any,
+      store,
+      { getTransformStatus: async () => status, updateTransformStatus: async (_s: string, u: any) => { status = { ...u }; } } as any,
+    );
+    const live: TranscriptEvent[] = [];
+    transformer.setOnEventWritten((e) => live.push(e));
+
+    all.push(
+      row({ type: 'assistant', message: { id: 'msg_lead', role: 'assistant', content: [
+        { type: 'tool_use', id: 'toolu_A', name: 'Agent', input: { description: 'investigate', subagent_type: 'Explore', prompt: 'Read-only', run_in_background: 'true' } }] } }),
+      row({ type: 'nimbalyst_tool_result', tool_use_id: 'toolu_A', result: 'Async agent launched successfully.', is_error: false, background_launch: true }),
+      row({ type: 'assistant', parent_tool_use_id: 'toolu_A', message: { id: 'msg_a0', role: 'assistant', content: [
+        { type: 'tool_use', id: 'toolu_a0', name: 'Read', input: { file_path: 'a.ts' } }] } }),
+    );
+    await transformer.processNewMessages(SESSION_ID, 'claude-code-cli');
+    const harness = createHarness(TranscriptProjector.project(await store.getSessionEvents(SESSION_ID)).messages);
+    live.length = 0;
+
+    all.push(
+      row({ type: 'assistant', parent_tool_use_id: 'toolu_A', message: { id: 'msg_a1', role: 'assistant', content: [
+        { type: 'text', text: 'Listing transcript modules' },
+        { type: 'tool_use', id: 'toolu_a1', name: 'Grep', input: { pattern: 'thinking' } }] } }),
+      row({ type: 'nimbalyst_tool_result', tool_use_id: 'toolu_a1', result: 'Found 21 files', is_error: false }),
+      row({ type: 'assistant', message: { id: 'msg_lead2', role: 'assistant', content: [{ type: 'text', text: 'Still running.' }] } }),
+    );
+    await transformer.processNewMessages(SESSION_ID, 'claude-code-cli');
+    for (const event of live) harness.acc.apply(event);
+    harness.tickFrame();
+
+    const messages = harness.lastEmit!.messages;
+    expect(messages.filter((m) => m.subagentId && m.type !== 'subagent')).toEqual([]);
+    expect(messages.filter((m) => m.type === 'assistant_message').map((m) => m.text)).toEqual(['Still running.']);
+    const card = messages.find((m) => m.type === 'subagent');
+    expect(card?.subagent?.childEvents.map((c) => c.toolCall?.toolName ?? c.text)).toEqual(['Read', 'Listing transcript modules', 'Grep']);
+    expect(card?.subagent?.childEvents.find((c) => c.toolCall?.toolName === 'Grep')?.toolCall?.result).toBe('Found 21 files');
   });
 });

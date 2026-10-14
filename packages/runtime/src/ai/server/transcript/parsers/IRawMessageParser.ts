@@ -80,6 +80,8 @@ export interface AssistantMessageDescriptor {
   thinkingSignature?: string;
   /** Per-turn model id (e.g. "claude-opus-4-7"). New in Claude Code 2.1.x. */
   model?: string;
+  /** The sub-agent (its spawning tool_use id) that wrote this text, so it nests under that agent. */
+  subagentId?: string;
 }
 
 export interface SystemMessageDescriptor {

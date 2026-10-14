@@ -26,6 +26,7 @@
 
 import { TranscriptProjector } from '@nimbalyst/runtime/ai/server/transcript/TranscriptProjector';
 import { latestTranscriptGeneration, preserveTranscriptMessageIdentity, reconcileTranscriptMessages } from './transcriptReconciliation';
+import { nestLiveSubagentChildren } from './transcriptSubagentNesting';
 import type {
   TranscriptViewMessage,
 } from '@nimbalyst/runtime/ai/server/transcript/TranscriptProjector';
@@ -239,7 +240,8 @@ export class TranscriptStreamAccumulator {
     // snapshot must never resurrect the retired generation in the atom.
     const current = dbMessages.filter(message => message.id < 0 ||
       state.transcriptGeneration === undefined || message.transcriptGeneration === state.transcriptGeneration);
-    const merged = reconcileTranscriptMessages(current, liveMessages, { stream: true });
+    // A card loaded before these events cannot be found by the projector; nest its live children here.
+    const merged = reconcileTranscriptMessages(current, nestLiveSubagentChildren(current, liveMessages), { stream: true });
     // Compare against the atom, not our last emission: a reload may have
     // inserted the same rows since, and those are the objects on screen.
     state.currentMessages = preserveTranscriptMessageIdentity(dbMessages, merged);

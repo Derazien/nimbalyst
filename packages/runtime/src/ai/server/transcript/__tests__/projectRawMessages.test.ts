@@ -589,3 +589,38 @@ describe('projectRawMessagesToViewMessages', () => {
     expect(blocks[0].source.data).toBe(imageData);
   });
 });
+
+describe('Claude Code CLI background sub-agent', () => {
+  // Real row shapes from a CLI session: the spawn's run_in_background is the
+  // string "true", the launch ack is a nimbalyst_tool_result, and the agent's
+  // turns carry parent_tool_use_id while the lead keeps talking in between.
+  it('keeps the agent text and tool calls inside its row', async () => {
+    let id = 0;
+    const row = (content: object) => raw({ id: ++id, content: JSON.stringify(content), createdAt: new Date(1_800_000_000_000 + id * 1000) });
+    const vms = await projectRawMessagesToViewMessages([
+      row({ type: 'assistant', message: { id: 'msg_lead1', role: 'assistant', content: [
+        { type: 'text', text: 'Running an investigation.' },
+        { type: 'tool_use', id: 'toolu_A', name: 'Agent', input: { description: 'Why text renders as Thinking', subagent_type: 'Explore', prompt: 'Investigate A', run_in_background: 'true' } },
+      ] } }),
+      row({ type: 'nimbalyst_tool_result', tool_use_id: 'toolu_A', result: 'Async agent launched successfully.\nagentId: addff7a15d63987fa', is_error: false, background_launch: true }),
+      row({ type: 'assistant', parent_tool_use_id: 'toolu_A', message: { id: 'msg_a1', role: 'assistant', content: [
+        { type: 'thinking', thinking: 'Where is the transcript built?', signature: 's' },
+        { type: 'tool_use', id: 'toolu_a1', name: 'Grep', input: { pattern: 'thinking' } },
+      ] } }),
+      row({ type: 'assistant', message: { id: 'msg_lead2', role: 'assistant', content: [{ type: 'text', text: 'It is running.' }] } }),
+      row({ type: 'nimbalyst_tool_result', tool_use_id: 'toolu_a1', result: 'Found 21 files', is_error: false }),
+      row({ type: 'assistant', parent_tool_use_id: 'toolu_A', message: { id: 'msg_a2', role: 'assistant', content: [
+        { type: 'text', text: 'Listing transcript directory modules' },
+        { type: 'tool_use', id: 'toolu_a2', name: 'Bash', input: { command: 'ls' } },
+      ] } }),
+    ], 'claude-code-cli');
+
+    const texts = vms.filter((m) => m.type === 'assistant_message').map((m) => m.text);
+    expect(texts).toEqual(['Running an investigation.', 'It is running.']);
+    const agent = vms.find((m) => m.type === 'subagent');
+    const children = agent?.subagent?.childEvents ?? [];
+    expect(children.map((c) => c.toolCall?.toolName ?? (c.text || (c.thinking ? 'thinking' : '?')))).toEqual(
+      ['thinking', 'Grep', 'Listing transcript directory modules', 'Bash'],
+    );
+  });
+});

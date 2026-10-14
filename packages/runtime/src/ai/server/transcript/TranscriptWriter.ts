@@ -86,9 +86,11 @@ export class TranscriptWriter {
       progressUpdate?: boolean;
       thinkingSignature?: string;
       model?: string;
+      subagentId?: string;
     },
   ): Promise<TranscriptEvent> {
     const mode = options?.mode ?? 'agent';
+    const subagentId = options?.subagentId ?? null;
     const hasExtras =
       options?.thinking !== undefined ||
       options?.thinkingSignature !== undefined ||
@@ -107,7 +109,7 @@ export class TranscriptWriter {
     if (
       last &&
       last.eventType === 'assistant_message' &&
-      last.subagentId === null &&
+      last.subagentId === subagentId &&
       last.mode === mode
     ) {
       const mergedText = (last.searchableText ?? '') + text;
@@ -133,6 +135,7 @@ export class TranscriptWriter {
       searchable: true,
       payload: payload as unknown as Record<string, unknown>,
       createdAt: options?.createdAt,
+      subagentId,
     });
   }
 

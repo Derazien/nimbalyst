@@ -223,6 +223,10 @@ export class ClaudeCodeRawParser implements IRawMessageParser {
         const turnModel: string | undefined =
           typeof parsed.message.model === 'string' ? parsed.message.model : undefined;
 
+        // A sub-agent's text and thinking belong inside its agent row, like its tool calls.
+        const textSubagentId =
+          parentToolUseId && context.hasSubagent(parentToolUseId) ? parentToolUseId : undefined;
+
         if (Array.isArray(parsed.message.content)) {
           for (const block of parsed.message.content) {
             if (block.type === 'text' && block.text) {
@@ -241,6 +245,7 @@ export class ClaudeCodeRawParser implements IRawMessageParser {
                 text: block.text,
                 createdAt: msg.createdAt,
                 ...(turnModel ? { model: turnModel } : {}),
+                ...(textSubagentId ? { subagentId: textSubagentId } : {}),
               });
             } else if (block.type === 'thinking') {
               // Extended-thinking output. Persist as an assistant_message
@@ -264,6 +269,7 @@ export class ClaudeCodeRawParser implements IRawMessageParser {
                 ...(progressUpdate ? { progressUpdate: true } : {}),
                 ...(thinkingSignature ? { thinkingSignature } : {}),
                 ...(turnModel ? { model: turnModel } : {}),
+                ...(textSubagentId ? { subagentId: textSubagentId } : {}),
                 createdAt: msg.createdAt,
               });
             } else if (block.type === 'tool_use') {
