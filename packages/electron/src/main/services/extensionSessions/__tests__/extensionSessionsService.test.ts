@@ -122,6 +122,8 @@ describe('extension session broker scoping', () => {
       ownerMetadata: { chapter: 1 },
       sessionDirective: 'You are Ada.',
       effortLevel: 'high',
+      // A session an extension creates is machine-made: it starts ready to work, not in plan mode.
+      startInPlanMode: false,
     });
     expect(AISessionsRepository.updateMetadata).not.toHaveBeenCalled();
     // The prompt is queued only after the row (and its owner) exists.

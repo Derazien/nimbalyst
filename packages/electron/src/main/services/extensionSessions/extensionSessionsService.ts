@@ -266,6 +266,9 @@ async function createOwnedSession(
     [OWNER_METADATA_KEY]: plainObject(options.ownerMetadata) ?? {},
     ...(directive ? { [SESSION_DIRECTIVE_KEY]: directive } : {}),
     ...(effortLevel ? { effortLevel } : {}),
+    // Extension sessions (the deck, Lea, any companion) are machine-created: they
+    // start ready to work, never in the CLI's plan mode.
+    startInPlanMode: false,
   };
 
   const sessionId = randomUUID();
@@ -311,6 +314,7 @@ async function createOwnedWorkstream(
       isWorkstreamRoot: true,
       [SESSION_OWNER_KEY]: ownerFor(scope, ownerKey, false),
       [OWNER_METADATA_KEY]: plainObject(options.ownerMetadata) ?? {},
+      startInPlanMode: false,
     },
   } as Parameters<typeof AISessionsRepository.create>[0]);
   broadcastSessionCreated({ workspacePath: scope.workspacePath, sessionId: workstreamId });

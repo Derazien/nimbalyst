@@ -48,6 +48,8 @@ describe('claudeCliLauncherSingleton', () => {
     claudeInstalled?: boolean;
     /** When set, the mocked session resolves to this worktree (id + on-disk path). */
     worktree?: { id: string; path: string } | null;
+    /** Metadata the mocked session row carries. */
+    metadata?: Record<string, unknown>;
   }) {
     const claudeInstalled = opts?.claudeInstalled ?? true;
     const worktree = opts?.worktree ?? null;
@@ -108,7 +110,7 @@ describe('claudeCliLauncherSingleton', () => {
     // worktreeId iff `worktree` is set; the store maps it to the on-disk path.
     vi.doMock('@nimbalyst/runtime/storage/repositories/AISessionsRepository', () => ({
       AISessionsRepository: {
-        get: vi.fn(async () => ({ worktreeId: worktree?.id ?? null })),
+        get: vi.fn(async () => ({ worktreeId: worktree?.id ?? null, metadata: opts?.metadata })),
       },
     }));
     vi.doMock('../../WorktreeStore', () => ({
@@ -216,6 +218,22 @@ describe('claudeCliLauncherSingleton', () => {
     ]);
 
     injectedPluginPaths.length = 0;
+  }, 20000);
+
+  // Machine-created sessions carry metadata.startInPlanMode:false; every fresh launch
+  // (strip mount, queued dispatch, terminal handler) goes through ensureClaudeCliSession,
+  // so the per-session override must reach the launcher from here. Absent metadata
+  // passes no override, leaving the global setting in charge for manual sessions.
+  it('passes the session metadata startInPlanMode override to the launcher', async () => {
+    const h = await loadHarness({ metadata: { startInPlanMode: false } });
+    await h.ensureClaudeCliSession({ sessionId: 'session-1', workspacePath: '/work' });
+    expect(h.launch.mock.calls[0][0].startInPlanMode).toBe(false);
+  }, 20000);
+
+  it('passes no plan-mode override when the session has no startInPlanMode metadata', async () => {
+    const h = await loadHarness();
+    await h.ensureClaudeCliSession({ sessionId: 'session-1', workspacePath: '/work' });
+    expect(h.launch.mock.calls[0][0].startInPlanMode).toBeUndefined();
   }, 20000);
 
   it('leaves the requested cwd unchanged for a non-worktree session', async () => {

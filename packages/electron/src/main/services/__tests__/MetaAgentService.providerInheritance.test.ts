@@ -414,6 +414,19 @@ describe('MetaAgentService child-spawn effort level', () => {
 
     expect(AISessionsRepository.create).not.toHaveBeenCalled();
   });
+
+  // Machine-created children must not inherit the global "start in plan mode" default
+  // (reserved for sessions the user opens by hand): the launcher reads this flag.
+  it('marks a machine-created child startInPlanMode:false so it launches in the workspace permission mode', async () => {
+    const service = MetaAgentService.getInstance();
+    (service as any).aiService = { queuePromptForSession: vi.fn() };
+    vi.mocked(AISessionsRepository.get).mockResolvedValue(CLAUDE_PARENT as any);
+
+    await (service as any).createChildSessionInternal('parent-claude-session', '/workspace/path', {});
+
+    const created = vi.mocked(AISessionsRepository.create).mock.calls[0][0] as any;
+    expect(created.metadata.startInPlanMode).toBe(false);
+  });
 });
 
 describe('MetaAgentService spawn gates', () => {

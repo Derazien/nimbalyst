@@ -324,6 +324,26 @@ describe('ClaudeCliSessionLauncher', () => {
     expect(modeTracker.noteScreen).toHaveBeenCalledWith(baseInput.sessionId, baseInput.workspacePath, ['x']);
   });
 
+  it('a per-session startInPlanMode:false overrides the global plan-mode setting', async () => {
+    const { launcher, createClaudeCliTerminal } = makeHookHarness(() => 'bypass-all', {
+      getStartInPlanMode: () => true,
+    });
+    await launcher.launch({ ...baseInput, startInPlanMode: false });
+    const args = createClaudeCliTerminal.mock.calls[0][1].spawnConfig.args;
+    expect(args).toContain('--dangerously-skip-permissions');
+    expect(args).not.toContain('--permission-mode');
+  });
+
+  it('without a per-session override the launcher follows the global plan-mode setting', async () => {
+    const { launcher, createClaudeCliTerminal } = makeHookHarness(() => 'bypass-all', {
+      getStartInPlanMode: () => true,
+    });
+    await launcher.launch(baseInput);
+    expect(createClaudeCliTerminal.mock.calls[0][1].spawnConfig.args).toEqual(
+      expect.arrayContaining(['--permission-mode', 'plan']),
+    );
+  });
+
   it('keeps the old flags when the plan-mode setting is off', async () => {
     const { launcher, createClaudeCliTerminal } = makeHookHarness(() => 'bypass-all', {
       getStartInPlanMode: () => false,

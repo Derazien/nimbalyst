@@ -153,6 +153,8 @@ export const MessageSegment = React.memo(function MessageSegment({
 
   // Render extended-thinking content as a collapsed-by-default block.
   // Persisted on the assistant_message payload (see AssistantMessagePayload.thinking).
+  // claude-code-cli streams its between-tool narration as a thinking block, so it opens
+  // by default there; the user can still collapse it.
   const renderThinking = () => {
     if (isUser) return null;
     const { thinking, progressUpdate } = message as TranscriptViewMessage;
@@ -168,7 +170,10 @@ export const MessageSegment = React.memo(function MessageSegment({
     }
     if (!showThinking) return null;
     return (
-      <details className="rich-transcript-thinking rounded-md border border-[var(--nim-border)] bg-[var(--nim-bg-secondary)]">
+      <details
+        open={provider === 'claude-code-cli'}
+        className="rich-transcript-thinking rounded-md border border-[var(--nim-border)] bg-[var(--nim-bg-secondary)]"
+      >
         <summary className="flex items-center gap-1.5 px-2 py-1 text-xs text-[var(--nim-text-muted)] cursor-pointer select-none">
           <MaterialSymbol icon="psychology" size={14} />
           <span>Thinking</span>

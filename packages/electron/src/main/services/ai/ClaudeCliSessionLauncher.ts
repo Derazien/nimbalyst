@@ -169,6 +169,11 @@ export interface LaunchClaudeCliSessionInput {
    * field is re-breaking /effort, not fixing a divergence.
    */
   effortLevel?: string;
+  /**
+   * Per-session override of `deps.getStartInPlanMode` (session metadata). Machine-created
+   * sessions pass `false` so the global plan-mode default only applies to manual ones.
+   */
+  startInPlanMode?: boolean;
   /** Resume an existing CLI session id (`--resume <id>`). */
   resumeSessionId?: string;
   cols?: number;
@@ -368,7 +373,7 @@ export class ClaudeCliSessionLauncher {
       allowedMcpServerNames,
       settingsJson,
       dangerouslySkipPermissions,
-      startInPlanMode: this.deps.getStartInPlanMode?.() ?? false,
+      startInPlanMode: input.startInPlanMode ?? this.deps.getStartInPlanMode?.() ?? false,
       additionalDirectories: input.additionalDirectories,
       pluginDirs,
       mcpToolsUnavailable,

@@ -732,6 +732,9 @@ export class MetaAgentService {
         ...(childToolScope ? { toolScope: childToolScope } : {}),
         ...(childEffortLevel ? { effortLevel: childEffortLevel } : {}),
         ...childReportingMetadata(args.childReporting, metaSessionId),
+        // Machine-created sessions never start in the CLI's plan mode; that global
+        // default is for sessions the user opens by hand.
+        startInPlanMode: false,
         ...(args.parentSessionIdOverride === null && !args.useWorktree ? { isolated: true } : {}),
       };
 

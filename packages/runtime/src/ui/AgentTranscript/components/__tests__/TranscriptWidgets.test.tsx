@@ -369,6 +369,32 @@ describe('MessageSegment', () => {
     expect(screen.getByText('screenshot.png')).toBeDefined();
     expect(screen.getByText('1.0 KB')).toBeDefined();
   });
+
+  describe('thinking block default state', () => {
+    const renderThinking = (provider: string | undefined, thinking: string) =>
+      render(
+        <MessageSegment
+          message={makeMessage({ type: 'assistant_message', thinking } as any)}
+          isUser={false}
+          showToolCalls={false}
+          showThinking={true}
+          expandedTools={new Set()}
+          onToggleToolExpand={() => {}}
+          provider={provider}
+        />
+      ).container.querySelector('details.rich-transcript-thinking') as HTMLDetailsElement | null;
+
+    // claude-code-cli streams the between-tool narration as a thinking block, so it must be readable without a click
+    it('opens thinking by default for claude-code-cli only', () => {
+      expect(renderThinking('claude-code-cli', 'Explaining before the question')!.open).toBe(true);
+      expect(renderThinking('claude-code', 'Explaining before the question')!.open).toBe(false);
+      expect(renderThinking(undefined, 'Explaining before the question')!.open).toBe(false);
+    });
+
+    it('renders nothing for an empty thinking block', () => {
+      expect(renderThinking('claude-code-cli', '  ')).toBeNull();
+    });
+  });
 });
 
 // ============================================================================

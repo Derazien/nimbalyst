@@ -169,6 +169,26 @@ async function resolveClaudeCliEffortLevel(
   );
 }
 
+/**
+ * The session's own plan-mode choice: `false` when metadata says so, otherwise
+ * `undefined` so the launcher falls back to the global setting. Best-effort: a lookup
+ * failure must not block the launch.
+ */
+async function readSessionStartInPlanModeOverride(sessionId: string): Promise<boolean | undefined> {
+  try {
+    const { AISessionsRepository } = await import(
+      '@nimbalyst/runtime/storage/repositories/AISessionsRepository'
+    );
+    const session = await AISessionsRepository.get(sessionId);
+    return (session?.metadata as { startInPlanMode?: unknown } | undefined)?.startInPlanMode === false
+      ? false
+      : undefined;
+  } catch (err) {
+    console.warn('[ClaudeCliLauncher] failed to read session plan-mode override:', err);
+    return undefined;
+  }
+}
+
 function buildMcpConfigService(): McpConfigService {
   return getMcpConfigService({
     mcpConfigLoader: config.mcpConfigLoader,
@@ -341,6 +361,11 @@ export async function ensureClaudeCliSession(
       // its own default rather than blocking the launch.
       const effortLevel = await resolveClaudeCliEffortLevel(input);
 
+      // Machine-created sessions carry metadata.startInPlanMode:false; read it on every
+      // fresh launch so the global plan-mode default only applies to manual sessions.
+      const startInPlanMode = await readSessionStartInPlanModeOverride(input.sessionId);
+
+
       await launcher.launch({
         sessionId: input.sessionId,
         workspacePath: input.workspacePath,
@@ -348,6 +373,7 @@ export async function ensureClaudeCliSession(
         model: input.model,
         resumeSessionId: input.resumeSessionId,
         effortLevel,
+        startInPlanMode,
         cols: input.cols,
         rows: input.rows,
         additionalDirectories,

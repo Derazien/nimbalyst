@@ -733,6 +733,8 @@ export async function registerSessionHandlers() {
         worktreeId?: string;
         provider?: string;
         model?: string;
+        /** Only an explicit false is stored; manual UI calls omit it and keep the global default. */
+        startInPlanMode?: boolean;
     }) => {
         console.log('[SessionHandlers] sessions:create-child called with:', JSON.stringify(payload));
         try {
@@ -767,7 +769,10 @@ export async function registerSessionHandlers() {
                 parentSessionId,  // Link to parent
                 createdBySessionId: parentSessionId,
                 worktreeId: parentRow.worktreeId || null,
-                metadata: inheritedOwnership(parentRow?.metadata),
+                metadata: {
+                    ...inheritedOwnership(parentRow?.metadata),
+                    ...(payload.startInPlanMode === false ? { startInPlanMode: false } : {}),
+                },
             };
 
             await AISessionsRepository.create(createPayload as any);
