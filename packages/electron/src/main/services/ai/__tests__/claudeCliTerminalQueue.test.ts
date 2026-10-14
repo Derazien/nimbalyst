@@ -45,7 +45,7 @@ describe('matchCliQueueEntries', () => {
       { type: 'queue-operation', operation: 'remove', content: 'QUEUED-ONE reply with the word alpha only', reason: 'absorbed_mid_turn', commandUuid: 'c1' },
       { type: 'attachment', attachment: { type: 'queued_command', prompt: 'QUEUED-ONE reply with the word alpha only', source_uuid: 'c1' } },
     ];
-    expect(matchCliQueueEntries(entries, rows)).toEqual({ queued: ['q1', 'q3'], consumed: ['q1'] });
+    expect(matchCliQueueEntries(entries, rows)).toMatchObject({ queued: ['q1', 'q3'], consumed: ['q1'] });
   });
 
   it('dequeued as a new turn, or taken at once with no queue operation', () => {
@@ -56,7 +56,7 @@ describe('matchCliQueueEntries', () => {
     ];
     expect(matchCliQueueEntries(dequeued, rows).consumed).toEqual(['q2']);
     const direct = [{ type: 'user', origin: { kind: 'human' }, message: { role: 'user', content: 'QUEUED-ONE reply with the word alpha only' } }];
-    expect(matchCliQueueEntries(direct, rows)).toEqual({ queued: [], consumed: ['q1'] });
+    expect(matchCliQueueEntries(direct, rows)).toMatchObject({ queued: [], consumed: ['q1'] });
   });
 
   it('ignores task notifications, tool results and other dequeued text, and takes duplicates oldest first', () => {
@@ -101,6 +101,18 @@ describe('matchCliQueueEntries with a long paste (CLI 2.1.299 wraps it)', () => 
       { type: 'queue-operation', operation: 'enqueue', content: `<pasted_content id="eeae">\n${typed}\n</pasted_content id="eeae">` },
       { type: 'queue-operation', operation: 'remove', reason: 'absorbed_mid_turn', content: `<pasted_content id="eeae">\n${typed}\n</pasted_content id="eeae">` },
     ];
-    expect(matchCliQueueEntries(entries, [{ id: 'q1', typedText: typed, typedAt: 1 }])).toEqual({ queued: ['q1'], consumed: ['q1'] });
+    expect(matchCliQueueEntries(entries, [{ id: 'q1', typedText: typed, typedAt: 1 }])).toMatchObject({ queued: ['q1'], consumed: ['q1'] });
+  });
+});
+
+describe('matchCliQueueEntries after an edit in the terminal', () => {
+  // Edit presses Up: the CLI pulls the queued text back into its input, the user
+  // changes it and submits. The CLI then takes text no row was typed with.
+  it('reports the taken text that matches no row, so it can be logged as the edit', () => {
+    const entries = [
+      { type: 'queue-operation', operation: 'enqueue', content: 'edited version' },
+      { type: 'queue-operation', operation: 'remove', reason: 'absorbed_mid_turn', content: 'edited version' },
+    ];
+    expect(matchCliQueueEntries(entries, [])).toEqual({ queued: [], consumed: [], unmatchedConsumed: ['edited version'] });
   });
 });

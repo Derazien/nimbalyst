@@ -67,10 +67,12 @@ export interface FlushClaudeCliQueueDeps {
   /**
    * True when this app run typed the row into the CLI and is watching for the
    * CLI to take it. A marked row nobody is watching was left by an earlier run;
-   * that CLI and its queue are gone, so the row is released and sent normally.
+   * that CLI and its queue are gone. `settleTerminalRow` checks that CLI's log:
+   * a row it already took is completed (never sent twice), any other row is
+   * released and sent normally.
    */
   isTerminalRowTracked?: (promptId: string) => boolean;
-  releaseTerminalRow?: (promptId: string) => Promise<void>;
+  settleTerminalRow?: (promptId: string) => Promise<'consumed' | 'released'>;
 }
 
 /**
@@ -93,17 +95,21 @@ export async function flushNextClaudeCliQueuedPrompt(
   // A row typed into the busy CLI sits in the CLI's own queue, and the CLI runs
   // it itself. Wait for it to be consumed (`claudeCliTerminalQueue`) rather
   // than typing anything else in ahead of it or sending it twice.
+  const sendable: FlushQueuedPrompt[] = [];
   for (const row of pending) {
-    if (!readCliTerminalQueueMarker(row.documentContext)) continue;
-    if (deps.isTerminalRowTracked && !deps.isTerminalRowTracked(row.id)) {
-      await deps.releaseTerminalRow?.(row.id);
-      row.documentContext = { ...(row.documentContext as object), cliTerminalQueue: undefined } as ClaudeCliDocumentContext;
+    if (!readCliTerminalQueueMarker(row.documentContext)) {
+      sendable.push(row);
       continue;
     }
-    return false;
+    if (!deps.isTerminalRowTracked || deps.isTerminalRowTracked(row.id)) return false;
+    const outcome = deps.settleTerminalRow ? await deps.settleTerminalRow(row.id) : 'released';
+    if (outcome === 'consumed') continue;
+    row.documentContext = { ...(row.documentContext as object), cliTerminalQueue: undefined } as ClaudeCliDocumentContext;
+    sendable.push(row);
   }
+  if (sendable.length === 0) return false;
 
-  const claimed = await deps.claim(pending[0].id);
+  const claimed = await deps.claim(sendable[0].id);
   if (!claimed) return false;
 
   deps.notifyClaimed?.(claimed.id);

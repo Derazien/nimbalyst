@@ -31,6 +31,7 @@ import { logClaudeCliUserPrompt } from './claudeCliUserPromptLog';
 import { publishQueuedPromptClaim } from './queuedPromptClaimEvents';
 import { publishQueuedPromptsToSync } from './queuedPromptSyncPublisher';
 import { flushNextClaudeCliQueuedPromptForSession } from './claudeCliQueueFlushSingleton';
+import { broadcastClaudeCliRevealTerminal } from './claudeCliRevealTerminal';
 import {
   CLI_QUEUED_HINT,
   canTypeIntoCliQueue,
@@ -64,6 +65,8 @@ interface SessionQueue {
   readPosition: number | null;
   timer: NodeJS.Timeout | null;
   idleSince: number | null;
+  /** Rows pulled back into the CLI's input with Up for editing; the next prompt it takes is their edit. */
+  editing: TrackedRow[];
 }
 
 const sessions = new Map<string, SessionQueue>();
@@ -96,12 +99,53 @@ export function registerClaudeCliTerminalQueue(input: {
     readPosition: null,
     timer: null,
     idleSince: null,
+    editing: [],
   });
 }
 
 /** True when this app run typed the row into the CLI and is still watching it. */
 export function isClaudeCliTerminalRowTracked(sessionId: string, promptId: string): boolean {
   return !!sessions.get(sessionId)?.rows.has(promptId);
+}
+
+/**
+ * A row marked by an earlier app run: read that CLI's log from where the row
+ * was typed. If the CLI took it, complete it and write its transcript row now;
+ * otherwise clear the marker so it is sent again. Never resends a taken row.
+ */
+export async function settleUntrackedClaudeCliTerminalRow(
+  sessionId: string,
+  workspacePath: string,
+  promptId: string,
+): Promise<'consumed' | 'released'> {
+  const store = getQueuedPromptsStore();
+  const row = await store.get(promptId);
+  const marker = readCliTerminalQueueMarker(row?.documentContext);
+  if (!row || !marker) return 'released';
+  let entries: unknown[] = [];
+  try {
+    const buffer = fs.readFileSync(marker.jsonlPath).subarray(marker.jsonlOffset);
+    entries = splitJsonlChunk(buffer.toString('utf8')).entries;
+  } catch {
+    // No log to read: the CLI never ran, so it cannot have taken the row.
+  }
+  const { consumed } = matchCliQueueEntries(entries, [{ id: promptId, typedText: marker.typedText, typedAt: marker.typedAt }]);
+  if (consumed.includes(promptId)) {
+    await store.complete(promptId);
+    await logClaudeCliUserPrompt({
+      sessionId,
+      workspacePath,
+      prompt: row.prompt,
+      attachments: row.attachments as ChatAttachment[] | undefined,
+      promptProvenance: row.documentContext?.promptProvenance,
+    });
+    notifyClaimed(sessionId, promptId);
+    console.log(`[ClaudeCliTerminalQueue] ${promptId} was already taken by the earlier CLI; completed, not resent`);
+    return 'consumed';
+  }
+  await store.setCliTerminalQueueMarker(promptId, null);
+  console.log(`[ClaudeCliTerminalQueue] ${promptId} was never taken by the earlier CLI; released to send again`);
+  return 'released';
 }
 
 /** The CLI exited: its queue is gone, so rows it held go back to Nimbalyst's queue. */
@@ -112,11 +156,42 @@ export async function releaseClaudeCliTerminalQueue(sessionId: string): Promise<
   const ids = [...queue.rows.keys()];
   queue.rows.clear();
   queue.readPosition = null;
-  const store = getQueuedPromptsStore();
+  queue.editing = [];
+  // The CLI may have taken a row just before it exited; its log decides.
   for (const id of ids) {
-    await store.setCliTerminalQueueMarker(id, null).catch(() => {});
+    await settleUntrackedClaudeCliTerminalRow(sessionId, queue.workspacePath, id).catch(() => 'released');
   }
   if (ids.length) notifyQueueChanged(sessionId);
+}
+
+/**
+ * Edit a prompt the CLI holds: press Up, which pulls the CLI's queued messages
+ * back into its input box without stopping the turn (never Esc: a second Esc
+ * stops the turn), and open the terminal so it can be edited there. The rows
+ * leave Nimbalyst's queue; the next prompt the CLI takes is logged as their edit.
+ */
+export async function pullClaudeCliQueuedBackForEdit(sessionId: string): Promise<{ pulled: boolean; reason?: string }> {
+  const queue = sessions.get(sessionId);
+  const manager = getTerminalSessionManager();
+  if (!queue || queue.rows.size === 0) return { pulled: false, reason: 'nothing in the terminal queue' };
+  if (!manager.isTerminalActive(sessionId)) return { pulled: false, reason: 'terminal not running' };
+  if (!canTypeIntoCliQueue(manager.getScreenLines(sessionId))) {
+    return { pulled: false, reason: 'the terminal input is busy (a dialog, or text typed there)' };
+  }
+  manager.writeToTerminal(sessionId, '\x1b[A');
+  broadcastClaudeCliRevealTerminal({ sessionId, interactive: true, source: 'input', command: 'edit-queued' });
+  const store = getQueuedPromptsStore();
+  const rows = [...queue.rows.values()].sort((a, b) => a.marker.typedAt - b.marker.typedAt);
+  queue.rows.clear();
+  queue.editing.push(...rows);
+  for (const row of rows) {
+    await store.complete(row.id);
+    notifyClaimed(sessionId, row.id);
+  }
+  notifyQueueChanged(sessionId);
+  startWatcher(sessionId, queue);
+  console.log(`[ClaudeCliTerminalQueue] pulled ${rows.length} queued prompt(s) back into the CLI input for editing in ${sessionId}`);
+  return { pulled: true };
 }
 
 function notifyQueueChanged(sessionId: string): void {
@@ -237,9 +312,16 @@ export async function sendClaudeCliQueuedNow(sessionId: string): Promise<{ sent:
   }
   await forwardPendingIntoClaudeCli(sessionId);
   const queue = sessions.get(sessionId);
-  if (!queue || queue.rows.size === 0) return { sent: false };
-  if (!readCliInputBox(manager.getScreenLines(sessionId))) return { sent: false };
+  if (!queue || queue.rows.size === 0) {
+    console.log(`[ClaudeCliTerminalQueue] send now: nothing held in the CLI for ${sessionId}`);
+    return { sent: false };
+  }
+  if (!readCliInputBox(manager.getScreenLines(sessionId))) {
+    console.log(`[ClaudeCliTerminalQueue] send now: no input box on screen for ${sessionId} (a dialog is open)`);
+    return { sent: false };
+  }
   manager.writeToTerminal(sessionId, CLI_SEND_NOW_KEY);
+  console.log(`[ClaudeCliTerminalQueue] send now: pressed Ctrl+Enter in ${sessionId} (${queue.rows.size} held)`);
   return { sent: true };
 }
 
@@ -279,7 +361,7 @@ const tickInFlight = new Set<string>();
 async function watchTick(sessionId: string): Promise<void> {
   const queue = sessions.get(sessionId);
   if (!queue) return;
-  if (queue.rows.size === 0) {
+  if (queue.rows.size === 0 && queue.editing.length === 0) {
     stopWatcher(queue);
     queue.readPosition = null;
     return;
@@ -294,7 +376,7 @@ async function watchTick(sessionId: string): Promise<void> {
     }
     const store = getQueuedPromptsStore();
     const rows = [...queue.rows.values()];
-    const { queued, consumed } = matchCliQueueEntries(
+    const { queued, consumed, unmatchedConsumed } = matchCliQueueEntries(
       readNewEntries(queue),
       rows.map((r) => ({ id: r.id, typedText: r.marker.typedText, typedAt: r.marker.typedAt })),
     );
@@ -328,9 +410,26 @@ async function watchTick(sessionId: string): Promise<void> {
       console.log(`[ClaudeCliTerminalQueue] the CLI took ${id} for ${sessionId}`);
     }
 
+    if (queue.editing.length > 0 && unmatchedConsumed.length > 0) {
+      // The edited prompt: log it as the user's message, in place of the originals.
+      const original = queue.editing[0];
+      queue.editing = [];
+      await logClaudeCliUserPrompt({
+        sessionId,
+        workspacePath: queue.workspacePath,
+        prompt: unmatchedConsumed[0],
+        promptProvenance: original.promptProvenance,
+      });
+      console.log(`[ClaudeCliTerminalQueue] the CLI took the edited prompt for ${sessionId}`);
+    }
+
     const live = await manager.getClaudeCliLiveTurnState(sessionId);
     if (live === 'idle') {
       queue.idleSince ??= Date.now();
+      if (Date.now() - queue.idleSince >= STALE_IDLE_MS && queue.editing.length > 0) {
+        // Idle with the edit never sent: it stays in the terminal's input, not ours.
+        queue.editing = [];
+      }
       if (Date.now() - queue.idleSince >= STALE_IDLE_MS && queue.rows.size > 0) {
         // Idle this long, the CLI is not holding these: they were pulled back
         // into the terminal's input by hand. They are the terminal's now.
@@ -347,7 +446,7 @@ async function watchTick(sessionId: string): Promise<void> {
     }
 
     if (changed) notifyQueueChanged(sessionId);
-    if (queue.rows.size === 0) {
+    if (queue.rows.size === 0 && queue.editing.length === 0) {
       stopWatcher(queue);
       queue.readPosition = null;
       // Rows held behind the ones the CLI just took drain on the idle path.

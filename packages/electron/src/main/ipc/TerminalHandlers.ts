@@ -50,7 +50,7 @@ import {
 } from '../utils/terminalStore';
 import { getDatabase } from '../database/initialize';
 import { createWorktreeStore } from '../services/WorktreeStore';
-import { sendClaudeCliQueuedNow } from '../services/ai/claudeCliTerminalQueueSingleton';
+import { pullClaudeCliQueuedBackForEdit, sendClaudeCliQueuedNow } from '../services/ai/claudeCliTerminalQueueSingleton';
 
 // Track if handlers are registered
 let handlersRegistered = false;
@@ -474,6 +474,17 @@ export function registerTerminalHandlers(): void {
    * Send queued prompts now in a claude-code-cli session: the CLI's own send-now
    * (Ctrl+Enter) runs what its queue holds. Never Ctrl+C.
    */
+  /**
+   * Edit queued prompts Claude Code already holds: Up pulls them back into its
+   * input box (never Esc, which stops the turn) and the terminal opens.
+   */
+  safeHandle('claude-cli:edit-queued', async (_event, sessionId: string) => {
+    if (!sessionId || typeof sessionId !== 'string') {
+      throw new Error('sessionId is required and must be a string');
+    }
+    return pullClaudeCliQueuedBackForEdit(sessionId);
+  });
+
   safeHandle('claude-cli:send-queued-now', async (_event, sessionId: string) => {
     if (!sessionId || typeof sessionId !== 'string') {
       throw new Error('sessionId is required and must be a string');

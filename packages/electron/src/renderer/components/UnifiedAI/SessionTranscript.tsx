@@ -1628,6 +1628,12 @@ const LocalSessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscrip
     attachments?: ChatAttachment[],
   ) => {
     try {
+      if (queuedPrompts.find(p => p.id === id)?.inTerminal) {
+        // Claude Code holds it: Up pulls it back into the terminal's input,
+        // which opens, so it is edited there. Never Esc, which stops the turn.
+        await window.electronAPI.invoke('claude-cli:edit-queued', sessionId);
+        return;
+      }
       await window.electronAPI.invoke('ai:deleteQueuedPrompt', id);
       setQueuedPrompts(prev => prev.filter(p => p.id !== id));
       // Append to any existing draft so editing multiple queued items doesn't
@@ -1642,7 +1648,7 @@ const LocalSessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscrip
     } catch (error) {
       console.error('[SessionTranscript] Failed to edit queued prompt:', error);
     }
-  }, [setDraftInput, setDraftAttachments]);
+  }, [setDraftInput, setDraftAttachments, queuedPrompts, sessionId]);
 
   const handleSendNowQueuedPrompt = useCallback(async (_id: string, _prompt: string) => {
     try {

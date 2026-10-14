@@ -176,18 +176,20 @@ export interface TypedRow {
 export function matchCliQueueEntries(
   entries: readonly unknown[],
   rows: readonly TypedRow[],
-): { queued: string[]; consumed: string[] } {
+): { queued: string[]; consumed: string[]; unmatchedConsumed: string[] } {
   const ordered = [...rows].sort((a, b) => a.typedAt - b.typedAt);
   const queued = new Set<string>();
   const consumed = new Set<string>();
+  const unmatchedConsumed: string[] = [];
   for (const entry of entries) {
     const event = cliQueueEventOf(entry);
     if (!event) continue;
     const taken = event.kind === 'queued' ? queued : consumed;
     const row = ordered.find((r) => !taken.has(r.id) && !consumed.has(r.id) && normalizePromptText(r.typedText) === event.text);
     if (row) taken.add(row.id);
+    else if (event.kind === 'consumed' && event.text) unmatchedConsumed.push(event.text);
   }
-  return { queued: [...queued], consumed: [...consumed] };
+  return { queued: [...queued], consumed: [...consumed], unmatchedConsumed };
 }
 
 /** Complete jsonl lines in `chunk`, and how many bytes of it they used. */

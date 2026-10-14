@@ -80,7 +80,7 @@ export function PromptQueueList({ queue, onCancel, onEdit, onSendNow }: PromptQu
             {item.inTerminal && (
               <span
                 className="prompt-queue-in-terminal shrink-0 text-[11px] text-nim-muted"
-                title="Already in the terminal; press Up there to edit it"
+                title="Claude Code holds it; Edit pulls it back into the terminal"
               >
                 {item.cliQueued ? "in Claude Code's queue" : 'sent to Claude Code'}
               </span>
@@ -97,11 +97,11 @@ export function PromptQueueList({ queue, onCancel, onEdit, onSendNow }: PromptQu
                 </svg>
               </button>
             )}
-            {onEdit && !item.inTerminal && (
+            {onEdit && (
               <button
                 className="prompt-queue-edit shrink-0 w-5 h-5 flex items-center justify-center bg-transparent border-none rounded text-nim-muted cursor-pointer text-sm leading-none p-0 transition-all duration-150 hover:bg-nim-hover hover:text-nim-primary"
                 onClick={() => onEdit(item.id, item.prompt, item.attachments)}
-                title="Edit this prompt"
+                title={item.inTerminal ? 'Edit in the terminal (pulls it back with Up)' : 'Edit this prompt'}
                 type="button"
               >
                 &#x270E;

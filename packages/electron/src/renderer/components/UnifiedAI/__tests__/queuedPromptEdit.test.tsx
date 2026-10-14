@@ -49,8 +49,9 @@ describe('editing a queued prompt', () => {
 });
 
 describe('a queued prompt already typed into the Claude CLI', () => {
-  it('cannot be edited or cancelled from Nimbalyst, but can still be sent now', () => {
+  it('cannot be cancelled from Nimbalyst, but can be edited (in the terminal) and sent now', () => {
     const onSendNow = vi.fn();
+    const onEdit = vi.fn();
     render(
       <PromptQueueList
         queue={[
@@ -58,12 +59,13 @@ describe('a queued prompt already typed into the Claude CLI', () => {
           { id: 'q2', prompt: 'still here', timestamp: 2 },
         ]}
         onCancel={vi.fn()}
-        onEdit={vi.fn()}
+        onEdit={onEdit}
         onSendNow={onSendNow}
       />,
     );
-    expect(screen.getAllByTitle('Edit this prompt')).toHaveLength(1);
     expect(screen.getAllByTitle('Cancel this prompt')).toHaveLength(1);
+    fireEvent.click(screen.getByTitle(/Edit in the terminal/));
+    expect(onEdit).toHaveBeenCalledWith('q1', 'in the CLI', undefined);
     fireEvent.click(screen.getAllByTitle(/send now/i)[0]);
     expect(onSendNow).toHaveBeenCalledWith('q1', 'in the CLI');
   });

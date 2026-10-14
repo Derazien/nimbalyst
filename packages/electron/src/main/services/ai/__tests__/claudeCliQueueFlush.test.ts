@@ -133,16 +133,28 @@ describe('flushNextClaudeCliQueuedPrompt with rows already typed into the CLI', 
 });
 
 describe('flushNextClaudeCliQueuedPrompt with a row marked by an earlier app run', () => {
-  it('releases the stale marker and sends the row normally', async () => {
-    const stale = { id: 'q1', prompt: 'left over', documentContext: { cliTerminalQueue: { typedText: 'left over', jsonlPath: '/j', jsonlOffset: 0, typedAt: 1 } } as any };
-    const h = harness([stale]);
-    const releaseTerminalRow = vi.fn(async () => undefined);
+  const stale = () => ({ id: 'q1', prompt: 'left over', documentContext: { cliTerminalQueue: { typedText: 'left over', jsonlPath: '/j', jsonlOffset: 0, typedAt: 1 } } as any });
+
+  it('sends the row normally when the old CLI never took it', async () => {
+    const h = harness([stale()]);
+    const settleTerminalRow = vi.fn(async () => 'released' as const);
     const sent = await flushNextClaudeCliQueuedPrompt(
       { sessionId: 's1', workspacePath: '/w' },
-      { ...h.deps, isTerminalRowTracked: () => false, releaseTerminalRow },
+      { ...h.deps, isTerminalRowTracked: () => false, settleTerminalRow },
     );
     expect(sent).toBe(true);
-    expect(releaseTerminalRow).toHaveBeenCalledWith('q1');
+    expect(settleTerminalRow).toHaveBeenCalledWith('q1');
     expect(h.submit).toHaveBeenCalledWith(expect.objectContaining({ prompt: 'left over' }));
+  });
+
+  it('never sends it again when the old CLI already took it', async () => {
+    const h = harness([stale(), { id: 'q2', prompt: 'next' }]);
+    const sent = await flushNextClaudeCliQueuedPrompt(
+      { sessionId: 's1', workspacePath: '/w' },
+      { ...h.deps, isTerminalRowTracked: () => false, settleTerminalRow: async () => 'consumed' as const },
+    );
+    expect(sent).toBe(true);
+    expect(h.claim).not.toHaveBeenCalledWith('q1');
+    expect(h.submit).toHaveBeenCalledWith(expect.objectContaining({ prompt: 'next' }));
   });
 });
