@@ -3,12 +3,13 @@ import { afterEach, expect, it, vi } from "vitest";
 import * as fs from "node:fs";
 vi.mock("node:fs", async (importOriginal) => {
   const original = await importOriginal<typeof import("node:fs")>();
-  return { ...original, statSync: vi.fn(original.statSync) };
+  return { ...original, statSync: vi.fn(original.statSync), readFileSync: vi.fn(original.readFileSync) };
 });
 import {
   cpSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   renameSync,
   rmSync,
@@ -20,7 +21,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { directoryDeviceId } from "../directoryDeviceIdentity";
+import { cachedDirectoryDeviceId, directoryDeviceId } from "../directoryDeviceIdentity";
 import { asPersonalMemberId } from "@nimbalyst/runtime/auth/jwtScopes";
 const account = asPersonalMemberId("account");
 const roots: string[] = [];
@@ -28,6 +29,8 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.mocked(fs.statSync).mockReset();
   vi.mocked(fs.statSync).mockImplementation(require("node:fs").statSync);
+  vi.mocked(fs.readFileSync).mockReset();
+  vi.mocked(fs.readFileSync).mockImplementation(require("node:fs").readFileSync);
   roots
     .splice(0)
     .forEach((root) => rmSync(root, { recursive: true, force: true }));
@@ -68,6 +71,41 @@ it("shares identity through symlinks and directory moves, but separates copied p
   expect(readFileSync(join(base, "moved", "computer-identity"), "utf8")).toBe(
     "broken"
   );
+});
+
+it("reads the identity once and serves later announces from memory", () => {
+  const dir = root();
+  // Create the identity file first so the counted reads are only the cached lookups.
+  const direct = directoryDeviceId(dir, account);
+  const read = vi.mocked(fs.readFileSync);
+  read.mockClear();
+  const first = cachedDirectoryDeviceId(dir, account);
+  expect(read).toHaveBeenCalledTimes(1);
+  for (let tick = 0; tick < 5; tick++) expect(cachedDirectoryDeviceId(dir, account)).toBe(first);
+  expect(read).toHaveBeenCalledTimes(1);
+  expect(first).toBe(direct);
+  // The cache is keyed by directory and account, never one id for the process.
+  expect(cachedDirectoryDeviceId(dir, asPersonalMemberId("other-account"))).not.toBe(first);
+});
+
+it("a failed read neither mints a new identity nor touches the file, and the next call succeeds", () => {
+  const dir = root();
+  const expected = directoryDeviceId(dir, account);
+  const seed = readFileSync(join(dir, "computer-identity"), "utf8");
+  // A fresh directory path for the cache key, with the same file contents.
+  const other = root();
+  cpSync(join(dir, "computer-identity"), join(other, "computer-identity"));
+  const want = directoryDeviceId(other, account);
+
+  vi.mocked(fs.readFileSync).mockImplementationOnce(() => {
+    throw Object.assign(new Error("EMFILE: too many open files, open 'computer-identity'"), { code: "EMFILE" });
+  });
+  expect(() => cachedDirectoryDeviceId(other, account)).toThrow("EMFILE");
+  expect(readdirSync(other)).toEqual(["computer-identity"]);
+  expect(readFileSync(join(other, "computer-identity"), "utf8")).toBe(seed);
+
+  expect(cachedDirectoryDeviceId(other, account)).toBe(want);
+  expect(want).not.toBe(expected);
 });
 
 it("publishes one complete identity across concurrent fresh processes", async () => {

@@ -334,6 +334,56 @@ describe('SyncConfig.createWebSocket', () => {
     provider.disconnectAll();
   });
 
+  it('keeps announcing the device after an identity read fails inside the timer', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const sockets: FakeWebSocket[] = [];
+    let identityReadable = false;
+    const getDeviceInfo = vi.fn(() => {
+      if (!identityReadable) {
+        throw Object.assign(new Error("EMFILE: too many open files, open 'computer-identity'"), { code: 'EMFILE' });
+      }
+      return { ...baseConfig().deviceInfo, lastActiveAt: 7 };
+    });
+    const provider = createCollabV3Sync({
+      serverUrl: 'wss://sync.example.test',
+      orgId: 'org-1',
+      personalMemberId: asPersonalMemberId('user-1'),
+      getJwt: async () => asPersonalJwt(jwtFor('user-1')),
+      getDeviceInfo,
+      createWebSocket: url => {
+        const socket = new FakeWebSocket(url);
+        sockets.push(socket);
+        return socket as unknown as WebSocket;
+      },
+    });
+    const announces = () => sockets[0].send.mock.calls
+      .map(([raw]) => JSON.parse(raw))
+      .filter(message => message.type === 'deviceAnnounce');
+
+    try {
+      await vi.waitFor(() => expect(sockets).toHaveLength(1));
+      // Only the announce timer is faked; waitFor and the sync paths keep real timers.
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+
+      // The first announce runs inside onopen, the rest inside the 30 s timer.
+      expect(() => sockets[0].open()).not.toThrow();
+      expect(announces()).toHaveLength(0);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('EMFILE'));
+
+      expect(() => vi.advanceTimersByTime(30_000)).not.toThrow();
+      expect(announces()).toHaveLength(0);
+
+      identityReadable = true;
+      vi.advanceTimersByTime(30_000);
+      expect(announces()).toEqual([
+        { type: 'deviceAnnounce', device: expect.objectContaining({ deviceId: 'desktop-1', lastActiveAt: 7 }) },
+      ]);
+    } finally {
+      provider.disconnectAll();
+      vi.useRealTimers();
+    }
+  });
+
   it('falls back to the global constructor when no factory is supplied', async () => {
     const constructed: FakeWebSocket[] = [];
     class TrackedWebSocket extends FakeWebSocket {

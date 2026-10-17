@@ -1,10 +1,10 @@
-import * as fs from 'fs/promises';
 import * as path from 'path';
 import { BrowserWindow } from 'electron';
 import { logger } from '../utils/logger';
 import type { FileSnapshotCache } from './FileSnapshotCache';
 import * as workspaceEventBus from './WorkspaceEventBus';
 import { markKnownFileWrite } from './knownFileWrites';
+import { readWatchedText, statWatchedFile, type WatchedFileStat } from './WatchedFileReader';
 
 const BINARY_EXTENSIONS = new Set([
   '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.ico', '.webp', '.svg',
@@ -25,6 +25,26 @@ const MAX_SNAPSHOT_FILE_BYTES = 1_000_000;
 /** TTL for editor save markers (ms). Must exceed chokidar's awaitWriteFinish delay. */
 const EDITOR_SAVE_TTL_MS = 2000;
 const FILE_CHANGED_NOTIFY_DEDUPE_MS = 250;
+
+/**
+ * Per-session cap on remembered file stats. Only files actually read are
+ * remembered, so a scan over thousands of untouched files cannot evict them.
+ */
+const MAX_SEEN_STATS = 4096;
+/** Clock and filesystem timestamp granularity allowance around session start. */
+const MTIME_START_SLACK_MS = 2000;
+/**
+ * A stat taken this soon after the mtime cannot prove "unchanged": a second
+ * write inside the same timestamp tick with the same size looks identical.
+ */
+const RACY_MTIME_WINDOW_MS = 2000;
+
+interface SeenStat {
+  mtimeMs: number;
+  size: number;
+  /** When the session processed the file, to judge whether the stat can be trusted. */
+  seenAt: number;
+}
 
 // ---------------------------------------------------------------------------
 // Re-exports from WorkspaceEventBus for backward compatibility
@@ -67,6 +87,13 @@ export class SessionFileWatcher {
   private workspacePath: string | null = null;
   private active = false;
   private onFileChanged: ((event: SessionFileWatcherEditEvent) => Promise<void> | void) | null = null;
+  private startedAt = 0;
+  /**
+   * What this session last saw of each file it read, oldest first. Per session
+   * rather than shared: sessions fan out from the same event, so a shared record
+   * updated by the first would make the others skip a change they never saw.
+   */
+  private seenStats = new Map<string, SeenStat>();
 
   /**
    * File paths recently saved by the Nimbalyst editor (user saves).
@@ -109,6 +136,8 @@ export class SessionFileWatcher {
     this.workspacePath = workspacePath;
     this.active = true;
     this.onFileChanged = onFileChanged ?? null;
+    this.startedAt = Date.now();
+    this.seenStats.clear();
 
     await workspaceEventBus.subscribe(workspacePath, sessionId, {
       onChange: (filePath: string) => this.handleChange(filePath),
@@ -128,6 +157,7 @@ export class SessionFileWatcher {
     this.workspacePath = null;
     this.active = false;
     this.onFileChanged = null;
+    this.seenStats.clear();
   }
 
   isActive(): boolean {
@@ -143,16 +173,45 @@ export class SessionFileWatcher {
    * The extension check misses extensionless binaries (browser profile caches,
    * SQLite journals); without the size cap and NUL sniff, every session read
    * and cached them in full on each write (#1599).
+   *
+   * The stat and the read go through the shared reader, so sessions reacting to
+   * the same event share one operation and the process-wide fs limit applies.
    */
-  private async readTextContent(filePath: string): Promise<string | null> {
-    try {
-      const stat = await fs.stat(filePath);
-      if (stat.size > MAX_SNAPSHOT_FILE_BYTES) return null;
-      const content = await fs.readFile(filePath, 'utf-8');
-      return content.includes('\0') ? null : content;
-    } catch {
-      return null;
+  private async readTextContent(filePath: string, stat: WatchedFileStat | null): Promise<string | null> {
+    if (!stat || stat.size > MAX_SNAPSHOT_FILE_BYTES) return null;
+    const result = await readWatchedText(filePath);
+    // Binary content is a settled answer; a failed read is not, so it is retried.
+    if (result.status === 'binary') this.rememberStat(filePath, stat);
+    return result.status === 'text' ? result.content : null;
+  }
+
+  private rememberStat(filePath: string, stat: WatchedFileStat): void {
+    this.seenStats.delete(filePath);
+    this.seenStats.set(filePath, { mtimeMs: stat.mtimeMs, size: stat.size, seenAt: Date.now() });
+    if (this.seenStats.size > MAX_SEEN_STATS) {
+      this.seenStats.delete(this.seenStats.keys().next().value!);
     }
+  }
+
+  /**
+   * A change event does not mean the content changed: with last-access updates
+   * on, a program that merely reads a file reports it too, and an indexer over
+   * thousands of files reports thousands. Skip when nothing this session could
+   * have written is different, judged from one stat and no read.
+   *
+   * Files this session already read are only skipped on an identical stat, so
+   * an edit and its revert are both attributed even when the revert restores an
+   * old mtime. Files it never read are skipped when last written before it
+   * started; an in-session write always carries a newer mtime.
+   */
+  private canSkipChange(filePath: string, stat: WatchedFileStat): boolean {
+    // Unknown timestamps cannot prove anything.
+    if (!Number.isFinite(stat.mtimeMs)) return false;
+    const seen = this.seenStats.get(filePath);
+    if (!seen) return stat.mtimeMs < this.startedAt - MTIME_START_SLACK_MS;
+    return seen.mtimeMs === stat.mtimeMs
+      && seen.size === stat.size
+      && seen.seenAt - stat.mtimeMs > RACY_MTIME_WINDOW_MS;
   }
 
   private async handleChange(filePath: string): Promise<void> {
@@ -167,9 +226,14 @@ export class SessionFileWatcher {
         filePath,
       });
 
+      const stat = await statWatchedFile(filePath);
+      if (!this.active || !this.cache) return;
+      // Nothing this session could have written changed (e.g. an access-time-only event)
+      if (stat && this.canSkipChange(filePath, stat)) return;
+
       // File may have been deleted between event and read, or be too large / binary to diff
-      const currentContent = await this.readTextContent(filePath);
-      if (currentContent === null) return;
+      const currentContent = await this.readTextContent(filePath, stat);
+      if (currentContent === null || !this.active || !this.cache) return;
 
       const beforeContent = await this.cache.getBeforeState(filePath);
 
@@ -181,6 +245,7 @@ export class SessionFileWatcher {
           reason: 'no_content_change',
         });
         this.cache.updateSnapshot(filePath, currentContent);
+        if (stat) this.rememberStat(filePath, stat);
         return;
       }
 
@@ -204,6 +269,7 @@ export class SessionFileWatcher {
 
       // Update cache with current content for subsequent edits
       this.cache.updateSnapshot(filePath, currentContent);
+      if (stat) this.rememberStat(filePath, stat);
     } catch (error) {
       logger.main.error('[SessionFileWatcher] Error handling file change:', error);
     }
@@ -216,9 +282,12 @@ export class SessionFileWatcher {
     if (!this.isPathInWorkspace(filePath, this.workspacePath)) return;
 
     try {
-      // File may have been deleted already, or be too large / binary to diff
-      const currentContent = await this.readTextContent(filePath);
-      if (currentContent === null) return;
+      // File may have been deleted already, or be too large / binary to diff.
+      // No stat-based skip here: a file moved in keeps its old mtime but is new to the session.
+      const stat = await statWatchedFile(filePath);
+      if (!this.active || !this.cache) return;
+      const currentContent = await this.readTextContent(filePath, stat);
+      if (currentContent === null || !this.active || !this.cache) return;
 
       // Atomic writes (write-to-temp then rename) trigger 'rename' events on macOS,
       // which get classified as 'add'. If the cache already has content for this path,
@@ -238,6 +307,7 @@ export class SessionFileWatcher {
           sessionId: this.sessionId,
         });
         this.cache.updateSnapshot(filePath, currentContent);
+        if (stat) this.rememberStat(filePath, stat);
         return;
       }
 
@@ -260,6 +330,7 @@ export class SessionFileWatcher {
 
       // Update cache with current content AFTER firing the event
       this.cache.updateSnapshot(filePath, currentContent);
+      if (stat) this.rememberStat(filePath, stat);
     } catch (error) {
       logger.main.error('[SessionFileWatcher] Error handling file add:', error);
     }

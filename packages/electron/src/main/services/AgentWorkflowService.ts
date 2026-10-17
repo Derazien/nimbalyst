@@ -901,9 +901,10 @@ export class AgentWorkflowService {
         const fullPath = path.join(currentPath, entry.name);
 
         if (await isDirectoryEntry(entry, fullPath)) {
-          // node_modules READMEs are not commands; exporting them to Codex
-          // wrote many skill folders into the workspace.
-          if (entry.name === '.claude-plugin' || entry.name === 'skills' || entry.name === 'node_modules') {
+          // Claude Code reads commands from `commands/` and skills from `skills/`. This legacy
+          // scan is wider, but dependency trees and dot-directories (.git, .claude-plugin,
+          // caches) never hold commands, and a plugin cache can carry thousands of files.
+          if (entry.name === 'skills' || entry.name === 'node_modules' || entry.name.startsWith('.')) {
             continue;
           }
           await recurse(fullPath);

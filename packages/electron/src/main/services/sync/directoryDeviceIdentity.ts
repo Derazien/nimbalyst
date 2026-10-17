@@ -14,6 +14,27 @@ import {
 import { join } from "node:path";
 import type { PersonalMemberId } from "@nimbalyst/runtime/auth/jwtScopes";
 
+const resolvedIds = new Map<string, string>();
+
+/**
+ * `directoryDeviceId` for repeated callers such as the 30 s device announce.
+ * The first success is kept in memory, so later calls never touch the disk; a
+ * failure caches nothing and propagates, and the next call reads again. The
+ * derivation itself is unchanged, so a transient read error can never produce
+ * a different id or rewrite the identity file.
+ */
+export function cachedDirectoryDeviceId(
+  userData: string,
+  personalMemberId: PersonalMemberId
+): string {
+  const key = JSON.stringify([userData, personalMemberId]);
+  const known = resolvedIds.get(key);
+  if (known !== undefined) return known;
+  const deviceId = directoryDeviceId(userData, personalMemberId);
+  resolvedIds.set(key, deviceId);
+  return deviceId;
+}
+
 /**
  * Directory-owned, account-scoped identity. Never adopts the ambiguous hostname ID.
  * Compatibility contract: the seed format, computer-v1 domain, JSON field order,

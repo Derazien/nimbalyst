@@ -1,4 +1,5 @@
 import { access } from "fs/promises";
+import { runWithFsLimit } from "./WatchedFileReader";
 
 /** An atomic replacement can briefly remove the destination. Never classify I/O errors as deletion. */
 export async function pathExistsAfterRename(
@@ -7,7 +8,8 @@ export async function pathExistsAfterRename(
   for (const delay of [0, 25, 100]) {
     if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
     try {
-      await access(filePath);
+      // One probe per rename event is unbounded during a checkout; share the watcher fs limit.
+      await runWithFsLimit(() => access(filePath));
       return true;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;

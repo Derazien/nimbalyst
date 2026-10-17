@@ -586,6 +586,39 @@ Use this when the user needs a helper workflow.
     expect(names.filter(name => name.startsWith('npm-tools:'))).toEqual(['npm-tools:real']);
   });
 
+  it('does not walk node_modules or dot-directories of a plugin looking for commands', async () => {
+    const pluginRoot = path.join(workspacePath, 'plugin-with-deps');
+    const command = `---\ndescription: A command\n---\n\nDo the thing.\n`;
+    fs.mkdirSync(path.join(pluginRoot, '.claude-plugin'), { recursive: true });
+    fs.writeFileSync(
+      path.join(pluginRoot, '.claude-plugin', 'plugin.json'),
+      JSON.stringify({ name: 'deps-tools', version: '0.1.0', author: { name: 'Nimbalyst' } }, null, 2),
+      'utf-8',
+    );
+    for (const dir of ['commands', 'commands/nested', 'node_modules/json-schema-typed', 'packages/inner/node_modules/dep', '.git/info', '.cache']) {
+      fs.mkdirSync(path.join(pluginRoot, dir), { recursive: true });
+    }
+    fs.writeFileSync(path.join(pluginRoot, 'commands', 'inspect.md'), command, 'utf-8');
+    fs.writeFileSync(path.join(pluginRoot, 'commands', 'nested', 'deep.md'), command, 'utf-8');
+    fs.writeFileSync(path.join(pluginRoot, 'node_modules', 'json-schema-typed', 'LICENSE.md'), command, 'utf-8');
+    fs.writeFileSync(path.join(pluginRoot, 'packages', 'inner', 'node_modules', 'dep', 'README.md'), command, 'utf-8');
+    fs.writeFileSync(path.join(pluginRoot, '.git', 'info', 'exclude.md'), command, 'utf-8');
+    fs.writeFileSync(path.join(pluginRoot, '.cache', 'cached.md'), command, 'utf-8');
+
+    const service = new AgentWorkflowService(workspacePath, {
+      userHomePath,
+      extensionDirectoriesLoader: async () => [],
+      nativeClaudePluginPathsLoader: async () => [{ type: 'local', path: pluginRoot }],
+      releaseChannelLoader: () => 'stable',
+    });
+
+    const entries = await service.listEntries({ provider: 'claude-code' });
+    const pluginEntries = entries.filter(entry => entry.name.startsWith('deps-tools:'));
+
+    expect(pluginEntries.map(entry => entry.name).sort()).toEqual(['deps-tools:inspect', 'deps-tools:nested:deep']);
+    expect(pluginEntries.every(entry => !/node_modules|[\\/]\.(git|cache)[\\/]/.test(entry.filePath ?? ''))).toBe(true);
+  });
+
   // #1465: Claude loads the user's `/plugin`-installed plugins itself. Handing
   // those same directories back as SDK `plugins` / CLI `--plugin-dir` entries
   // made a second, unconfigured `@inline` copy of each. Injection carries the

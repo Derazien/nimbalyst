@@ -291,6 +291,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Sessions started by agents, extensions, companions and super loops start ready to work instead of in Claude Code CLI plan mode; only sessions you open yourself follow the plan-mode setting.
 - In Claude Code CLI sessions a sub-agent's or teammate's text, thinking and tool calls stay inside its own card, including while it is still running.
 - Terminals no longer start failing with "Failed to fetch" after a long session: closed terminals now release their display engine.
+- On Windows, a search or scan that reads thousands of project files no longer makes Nimbalyst run out of open files, stall and show an "EMFILE: too many open files" error dialog: files that were only read are no longer re-read by every session, file checks are capped and shared between sessions, and a failed background read retries quietly instead of opening a dialog.
+- The slash-command menu no longer lists files from inside a plugin's bundled libraries, such as a dependency's LICENSE, as commands.
 - Agent sessions in a project folder close to the drive root, such as `C:\work`, no longer fail on their first message.
 - Nimbalyst no longer stalls or stops responding while terminals and agent sessions are producing output or while the disk is busy, including when switching projects.
 - Switching projects no longer freezes for several seconds while Nimbalyst re-checks whether Claude Code is installed on Windows: that check now runs in the background and its answer is reused.

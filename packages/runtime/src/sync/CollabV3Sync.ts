@@ -106,6 +106,7 @@ export type {
 } from './collabV3WireTypes';
 
 import { IndexEntryDecryptionError } from './indexEntryDecryptionError';
+import { createDeviceAnnouncer } from './deviceAnnouncer';
 import { createPersonalSyncWriteGate, type PersonalSyncWriteGateSnapshot } from './personalSyncWriteGate';
 import type {
   SyncConfig,
@@ -855,7 +856,6 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
   const connectionGenerationListeners = new Set<(generation: number) => void>();
   const INDEX_STABILITY_MS = 500;
   let indexStabilityTimer: ReturnType<typeof setTimeout> | null = null;
-  let deviceAnnounceInterval: ReturnType<typeof setInterval> | null = null;
   let pingInterval: ReturnType<typeof setInterval> | null = null;
   let indexReconnectAttempts = 0;
   /**
@@ -1768,43 +1768,19 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
     });
   }
 
-  // Helper to announce device to the index server
-  function announceDevice(): void {
-    // Get current device info (prefer callback for dynamic presence, fallback to static)
-    const deviceInfo = localDeviceInfo();
+  // Announces the device to the index server now and on a timer. Never throws,
+  // so a failed identity read cannot escape the timer.
+  const deviceAnnouncer = createDeviceAnnouncer({
+    deviceInfo: localDeviceInfo,
     // Check both our flag AND the actual WebSocket readyState to avoid "Sent before connected" errors
-    if (deviceInfo && indexWs && indexConnected && indexWs.readyState === WS_OPEN) {
-      const announceMsg: ClientMessage = {
-        type: 'deviceAnnounce',
-        device: {
-          ...deviceInfo,
-          // Ensure lastActiveAt is current (callback may provide its own)
-          lastActiveAt: deviceInfo.lastActiveAt ?? Date.now(),
-        },
-      };
-      indexWs.send(JSON.stringify(announceMsg));
-      // console.log('[CollabV3] Announced device:', deviceInfo.name);
-    }
-  }
-
-  // Start periodic device re-announcement to handle server hibernation
-  function startDeviceAnnounceInterval(): void {
-    stopDeviceAnnounceInterval();
-    if (config.deviceInfo || config.getDeviceInfo) {
-      // Re-announce every 30 seconds to handle server hibernation and presence updates
-      deviceAnnounceInterval = setInterval(() => {
-        announceDevice();
-      }, 30000);
-    }
-  }
-
-  // Stop the periodic re-announcement
-  function stopDeviceAnnounceInterval(): void {
-    if (deviceAnnounceInterval) {
-      clearInterval(deviceAnnounceInterval);
-      deviceAnnounceInterval = null;
-    }
-  }
+    canSend: () => !!indexWs && indexConnected && indexWs.readyState === WS_OPEN,
+    send: message => indexWs?.send(JSON.stringify(message satisfies ClientMessage)),
+  });
+  const announceDevice = deviceAnnouncer.announce;
+  const stopDeviceAnnounceInterval = deviceAnnouncer.stop;
+  const startDeviceAnnounceInterval = (): void => {
+    if (config.deviceInfo || config.getDeviceInfo) deviceAnnouncer.start();
+  };
 
   // Start ping interval to keep WebSocket alive
   function startPingInterval(): void {

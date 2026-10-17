@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { FileSnapshotCache } from '../FileSnapshotCache';
 import type { WorkspaceEventListener } from '../WorkspaceEventBus';
 
@@ -67,6 +67,7 @@ vi.mock('fs/promises', () => ({
 }));
 
 import * as bus from '../WorkspaceEventBus';
+import { MAX_CONCURRENT_WATCHER_FS_OPS } from '../WatchedFileReader';
 
 import {
   SessionFileWatcher,
@@ -447,6 +448,173 @@ describe('SessionFileWatcher', () => {
       await flush();
 
       expect(callback).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('read storms and access-only events', () => {
+    const oldFile = '/test/workspace/docs/old.json';
+    const editedFile = '/test/workspace/src/edited.ts';
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    /** Freeze the clock only; the real timers keep driving flush(). */
+    function freezeClock(): number {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      const startMs = Date.parse('2026-10-17T10:00:00Z');
+      vi.setSystemTime(startMs);
+      return startMs;
+    }
+
+    it('does not read a file last written before the session started', async () => {
+      const cache = createMockCache();
+      (cache.getBeforeState as any).mockResolvedValue('original');
+      setMockFileContent(oldFile, 'different');
+      mockStat.mockResolvedValue({ size: 9, mtimeMs: Date.now() - 60_000 });
+
+      const callback = vi.fn();
+      const watcher = new SessionFileWatcher();
+      await watcher.start(workspacePath, sessionId, cache, callback);
+
+      fireChange(oldFile);
+      fireChange(oldFile);
+      fireChange(oldFile);
+      await flush();
+
+      expect(mockReadFile).not.toHaveBeenCalled();
+      expect(callback).not.toHaveBeenCalled();
+
+      await watcher.stop();
+    });
+
+    it('does not read again when a later event leaves mtime and size alone', async () => {
+      const startMs = freezeClock();
+      const cache = createMockCache();
+      (cache.getBeforeState as any).mockResolvedValue('original');
+      setMockFileContent(editedFile, 'edited');
+      mockStat.mockResolvedValue({ size: 6, mtimeMs: startMs + 500 });
+
+      const callback = vi.fn();
+      const watcher = new SessionFileWatcher();
+      await watcher.start(workspacePath, sessionId, cache, callback);
+
+      vi.setSystemTime(startMs + 10_000);
+      fireChange(editedFile);
+      await flush();
+      expect(mockReadFile).toHaveBeenCalledTimes(1);
+      expect(callback).toHaveBeenCalledTimes(1);
+
+      // A reader touching the file later changes only its access time.
+      vi.setSystemTime(startMs + 20_000);
+      fireChange(editedFile);
+      await flush();
+      expect(mockReadFile).toHaveBeenCalledTimes(1);
+      expect(callback).toHaveBeenCalledTimes(1);
+
+      await watcher.stop();
+    });
+
+    it('re-reads when the previous read was too close to the mtime to trust', async () => {
+      const startMs = freezeClock();
+      const cache = createMockCache();
+      (cache.getBeforeState as any).mockResolvedValue('original');
+      setMockFileContent(editedFile, 'edited');
+      mockStat.mockResolvedValue({ size: 6, mtimeMs: startMs + 500 });
+
+      const watcher = new SessionFileWatcher();
+      await watcher.start(workspacePath, sessionId, cache, vi.fn());
+
+      // Two writes inside one mtime tick with the same size would look identical.
+      vi.setSystemTime(startMs + 600);
+      fireChange(editedFile);
+      await flush();
+      vi.setSystemTime(startMs + 700);
+      fireChange(editedFile);
+      await flush();
+
+      expect(mockReadFile).toHaveBeenCalledTimes(2);
+
+      await watcher.stop();
+    });
+
+    it('still attributes an edit after session start, its revert, and a revert that keeps an old mtime', async () => {
+      const startMs = freezeClock();
+      const cache = createMockCache();
+      const callback = vi.fn();
+      const watcher = new SessionFileWatcher();
+      await watcher.start(workspacePath, sessionId, cache, callback);
+
+      // Edit A -> B.
+      (cache.getBeforeState as any).mockResolvedValue('A');
+      setMockFileContent(editedFile, 'B');
+      mockStat.mockResolvedValue({ size: 1, mtimeMs: startMs + 100 });
+      vi.setSystemTime(startMs + 200);
+      fireChange(editedFile);
+      await flush();
+      expect(callback).toHaveBeenLastCalledWith(expect.objectContaining({ filePath: editedFile, beforeContent: 'A' }));
+
+      // Revert B -> A.
+      (cache.getBeforeState as any).mockResolvedValue('B');
+      setMockFileContent(editedFile, 'A');
+      mockStat.mockResolvedValue({ size: 1, mtimeMs: startMs + 5000 });
+      vi.setSystemTime(startMs + 6000);
+      fireChange(editedFile);
+      await flush();
+      expect(callback).toHaveBeenCalledTimes(2);
+      expect(callback).toHaveBeenLastCalledWith(expect.objectContaining({ filePath: editedFile, beforeContent: 'B' }));
+
+      // A -> longer content restored with `cp -p`: mtime predates the session, size differs.
+      (cache.getBeforeState as any).mockResolvedValue('A');
+      setMockFileContent(editedFile, 'A2');
+      mockStat.mockResolvedValue({ size: 2, mtimeMs: startMs - 60_000 });
+      vi.setSystemTime(startMs + 7000);
+      fireChange(editedFile);
+      await flush();
+      expect(callback).toHaveBeenCalledTimes(3);
+      expect(callback).toHaveBeenLastCalledWith(expect.objectContaining({ filePath: editedFile, beforeContent: 'A' }));
+
+      await watcher.stop();
+    });
+
+    it('bounds simultaneous fs work across sessions and still reports every change', async () => {
+      let inFlight = 0;
+      let peak = 0;
+      const tracked = async <T>(value: T): Promise<T> => {
+        inFlight++;
+        peak = Math.max(peak, inFlight);
+        await new Promise(resolve => setTimeout(resolve, 1));
+        inFlight--;
+        return value;
+      };
+      mockStat.mockImplementation(() => tracked({ size: 10, mtimeMs: Date.now() }));
+      mockReadFile.mockImplementation((filePath: string) => tracked(`after ${filePath}`));
+
+      const callbacks = [vi.fn(), vi.fn(), vi.fn()];
+      const watchers = callbacks.map(() => new SessionFileWatcher());
+      for (const [i, watcher] of watchers.entries()) {
+        const cache = createMockCache();
+        (cache.getBeforeState as any).mockResolvedValue('before');
+        await watcher.start(workspacePath, `storm-session-${i}`, cache, callbacks[i]);
+      }
+
+      const paths = Array.from({ length: 500 }, (_, i) => `/test/workspace/src/file-${i}.ts`);
+      for (const filePath of paths) fireChange(filePath);
+
+      await vi.waitFor(() => {
+        for (const callback of callbacks) expect(callback).toHaveBeenCalledTimes(500);
+      }, { timeout: 10_000 });
+
+      expect(peak).toBeGreaterThan(1);
+      expect(peak).toBeLessThanOrEqual(MAX_CONCURRENT_WATCHER_FS_OPS);
+      for (const callback of callbacks) {
+        const reported = new Set(callback.mock.calls.map(([event]) => event.filePath));
+        expect(reported).toEqual(new Set(paths));
+      }
+      // Sessions share one read per file instead of one each.
+      expect(mockReadFile).toHaveBeenCalledTimes(500);
+
+      for (const watcher of watchers) await watcher.stop();
     });
   });
 });

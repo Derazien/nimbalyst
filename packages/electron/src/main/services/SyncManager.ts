@@ -1,5 +1,5 @@
 import type { SessionSyncStatus } from '../../shared/sessionSyncStatus';
-import { directoryDeviceId } from './sync/directoryDeviceIdentity';
+import { cachedDirectoryDeviceId } from './sync/directoryDeviceIdentity';
 import { remoteSessions } from './ai/remoteSessions';
 import { registerSessionHierarchyPublication } from './sync/sessionHierarchyPublication';
 import Store from '../utils/privateSettingsStore';
@@ -238,7 +238,7 @@ function getDeviceInfo(personalMemberId: PersonalMemberId): DeviceInfo {
     .replace(/\b\w/g, c => c.toUpperCase());
 
   return {
-    deviceId: directoryDeviceId(app.getPath('userData'), personalMemberId),
+    deviceId: cachedDirectoryDeviceId(app.getPath('userData'), personalMemberId),
     name: friendlyName || 'Desktop',
     type: 'desktop',
     platform,
