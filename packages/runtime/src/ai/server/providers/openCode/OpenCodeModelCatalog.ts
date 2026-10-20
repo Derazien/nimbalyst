@@ -2,7 +2,7 @@ import type { ProviderListResponses } from '@opencode-ai/sdk/client';
 import { OPENCODE_PRESET_MODELS } from '../../../modelConstants';
 import type { AIModel, AIProviderType } from '../../types';
 import { OpenCodeServerManager } from '../../protocols/OpenCodeSDKProtocol';
-import { loadOpenCodeSdkClientModule } from './OpenCodeSdkClient';
+import { createOpenCodeClientForServer } from './OpenCodeSdkClient';
 
 const CATALOG_CACHE_VERSION = 2 as const;
 const CATALOG_STALE_AFTER_MS = 24 * 60 * 60 * 1000;
@@ -79,8 +79,10 @@ const defaultDependencies: Required<OpenCodeModelCatalogDependencies> = {
   getRetainedModelIds: () => [],
   getEnvironment: () => undefined,
   createClient: async (baseUrl) => {
-    const sdk = await loadOpenCodeSdkClientModule();
-    return sdk.createOpencodeClient({ baseUrl });
+    const connection = OpenCodeServerManager.getInstance().connection;
+    return (await createOpenCodeClientForServer(
+      connection.baseUrl === baseUrl ? connection : { baseUrl, apiVersion: null, authorization: null }
+    )) as OpenCodeCatalogClient;
   },
   getServerManager: () => OpenCodeServerManager.getInstance(),
   now: () => Date.now(),

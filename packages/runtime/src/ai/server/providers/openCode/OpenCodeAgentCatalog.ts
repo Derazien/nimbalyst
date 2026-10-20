@@ -1,6 +1,6 @@
 import type { AppAgentsResponses } from '@opencode-ai/sdk/client';
 import { OpenCodeServerManager } from '../../protocols/OpenCodeSDKProtocol';
-import { loadOpenCodeSdkClientModule } from './OpenCodeSdkClient';
+import { createOpenCodeClientForServer } from './OpenCodeSdkClient';
 
 type AgentListPayload = AppAgentsResponses[200];
 type OpenCodeAgent = AgentListPayload[number];
@@ -58,8 +58,10 @@ export interface OpenCodeAgentCatalogDependencies {
 
 const defaultDependencies: Required<OpenCodeAgentCatalogDependencies> = {
   createClient: async (baseUrl) => {
-    const sdk = await loadOpenCodeSdkClientModule();
-    return sdk.createOpencodeClient({ baseUrl });
+    const connection = OpenCodeServerManager.getInstance().connection;
+    return (await createOpenCodeClientForServer(
+      connection.baseUrl === baseUrl ? connection : { baseUrl, apiVersion: null, authorization: null }
+    )) as OpenCodeAgentClient;
   },
   getServerManager: () => OpenCodeServerManager.getInstance(),
 };

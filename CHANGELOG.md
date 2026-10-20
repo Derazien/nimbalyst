@@ -175,6 +175,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The local slow-query log is now capped at 2,000 rows instead of growing past its limit
 - The expanded tray panel reads each session's latest reply from an index instead of scanning every assistant message in the database, which could stall other database work for seconds on large histories
 - Session search now finds error messages from Codex sessions; on the SQLite database, existing Codex messages are relabeled once by a background pass
+- OpenCode sessions and Discover models now work with OpenCode 2.x as well as 1.x, instead of failing with "payload.all is not iterable"
 - With "Allow everything" and Agent-verified checks on, a hook that asks for approval now waits for your answer instead of letting the tool run
 - A file watcher hitting the open-file limit no longer opens a blocking error dialog, which could keep the app from starting with many projects restored
 - The tray menu no longer throws an error dialog when a settings read fails, and projects without a `.mcp.json` no longer leak a folder watcher each time they start

@@ -17,10 +17,15 @@
  */
 
 import { ChildProcess, spawn } from 'child_process';
+import { randomBytes } from 'crypto';
 import { promises as fs } from 'fs';
 import type { Command } from '@opencode-ai/sdk';
 import type { ChatAttachment } from '../types';
 import { loadOpenCodeSdkClientModule } from '../providers/openCode/OpenCodeSdkClient';
+import {
+  createOpenCodeV2Client,
+  openCodeV2Authorization,
+} from '../providers/openCode/v2/OpenCodeV2Client';
 import {
   AgentProtocol,
   ProtocolSession,
@@ -113,6 +118,22 @@ const DEFAULT_STARTUP_TIMEOUT_MS = 30000;
  */
 const HEALTH_PROBE_TIMEOUT_MS = 2000;
 
+/**
+ * Which server API a running `opencode serve` speaks. 2.x moved everything under
+ * `/api/*` behind basic auth and answers unknown paths (including 1.x's
+ * `/global/health`) with its web app's HTML, so the API is detected per process
+ * rather than assumed.
+ */
+export type OpenCodeApiVersion = 1 | 2;
+
+/** What a client needs to talk to the running server. */
+export interface OpenCodeServerConnection {
+  baseUrl: string;
+  apiVersion: OpenCodeApiVersion | null;
+  /** `Authorization` header for 2.x servers; null for 1.x. */
+  authorization: string | null;
+}
+
 /** True when a fetch rejected because its AbortSignal fired (timeout), not a network error. */
 function isAbortError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
@@ -148,6 +169,10 @@ export class OpenCodeServerManager {
   private lastSpawnError: Error | null = null;
   /** Rolling tail of server stderr lines, included in startup failure messages. */
   private stderrTail: string[] = [];
+  /** Per-spawn password handed to OpenCode 2.x via `OPENCODE_PASSWORD`. */
+  private password: string | null = null;
+  private detectedApiVersion: OpenCodeApiVersion | null = null;
+  private detectedServerVersion: string | null = null;
 
   private constructor() {
     // Kill any spawned server when the host process exits so `opencode serve`
@@ -203,6 +228,27 @@ export class OpenCodeServerManager {
     return this.serverProcess !== null && this.ready;
   }
 
+  /** API spoken by the running server; null until a probe has answered. */
+  get apiVersion(): OpenCodeApiVersion | null {
+    return this.detectedApiVersion;
+  }
+
+  /** Version reported by a 2.x server's `/api/info`, when known. */
+  get serverVersion(): string | null {
+    return this.detectedServerVersion;
+  }
+
+  get connection(): OpenCodeServerConnection {
+    return {
+      baseUrl: this.baseUrl,
+      apiVersion: this.detectedApiVersion,
+      authorization:
+        this.detectedApiVersion === 2 && this.password
+          ? openCodeV2Authorization(this.password)
+          : null,
+    };
+  }
+
   /**
    * Ensure the server is running. Spawns it if not already started.
    * Returns when the server is ready to accept connections.
@@ -242,9 +288,15 @@ export class OpenCodeServerManager {
 
     console.log(`[OPENCODE-PROTOCOL] Starting OpenCode server on port ${this.port}`);
 
+    // OpenCode 2.x requires basic auth on its API and reads the password from
+    // OPENCODE_PASSWORD (otherwise it invents one and prints it). 1.x ignores it.
+    this.password = randomBytes(24).toString('base64url');
+    this.detectedApiVersion = null;
+    this.detectedServerVersion = null;
     const serverEnv: Record<string, string> = {
       ...process.env as Record<string, string>,
       ...(env || {}),
+      OPENCODE_PASSWORD: this.password,
     };
 
     this.lastSpawnError = null;
@@ -317,9 +369,11 @@ export class OpenCodeServerManager {
         throw this.lastSpawnError;
       }
       try {
-        const response = await this.fetchHealth();
-        if (response.ok) {
-          console.log(`[OPENCODE-PROTOCOL] Server ready on port ${this.port}`);
+        if (await this.probeServer()) {
+          console.log(
+            `[OPENCODE-PROTOCOL] Server ready on port ${this.port} (API v${this.detectedApiVersion}` +
+              `${this.detectedServerVersion ? `, OpenCode ${this.detectedServerVersion}` : ''})`
+          );
           return;
         }
       } catch (error) {
@@ -346,14 +400,53 @@ export class OpenCodeServerManager {
    * startup deadline. Uses an explicit timer, not AbortSignal.timeout, so the
    * budget is driven by the same clock as the poll loop.
    */
-  private async fetchHealth(): Promise<Response> {
+  private async fetchWithBudget(route: string, headers?: Record<string, string>): Promise<Response> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), HEALTH_PROBE_TIMEOUT_MS);
     try {
-      return await fetch(`${this.baseUrl}/global/health`, { signal: controller.signal });
+      return await fetch(`${this.baseUrl}${route}`, {
+        signal: controller.signal,
+        ...(headers ? { headers } : {}),
+      });
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  /**
+   * One readiness probe that also learns which API the server speaks.
+   *
+   * 2.x is asked first (`GET /api/info` with our password, a JSON answer naming
+   * its version). Failing that, 1.x's `GET /global/health` counts only when it
+   * is not an HTML page: 2.x answers every unknown path with its web app, and
+   * taking that for "healthy" is what made model discovery fail with
+   * "payload.all is not iterable" instead of working.
+   */
+  private async probeServer(): Promise<boolean> {
+    if (this.password) {
+      try {
+        const info = await this.fetchWithBudget('/api/info', {
+          authorization: openCodeV2Authorization(this.password),
+        });
+        if (info.ok && typeof info.json === 'function') {
+          const body = (await info.json()) as { version?: unknown } | null;
+          if (body && typeof body.version === 'string') {
+            this.detectedApiVersion = 2;
+            this.detectedServerVersion = body.version;
+            return true;
+          }
+        }
+      } catch {
+        // Not a 2.x server (or not up yet); the 1.x probe below decides.
+      }
+    }
+
+    const health = await this.fetchWithBudget('/global/health');
+    if (!health.ok) return false;
+    const contentType = health.headers?.get?.('content-type') ?? '';
+    if (contentType.includes('text/html')) return false;
+    this.detectedApiVersion = 1;
+    return true;
   }
 
   private stopServer(): void {
@@ -369,6 +462,8 @@ export class OpenCodeServerManager {
     this.serverProcess = null;
     this.ready = false;
     this.readyPromise = null;
+    this.detectedApiVersion = null;
+    this.detectedServerVersion = null;
     if (!proc) return;
 
     console.log('[OPENCODE-PROTOCOL] Stopping OpenCode server');
@@ -401,8 +496,7 @@ export class OpenCodeServerManager {
   /** Single health probe; true only when the server answers with an ok response. */
   private async probeHealthOnce(): Promise<boolean> {
     try {
-      const response = await this.fetchHealth();
-      return !!response.ok;
+      return await this.probeServer();
     } catch {
       return false;
     }
@@ -893,6 +987,14 @@ export class OpenCodeSDKProtocol implements AgentProtocol {
         body: promptBody,
       });
 
+      // A 2.x prompt only admits the input and returns at once, so await it:
+      // a rejected prompt (unknown model or agent) would otherwise leave this
+      // loop waiting on a stream that never reports the turn. A 1.x prompt
+      // resolves only when the turn ends and is awaited after the stream.
+      if (OpenCodeServerManager.getInstance().apiVersion === 2) {
+        await promptPromise;
+      }
+
       // Process SSE events
       for await (const rawEvent of subscription.stream) {
         // The SDK may wrap events in a GlobalEvent: { directory, payload }
@@ -1329,13 +1431,25 @@ export class OpenCodeSDKProtocol implements AgentProtocol {
    * Get or create the SDK client
    */
   private async getClient(baseUrl: string): Promise<OpenCodeClientLike> {
-    if (this.client && this.clientBaseUrl === baseUrl) {
+    const connection = OpenCodeServerManager.getInstance().connection;
+    const useV2 =
+      connection.baseUrl === baseUrl && connection.apiVersion === 2 && !!connection.authorization;
+    // The auth header changes with every spawn, so it is part of the cache key.
+    const clientKey = useV2 ? `${baseUrl}#v2#${connection.authorization}` : baseUrl;
+    if (this.client && this.clientBaseUrl === clientKey) {
       return this.client;
     }
 
-    const sdkModule = await this.loadSdkModule();
-    this.client = sdkModule.createOpencodeClient({ baseUrl });
-    this.clientBaseUrl = baseUrl;
+    if (useV2) {
+      this.client = createOpenCodeV2Client({
+        baseUrl,
+        authorization: connection.authorization!,
+      });
+    } else {
+      const sdkModule = await this.loadSdkModule();
+      this.client = sdkModule.createOpencodeClient({ baseUrl });
+    }
+    this.clientBaseUrl = clientKey;
     return this.client;
   }
 

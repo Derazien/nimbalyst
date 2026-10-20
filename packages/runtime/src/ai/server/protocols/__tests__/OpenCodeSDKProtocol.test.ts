@@ -8,6 +8,8 @@ import { OpenCodeSDKProtocol, OpenCodeServerManager, OpenCodeClientLike, OpenCod
 import { OpenCodeProvider } from '../../providers/OpenCodeProvider';
 import { EventEmitter } from 'events';
 import type { ChatAttachment } from '../../types';
+import { openCodeV2Authorization } from '../../providers/openCode/v2/OpenCodeV2Client';
+import { TOOLS_STREAM } from '../../providers/openCode/v2/__tests__/fixtures/openCodeV2Streams';
 
 // Mock child_process.spawn to avoid actually launching opencode
 vi.mock('child_process', () => {
@@ -957,6 +959,195 @@ describe('OpenCodeSDKProtocol', () => {
       const protocol = new OpenCodeSDKProtocol(loadSdkModule);
 
       await expect(protocol.createSession({ workspacePath: '/tmp/test' })).rejects.toThrow(/not found|ENOENT/i);
+    });
+  });
+
+  describe('server API detection (OpenCode 1.x vs 2.x)', () => {
+    const V2_SESSION_ID = 'ses_ea6cb8508ffeweQMNvroZtifJR';
+
+    const jsonResponse = (body: unknown, status = 200) =>
+      new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+
+    async function spawnedPassword(): Promise<string> {
+      const childProcess = await import('child_process');
+      const calls = (childProcess.spawn as unknown as ReturnType<typeof vi.fn>).mock.calls;
+      return calls[calls.length - 1][2].env.OPENCODE_PASSWORD as string;
+    }
+
+    /** Fake 2.x server: only answers requests that carry the password it was spawned with. */
+    function fakeV2Server(options: { promptStatus?: number; eventFrames?: string[] } = {}) {
+      const requests: Array<{ method: string; route: string; authorization: string; body: unknown }> = [];
+      const frames =
+        options.eventFrames ?? TOOLS_STREAM.map((event) => `data: ${JSON.stringify(event)}\n\n`);
+      mockFetch.mockImplementation((async (input: string, init: RequestInit = {}) => {
+        const route = input.replace(/^http:\/\/127\.0\.0\.1:\d+/, '');
+        const headers = (init.headers ?? {}) as Record<string, string>;
+        requests.push({
+          method: init.method ?? 'GET',
+          route,
+          authorization: headers.authorization ?? '',
+          body: typeof init.body === 'string' ? JSON.parse(init.body) : undefined,
+        });
+        if (headers.authorization !== openCodeV2Authorization(await spawnedPassword())) {
+          return jsonResponse({ _tag: 'Unauthorized', message: 'bad credentials' }, 401);
+        }
+        if (route === '/api/info') return jsonResponse({ version: '2.1.0', pid: 4242 });
+        if (route.startsWith('/api/session') && init.method === 'POST' && route === '/api/session') {
+          return jsonResponse({ data: { id: V2_SESSION_ID } });
+        }
+        if (route === `/api/session/${V2_SESSION_ID}/prompt`) {
+          return options.promptStatus && options.promptStatus >= 400
+            ? jsonResponse({ _tag: 'ModelNotFound', message: 'Model unavailable: opencode/nope' }, options.promptStatus)
+            : new Response(null, { status: 204 });
+        }
+        if (route.startsWith(`/api/session/${V2_SESSION_ID}/`)) return new Response(null, { status: 204 });
+        if (route === '/api/event') {
+          const encoder = new TextEncoder();
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                for (const frame of frames) controller.enqueue(encoder.encode(frame));
+                // A rejected prompt must not be hidden by a stream that never ends.
+                if (options.eventFrames === undefined && !options.promptStatus) controller.close();
+              },
+            }),
+            { status: 200, headers: { 'content-type': 'text/event-stream' } },
+          );
+        }
+        return jsonResponse({ _tag: 'NotFound', message: route }, 404);
+      }) as never);
+      return requests;
+    }
+
+    beforeEach(() => {
+      OpenCodeServerManager.resetForTests();
+      OpenCodeServerManager.startupTimeoutOverrideMs = 250;
+    });
+
+    afterEach(() => {
+      OpenCodeServerManager.resetForTests();
+      OpenCodeServerManager.startupTimeoutOverrideMs = null;
+      mockFetch.mockReset();
+      mockFetch.mockResolvedValue({ ok: true });
+    });
+
+    it('does not treat an HTML 200 on /global/health as a ready server', async () => {
+      // A 2.x server answers every unknown path, /global/health included, with its web app.
+      mockFetch.mockImplementation((async () =>
+        new Response('<!doctype html><html></html>', {
+          status: 200,
+          headers: { 'content-type': 'text/html; charset=utf-8' },
+        })) as never);
+      const { loadSdkModule } = createMockSdkModule([]);
+      const protocol = new OpenCodeSDKProtocol(loadSdkModule);
+
+      await expect(protocol.createSession({ workspacePath: '/tmp/test' })).rejects.toThrow(/failed to start/);
+      expect(OpenCodeServerManager.getInstance().isRunning).toBe(false);
+      expect(OpenCodeServerManager.getInstance().apiVersion).toBeNull();
+    });
+
+    it('detects a 2.x server from /api/info and runs a whole turn through the v2 client', async () => {
+      const requests = fakeV2Server();
+      const { loadSdkModule } = createMockSdkModule([]);
+      const loadSpy = vi.fn(loadSdkModule);
+      const protocol = new OpenCodeSDKProtocol(loadSpy);
+
+      const session = await protocol.createSession({
+        workspacePath: '/tmp/test',
+        model: 'opencode:opencode/big-pickle',
+      });
+      const manager = OpenCodeServerManager.getInstance();
+      expect(manager.apiVersion).toBe(2);
+      expect(manager.serverVersion).toBe('2.1.0');
+      expect(manager.connection.authorization).toBe(openCodeV2Authorization(await spawnedPassword()));
+      expect(session.id).toBe(V2_SESSION_ID);
+
+      const emitted: any[] = [];
+      for await (const event of protocol.sendMessage(session, { content: 'read note.txt' })) emitted.push(event);
+
+      // The 1.x SDK was never loaded; every request used the password the server was spawned with.
+      expect(loadSpy).not.toHaveBeenCalled();
+      const expectedAuth = openCodeV2Authorization(await spawnedPassword());
+      expect(requests.length).toBeGreaterThan(3);
+      for (const request of requests) expect(request.authorization).toBe(expectedAuth);
+
+      // Model and agent are session state in 2.x: switched, then the prompt is sent.
+      const sessionCalls = requests
+        .filter((r) => r.route.startsWith(`/api/session/${V2_SESSION_ID}/`))
+        .map((r) => `${r.method} ${r.route.split('/').pop()}`);
+      expect(sessionCalls).toEqual(['POST model', 'POST prompt']);
+      expect(requests.find((r) => r.route.endsWith('/model'))!.body).toEqual({
+        model: { id: 'big-pickle', providerID: 'opencode' },
+      });
+
+      // The persisted raw events are 1.x shaped, and the turn completes.
+      const rawTypes = emitted.filter((e) => e.type === 'raw_event').map((e) => e.metadata.rawEvent.type);
+      expect(rawTypes).toContain('message.part.delta');
+      expect(rawTypes).toContain('message.part.updated');
+      expect(rawTypes[rawTypes.length - 1]).toBe('session.idle');
+      expect(rawTypes.some((type) => type.startsWith('session.step') || type.startsWith('session.tool'))).toBe(false);
+      expect(emitted.some((e) => e.type === 'complete')).toBe(true);
+    });
+
+    it('surfaces a rejected 2.x prompt instead of waiting on a stream that never reports the turn', async () => {
+      fakeV2Server({ promptStatus: 400, eventFrames: [': heartbeat\n\n'] });
+      const { loadSdkModule } = createMockSdkModule([]);
+      const protocol = new OpenCodeSDKProtocol(loadSdkModule);
+      const session = await protocol.createSession({ workspacePath: '/tmp/test' });
+
+      const emitted: any[] = [];
+      for await (const event of protocol.sendMessage(session, { content: 'hi' })) emitted.push(event);
+
+      expect(emitted).toEqual([
+        expect.objectContaining({
+          type: 'error',
+          error: expect.stringContaining('ModelNotFound: Model unavailable: opencode/nope'),
+        }),
+      ]);
+    });
+
+    it('keeps using the 1.x SDK when /global/health answers with JSON', async () => {
+      mockFetch.mockImplementation((async (input: string) =>
+        input.endsWith('/global/health')
+          ? jsonResponse({ healthy: true, version: '1.19.3' })
+          : jsonResponse({ name: 'NotFound' }, 404)) as never);
+      const { loadSdkModule, createFn } = createMockSdkModule([]);
+      const loadSpy = vi.fn(loadSdkModule);
+      const protocol = new OpenCodeSDKProtocol(loadSpy);
+
+      await protocol.createSession({ workspacePath: '/tmp/test' });
+
+      const manager = OpenCodeServerManager.getInstance();
+      expect(manager.apiVersion).toBe(1);
+      expect(manager.serverVersion).toBeNull();
+      expect(manager.connection.authorization).toBeNull();
+      expect(loadSpy).toHaveBeenCalled();
+      expect(createFn).toHaveBeenCalled();
+    });
+
+    it('still treats a bare { ok: true } health answer as a 1.x server', async () => {
+      const { loadSdkModule } = createMockSdkModule([]);
+      const protocol = new OpenCodeSDKProtocol(loadSdkModule);
+      await protocol.createSession({ workspacePath: '/tmp/test' });
+      expect(OpenCodeServerManager.getInstance().apiVersion).toBe(1);
+    });
+
+    it('spawns the server with a fresh OPENCODE_PASSWORD each time', async () => {
+      const { loadSdkModule } = createMockSdkModule([]);
+      const protocol = new OpenCodeSDKProtocol(loadSdkModule);
+      await protocol.createSession({ workspacePath: '/tmp/test' });
+      const first = await spawnedPassword();
+      expect(first).toMatch(/^[A-Za-z0-9_-]{24,}$/);
+
+      OpenCodeServerManager.resetForTests();
+      await new OpenCodeSDKProtocol(loadSdkModule).createSession({ workspacePath: '/tmp/test' });
+      const second = await spawnedPassword();
+      expect(second).not.toBe(first);
+
+      const childProcess = await import('child_process');
+      const spawnCalls = (childProcess.spawn as unknown as ReturnType<typeof vi.fn>).mock.calls;
+      expect(spawnCalls[0][0]).toBe('opencode');
+      expect(spawnCalls[0][1]).toEqual(['serve', '--port', '19999', '--hostname', '127.0.0.1']);
     });
   });
 
