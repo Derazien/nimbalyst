@@ -146,19 +146,46 @@ describe('database maintenance settings', () => {
     backing = {};
   });
 
-  it('defaults tool output retention to 30 days when unset', async () => {
+  // Fork policy: upstream defaults this to 30 days and reads a stored 0 without
+  // the user-set flag as "use the default". On this fork the default stays 0,
+  // so a stored 0 (what every older build persisted) must stay 0 and the daily
+  // pass must never trim anything.
+  it('keeps tool output retention off by default when unset', async () => {
     const { getDatabaseMaintenanceSettings } = await import('../store');
-    expect(getDatabaseMaintenanceSettings().toolOutputRetentionDays).toBe(30);
+    expect(getDatabaseMaintenanceSettings().toolOutputRetentionDays).toBe(0);
   });
 
-  it('treats a stored 0 written by an unrelated backup change as unset', async () => {
+  it('keeps a stored 0 without the user-set flag at 0, across unrelated backup changes', async () => {
     // What every older build persisted after the user touched a backup option.
     backing.databaseMaintenance = { backupCopiesKept: 1, backupIntervalHours: 12, toolOutputRetentionDays: 0 };
     const { getDatabaseMaintenanceSettings, setDatabaseMaintenanceSettings } = await import('../store');
-    expect(getDatabaseMaintenanceSettings().toolOutputRetentionDays).toBe(30);
+    expect(getDatabaseMaintenanceSettings().toolOutputRetentionDays).toBe(0);
 
     setDatabaseMaintenanceSettings({ backupCopiesKept: 2 });
-    expect(getDatabaseMaintenanceSettings().toolOutputRetentionDays).toBe(30);
+    expect(getDatabaseMaintenanceSettings().toolOutputRetentionDays).toBe(0);
+  });
+
+  it('the scheduled tool-output pass does nothing for a stored 0 without the user-set flag', async () => {
+    backing.databaseMaintenance = { backupCopiesKept: 1, backupIntervalHours: 12, toolOutputRetentionDays: 0 };
+    const { runToolOutputRetention } = await import('../../services/databaseRetentionMaintenance');
+    const toolRetentionRun = vi.fn(async () => ({ rewritten: 5, bytesSaved: 1, lastId: 9, stoppedEarly: false }));
+    const getRunner = vi.fn(() => ({ toolRetentionRun }));
+
+    await runToolOutputRetention(getRunner);
+
+    expect(toolRetentionRun).not.toHaveBeenCalled();
+    expect(getRunner).not.toHaveBeenCalled();
+  });
+
+  it('still runs the scheduled pass when the user chose a retention period', async () => {
+    const { setDatabaseMaintenanceSettings } = await import('../store');
+    setDatabaseMaintenanceSettings({ toolOutputRetentionDays: 14 });
+    const { runToolOutputRetention } = await import('../../services/databaseRetentionMaintenance');
+    const toolRetentionRun = vi.fn(async () => ({ rewritten: 0, bytesSaved: 0, lastId: 0, stoppedEarly: false }));
+
+    await runToolOutputRetention(() => ({ toolRetentionRun }));
+
+    expect(toolRetentionRun).toHaveBeenCalledWith(14, expect.any(Number), 0);
   });
 
   it('respects an explicit 0 and keeps it across later backup changes', async () => {

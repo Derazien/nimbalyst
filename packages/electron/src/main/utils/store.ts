@@ -98,9 +98,12 @@ interface StoredDatabaseMaintenance extends Partial<DatabaseMaintenanceSettings>
 export const DEFAULT_DATABASE_MAINTENANCE: DatabaseMaintenanceSettings = {
   backupCopiesKept: 2,
   backupIntervalHours: 12,
-  // Without a default, tool output grew without bound (gigabytes on heavy
-  // installs). VACUUM stays an explicit user step; this only frees pages.
-  toolOutputRetentionDays: 30,
+  // Fork-only: upstream defaults this to 30 days (daily background pass that
+  // tombstones aged tool output). On this fork it stays 0 (off) so no tool output
+  // is ever trimmed unless the user picks a period. getDatabaseMaintenanceSettings
+  // reads a stored 0 without toolOutputRetentionDaysUserSet as this default, so a
+  // stored 0 stays 0, and runToolOutputRetention skips the pass for <= 0.
+  toolOutputRetentionDays: 0,
 };
 
 /** How the macOS menu bar fleet strip is drawn. See `getTrayStripStyle`. */
