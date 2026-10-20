@@ -14,6 +14,21 @@ import { AISessionsRepository, SessionFilesRepository, AgentMessagesRepository, 
 import { TranscriptMigrationService } from '@nimbalyst/runtime/ai/server/transcript/TranscriptMigrationService';
 import { createRawMessageStoreAdapter } from './TranscriptMigrationAdapters';
 import { createPGLiteSessionStore } from './PGLiteSessionStore';
+import { registerSessionProviderGuardSettings, withSessionProviderGuard } from './ai/sessionProviderGuard';
+import { createLiveSessionProviderGuardSettings } from './ai/sessionProviderGuardSettings';
+
+/**
+ * Every registered session store refuses to create a session on a provider the
+ * user disabled (redirects to their default, or throws). Applied at both places
+ * the store is (re)registered so a sync reinitialization cannot drop it. The
+ * same live settings are registered for the call sites that vet a selection
+ * before they build in-memory state (meta-agent spawn, mobile create).
+ */
+function guardSessionStore(store: SessionStore): SessionStore {
+  const settings = createLiveSessionProviderGuardSettings();
+  registerSessionProviderGuardSettings(settings);
+  return withSessionProviderGuard(store, settings);
+}
 import { createPGLiteSessionFileStore } from './PGLiteSessionFileStore';
 import { createPGLiteAgentMessagesStore } from './PGLiteAgentMessagesStore';
 import { createSyncedAgentMessagesStore } from './SyncedAgentMessagesStore';
@@ -89,7 +104,7 @@ class RepositoryManager {
       );
 
       // Wrap with sync if configured (returns base store if sync not enabled)
-      this.sessionStore = await initializeSync(this.baseSessionStore);
+      this.sessionStore = guardSessionStore(await initializeSync(this.baseSessionStore));
 
       // Register session store with runtime's AISessionsRepository
       AISessionsRepository.setStore(this.sessionStore);
@@ -414,7 +429,7 @@ class RepositoryManager {
     logger.main.info('[RepositoryManager] Reinitializing sync with new configuration...');
 
     // Reinitialize sync (this shuts down existing sync and starts new one if enabled)
-    this.sessionStore = await reinitializeSync(this.baseSessionStore);
+    this.sessionStore = guardSessionStore(await reinitializeSync(this.baseSessionStore));
     AISessionsRepository.setStore(this.sessionStore);
 
     // Rewrap agent messages store with sync if enabled

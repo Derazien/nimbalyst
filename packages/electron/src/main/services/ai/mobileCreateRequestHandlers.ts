@@ -2,9 +2,12 @@ import type { BrowserWindow } from 'electron';
 import * as fs from 'fs';
 import { logger } from '../../utils/logger';
 import { getDefaultAIModel } from '../../utils/store';
+import { resolveSelectionWithDefault } from './sessionModelSelection';
+import { resolveEnabledSelectionFromSettings } from './sessionProviderGuard';
 import { createWindow, findWindowByWorkspace, windowStates } from '../../window/WindowManager';
 import { getLocalHostDeviceId, isTargetedAtAnotherDevice, stampSessionHost } from './sessionHostAttribution';
 import type { SessionManager } from '@nimbalyst/runtime/ai/server';
+import { ModelIdentifier, type AIProviderType } from '@nimbalyst/runtime/ai/server/types';
 import type { IndexPublishOutcome, SessionIndexData, SyncProvider } from '@nimbalyst/runtime/sync';
 
 /**
@@ -243,8 +246,21 @@ export function registerMobileCreateSessionHandler(
 
       // Create the session using the SessionManager
       // Use mobile's provider/model selection if provided, otherwise fall back to desktop defaults
-      const resolvedProvider = (request.provider || 'claude-code') as import('@nimbalyst/runtime/ai/server/types').AIProviderType;
-      const resolvedModel = request.model || getDefaultAIModel() || 'claude-code:opus-1m';
+      // No provider in the request means the desktop default model decides it;
+      // a hardcoded 'claude-code' here paired the Claude Agent provider with a
+      // claude-code-cli default model.
+      const mobileSelection = resolveSelectionWithDefault({
+        provider: request.provider,
+        model: request.model,
+        defaultModel: getDefaultAIModel() || 'claude-code:opus-1m',
+      });
+      // The in-memory session and the index row published below are built from
+      // these values, so vet them here as well as in the store.
+      const enabledMobileSelection = resolveEnabledSelectionFromSettings(
+        { ...mobileSelection, workspacePath: workspacePath ?? undefined },
+      );
+      const resolvedProvider = enabledMobileSelection.provider as import('@nimbalyst/runtime/ai/server/types').AIProviderType;
+      const resolvedModel = enabledMobileSelection.model;
       const resolvedSessionType = (request.sessionType || 'session') as import('@nimbalyst/runtime/ai/server/types').SessionType;
       const resolvedAgentRole = (request.agentRole || 'standard') as import('@nimbalyst/runtime/ai/server/types').AgentRole;
       const { AISessionsRepository } = await import('@nimbalyst/runtime/storage/repositories/AISessionsRepository');
@@ -437,13 +453,19 @@ export function registerMobileCreateWorktreeHandler(
       // Step 2: Create session with worktreeId (same as AgentMode + sessions:create)
       const { AISessionsRepository } = await import('@nimbalyst/runtime/storage/repositories/AISessionsRepository');
       const { randomUUID } = await import('crypto');
-      const defaultModel = getDefaultAIModel() || 'claude-code:opus-1m';
+      const worktreeSelection = resolveEnabledSelectionFromSettings(
+        {
+          ...resolveSelectionWithDefault({ defaultModel: getDefaultAIModel() || 'claude-code:opus-1m' }),
+          workspacePath: request.projectId,
+        },
+      );
+      const defaultModel = worktreeSelection.model ?? ModelIdentifier.getDefaultModelId(worktreeSelection.provider as AIProviderType);
       const sessionId = randomUUID();
       const sessionTitle = `Worktree: ${worktree.name}`;
 
       await AISessionsRepository.create({
         id: sessionId,
-        provider: 'claude-code',
+        provider: worktreeSelection.provider,
         model: defaultModel,
         title: sessionTitle,
         workspaceId: request.projectId,
@@ -470,7 +492,7 @@ export function registerMobileCreateWorktreeHandler(
       const publishOutcome = await publishSessionRow(syncProvider, {
         id: sessionId,
         title: sessionTitle,
-        provider: 'claude-code',
+        provider: worktreeSelection.provider,
         model: defaultModel,
         mode: 'agent',
         sessionType: 'session',

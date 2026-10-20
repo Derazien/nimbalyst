@@ -29,7 +29,8 @@ import { locateSessionProject } from '../../shared/projectLocator';
 import { validateAgentRoleTransition } from '../services/session/agentRoleTransition';
 import { releaseSessionRuntime } from '../services/ai/archiveSessionProviderLifecycle';
 import { getTerminalSessionManager } from '../services/TerminalSessionManager';
-import { resolveSessionModelSelection } from '../services/ai/sessionModelSelection';
+import { resolveSessionModelSelection, resolveSelectionWithDefault } from '../services/ai/sessionModelSelection';
+import { getDefaultAIModel } from '../utils/store';
 import { inheritedOwnership, stripOwnerControlledMetadata } from '../services/extensionSessions/sessionOwnership';
 import { readSessionSubtree } from '../services/sessionHierarchy';
 import { isLocalWikiItemId } from '../services/localWiki/localWikiItemIds';
@@ -738,7 +739,7 @@ export async function registerSessionHandlers() {
     }) => {
         console.log('[SessionHandlers] sessions:create-child called with:', JSON.stringify(payload));
         try {
-            const { parentSessionId, workspacePath, worktreeId, provider: rawProvider = 'claude-code', model: providedModel } = payload;
+            const { parentSessionId, workspacePath, worktreeId, provider: rawProvider, model: providedModel } = payload;
             const remoteParent = await remoteSessions.get(parentSessionId, workspacePath);
             if (remoteParent) {
                 const host = remoteParent.metadata?.remoteHostDeviceId as string;
@@ -750,10 +751,13 @@ export async function registerSessionHandlers() {
             const sessionId = crypto.randomUUID();
             console.log(`[SessionHandlers] Creating child session ${sessionId} for parent ${parentSessionId}`);
 
-            const { provider, model } = resolveSessionModelSelection(
-                rawProvider as AIProviderType,
-                providedModel,
-            );
+            // No provider and no model means "the user's default", never a
+            // hardcoded claude-code (that provider may be disabled).
+            const { provider, model } = resolveSelectionWithDefault({
+                provider: rawProvider,
+                model: providedModel,
+                defaultModel: getDefaultAIModel(),
+            });
 
             // A child made under an extension-owned session stays owned by that
             // extension (never inheriting its directive), written at creation.

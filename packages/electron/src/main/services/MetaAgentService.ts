@@ -50,6 +50,7 @@ import {
   readCrossProjectFeatureEnabled,
 } from './crossWorkspaceMessaging';
 import { archiveSessionsAndDestroyProviders } from './ai/archiveSessionProviderLifecycle';
+import { resolveEnabledSelectionFromSettings } from './ai/sessionProviderGuard';
 import { ProviderFactory } from '@nimbalyst/runtime/ai/server';
 
 type SessionStatusValue = 'idle' | 'running' | 'waiting_for_input' | 'error' | 'interrupted';
@@ -608,7 +609,7 @@ export class MetaAgentService {
     const explicitModel = normalizeStoredChildModelIdentifier(explicitModelProvider, args.model ?? null);
     const model = explicitModel || defaultModel;
     const parsed = ModelIdentifier.tryParse(model);
-    const provider = (args.provider ||
+    const requestedProvider = (args.provider ||
       parsed?.provider ||
       parentProvider ||
       'claude-code') as AIProviderType;
@@ -620,10 +621,19 @@ export class MetaAgentService {
     const parentModelProvider = parentModel
       ? (ModelIdentifier.tryParse(parentModel)?.provider ?? parentProvider)
       : null;
-    const normalizedModel =
+    const requestedNormalizedModel =
       explicitModel
-      || (parentModel && parentModelProvider === provider ? parentModel : null)
-      || ModelIdentifier.getDefaultModelId(provider);
+      || (parentModel && parentModelProvider === requestedProvider ? parentModel : null)
+      || ModelIdentifier.getDefaultModelId(requestedProvider);
+    // The fallbacks above (the parent's provider, then a hardcoded claude-code)
+    // can land on a provider the user disabled: a child spawned from an old
+    // Claude Agent session inherits it. Redirect to the configured default so a
+    // spawn never creates a session on a disabled provider.
+    const enabledSelection = resolveEnabledSelectionFromSettings(
+      { provider: requestedProvider, model: requestedNormalizedModel, workspacePath: workspaceKey },
+    );
+    const provider = enabledSelection.provider as AIProviderType;
+    const normalizedModel = enabledSelection.model ?? ModelIdentifier.getDefaultModelId(provider);
 
     const callerProvidedTitle = !!args.title?.trim() && !args.provisionalTitle;
     const title = (args.title || this.deriveTitleFromPrompt(args.prompt) || 'Meta Task').trim();

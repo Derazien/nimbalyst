@@ -39,7 +39,7 @@ import { getSessionSummaryForVoice } from './sessionSummary';
 import { getDatabase } from '../../database/initialize';
 import { getDefaultAIModel, getPreferredAgentLanguage } from '../../utils/store';
 import { randomUUID } from 'crypto';
-import { resolveSessionModelSelection } from '../ai/sessionModelSelection';
+import { resolveSelectionWithDefault } from '../ai/sessionModelSelection';
 import { buildVoiceTaskCompletion } from './voiceTaskCompletion';
 import { deliverInteractivePrompt, deliverVoiceAnnouncement } from './voiceWakeDelivery';
 import { redactVoiceDiagnostic } from './voiceDiagnostics';
@@ -1108,10 +1108,9 @@ export function initVoiceModeService() {
             if (!wp) return { success: false, error: 'No workspace path available' };
 
             const newSessionId = randomUUID();
-            const { provider, model } = resolveSessionModelSelection(
-              'claude-code',
-              getDefaultAIModel() || 'claude-code:opus-1m',
-            );
+            const { provider, model } = resolveSelectionWithDefault({
+              defaultModel: getDefaultAIModel() || 'claude-code:opus-1m',
+            });
             const newTitle = title?.trim() || 'New Session';
 
             await AISessionsRepository.create({
