@@ -1,12 +1,10 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
 import { Terminal } from 'ghostty-web';
 import { loadTerminalGhostty } from '../ghosttyInstance';
 import { captureDocumentListeners } from '../documentListenerScope';
 
-const WASM_PATH = createRequire(import.meta.url).resolve('ghostty-web/ghostty-vt.wasm');
 
 beforeAll(() => {
   // ghostty-web only reads local wasm paths through Bun.file under Node.
@@ -46,7 +44,7 @@ async function openAndDispose(release: boolean) {
   });
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(ctx as never);
   const live = trackLive();
-  const term = new Terminal({ ghostty: await loadTerminalGhostty(WASM_PATH) });
+  const term = new Terminal({ ghostty: await loadTerminalGhostty() });
   const host = document.body.appendChild(document.createElement('div'));
   const { release: releaseListeners } = captureDocumentListeners(() => term.open(host));
   term.dispose();
@@ -55,8 +53,9 @@ async function openAndDispose(release: boolean) {
 }
 
 describe('captureDocumentListeners with the real ghostty-web Terminal', () => {
-  it('ghostty-web itself leaves document listeners behind after dispose (upstream bug, pinned)', async () => {
-    expect(await openAndDispose(false)).toBeGreaterThan(0);
+  // Upstream's ghostty-web patch (#1818) now removes its own listeners on dispose; this release stays as a backstop.
+  it('patched ghostty-web leaves no document listeners behind after dispose', async () => {
+    expect(await openAndDispose(false)).toBe(0);
   });
 
   it('removes every one of them', async () => {
