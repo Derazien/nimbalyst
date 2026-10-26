@@ -171,8 +171,8 @@ export function ClaudeCodePanel({
   const [globalCustomClaudeCodePath, setGlobalCustomClaudeCodePath] = useState('');
   const [hasProjectPathOverride, setHasProjectPathOverride] = useState(false);
 
-  // Start new Claude Code CLI sessions in plan mode (default true; settings saved
-  // before the key existed read as true via the registry default).
+  // Start new Claude Code CLI sessions in plan mode (default false, so new
+  // sessions open in bypass permissions).
   const [cliStartInPlanMode, setCliStartInPlanMode] = useAtom(
     settingAtom('app.claudeCliStartInPlanMode'),
   ) as [boolean, (value: boolean) => void];

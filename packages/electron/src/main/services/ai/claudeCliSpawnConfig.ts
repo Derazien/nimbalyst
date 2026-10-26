@@ -132,7 +132,7 @@ export interface ClaudeCliSpawnInput {
   dangerouslySkipPermissions?: boolean;
   /**
    * Start NEW sessions in the CLI's plan mode (`--permission-mode plan`). Resumed
-   * sessions never get the flag: the CLI restores the mode it stored. When
+   * sessions never get the flag; with the skip set they start in bypass. When
    * `dangerouslySkipPermissions` is also set, the skip becomes
    * `--allow-dangerously-skip-permissions` so bypass stays reachable (Shift+Tab and
    * the plan-approval dialog) without the session starting in it. Defaults to false.
@@ -315,14 +315,13 @@ export function buildClaudeCliSpawnConfig(input: ClaudeCliSpawnInput): ClaudeCli
   // Plan-mode start (slice C): a NEW session with startInPlanMode begins in plan.
   // When the project also skips permissions we use `--allow-dangerously-skip-permissions`
   // instead (bypass joins the Shift+Tab cycle and the plan-approval dialog offers it,
-  // but the session does not start in it). A RESUMED session never forces a mode:
-  // the CLI restores its own, and the allow flag keeps bypass reachable.
+  // but the session does not start in it). A RESUMED session never starts in plan;
+  // with the skip it starts in bypass, because the CLI does not restore its stored
+  // mode on resume and would otherwise open in the user's default (often auto).
   const resuming = Boolean(input.resumeSessionId || input.continueSession);
   const startPlan = Boolean(input.startInPlanMode) && !resuming;
   if (input.dangerouslySkipPermissions) {
-    if (resuming) {
-      args.push('--allow-dangerously-skip-permissions');
-    } else if (startPlan) {
+    if (startPlan) {
       args.push('--permission-mode', 'plan', '--allow-dangerously-skip-permissions');
     } else {
       args.push('--dangerously-skip-permissions');

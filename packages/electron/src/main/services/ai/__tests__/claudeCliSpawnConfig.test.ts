@@ -309,8 +309,8 @@ describe('buildClaudeCliSpawnConfig', () => {
   it.each([
     { name: 'skip + new + plan on', skip: true, resume: false, plan: true, flags: ['--permission-mode', 'plan', '--allow-dangerously-skip-permissions'] },
     { name: 'skip + new + plan off', skip: true, resume: false, plan: false, flags: ['--dangerously-skip-permissions'] },
-    { name: 'skip + resume (plan on)', skip: true, resume: true, plan: true, flags: ['--allow-dangerously-skip-permissions'] },
-    { name: 'skip + resume (plan off)', skip: true, resume: true, plan: false, flags: ['--allow-dangerously-skip-permissions'] },
+    { name: 'skip + resume (plan on) starts in bypass', skip: true, resume: true, plan: true, flags: ['--dangerously-skip-permissions'] },
+    { name: 'skip + resume (plan off) starts in bypass', skip: true, resume: true, plan: false, flags: ['--dangerously-skip-permissions'] },
     { name: 'ask + new + plan on', skip: false, resume: false, plan: true, flags: ['--permission-mode', 'plan'] },
     { name: 'ask + new + plan off', skip: false, resume: false, plan: false, flags: [] },
     { name: 'ask + resume (plan on)', skip: false, resume: true, plan: true, flags: [] },

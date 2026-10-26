@@ -223,8 +223,8 @@ function buildLauncher(): ClaudeCliSessionLauncher {
     // project so trust is shared.
     getPermissionMode: (workspacePath: string) =>
       getPermissionService().getPermissionMode(workspacePath),
-    // New sessions start in the CLI's plan mode unless the user turned it off.
-    getStartInPlanMode: () => getSettingsService().get('app.claudeCliStartInPlanMode') !== false,
+    // New sessions start in the CLI's plan mode only when the user turned it on.
+    getStartInPlanMode: () => getSettingsService().get('app.claudeCliStartInPlanMode') === true,
     // Live Shift+Tab mode: seeded from the spawn flags, then read off the screen.
     modeTracker: getClaudeCliModeTracker(),
     // NIM-845: load extension Claude-plugins so namespaced slash commands

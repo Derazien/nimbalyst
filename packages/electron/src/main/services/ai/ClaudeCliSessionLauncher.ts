@@ -109,7 +109,7 @@ export interface ClaudeCliSessionLauncherDeps {
   getPermissionMode?: (workspacePath: string) => 'ask' | 'allow-all' | 'bypass-all' | null;
   /**
    * Whether NEW sessions start in the CLI's plan mode (`--permission-mode plan`).
-   * In production this is the `app.claudeCliStartInPlanMode` setting (default true).
+   * In production this is the `app.claudeCliStartInPlanMode` setting (default false).
    * Omit → false (the pre-plan-mode behaviour). Never applied to a resumed session.
    */
   getStartInPlanMode?: () => boolean;
