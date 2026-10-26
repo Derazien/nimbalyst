@@ -66,6 +66,22 @@ describe.each(['pglite', 'sqlite'] as const)('ExternalSessionPersistence (%s)', 
     expect(await ids()).toEqual(['a', 'b', 'c', 'd', 'sidecar']);
   });
 
+  it('accepts a Windows NTFS file id above 2^53 and round-trips it across restart', async () => {
+    // Node reports NTFS file ids as doubles; once the record's sequence number is high the id passes
+    // Number.MAX_SAFE_INTEGER. Real id from a Claude Code transcript on Windows (exact: 610237749508985725).
+    const ntfs = (byteOffset: number) => ({ ...cursor(byteOffset), inode: 610237749508985700 });
+    expect(Number.isSafeInteger(ntfs(0).inode)).toBe(false);
+    await append(null, ntfs(100), ['a']);
+    await append(ntfs(100), ntfs(200), ['b']);
+    await db.close();
+    await open();
+    expect(await persistence.getCursor(ref)).toEqual(ntfs(200));
+    expect(await ids()).toEqual(['a', 'b']);
+    for (const inode of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      await expect(append(ntfs(200), { ...cursor(300), inode }, ['bad'])).rejects.toThrow(/invalid external session cursor/i);
+    }
+  });
+
   it('round-trips fallback call authority across restart and includes it in canonical cursor comparisons', async () => {
     const baseline = cursor(100);
     const baselineJson = JSON.stringify({ byteOffset: 100, lastEntryUuid: 'entry-100', fileSize: 100, inode: 1 });

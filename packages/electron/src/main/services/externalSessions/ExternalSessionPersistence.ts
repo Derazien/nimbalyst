@@ -110,9 +110,12 @@ function encodeCursor(cursor: ExternalCursor): string {
 }
 
 function normalizeCursor(cursor: ExternalCursor): ExternalCursor {
+  // inode is only compared for equality to notice a replaced file. On Windows, Node reports NTFS file ids
+  // as doubles that pass 2^53 once the record's sequence number is high; the same file always rounds to
+  // the same value, so any non-negative integer is accepted rather than only safe ones.
   if (!Number.isSafeInteger(cursor.byteOffset) || cursor.byteOffset < 0 ||
       !Number.isSafeInteger(cursor.fileSize) || cursor.fileSize < cursor.byteOffset ||
-      (cursor.inode !== null && (!Number.isSafeInteger(cursor.inode) || cursor.inode < 0)) ||
+      (cursor.inode !== null && (!Number.isInteger(cursor.inode) || cursor.inode < 0)) ||
       (cursor.lastEntryUuid !== null && typeof cursor.lastEntryUuid !== 'string')) {
     throw new Error('Invalid external session cursor');
   }
