@@ -20,6 +20,10 @@ vi.mock('@nimbalyst/runtime/ai/server', () => ({
   SessionManager: class { async initialize() {} },
   ProviderFactory: { destroyProvider: (id: string) => destroyProvider(id) },
 }));
+const destroyTerminal = vi.fn(async (_id: string) => {});
+vi.mock('../TerminalSessionManager', () => ({
+  getTerminalSessionManager: () => ({ destroyTerminal: (id: string) => destroyTerminal(id) }),
+}));
 vi.mock('@nimbalyst/runtime/ai/server/types', () => ({
   ModelIdentifier: { parse: (id: string) => ({ provider: id.split(':')[0], model: id.split(':')[1], combined: id }) },
 }));
@@ -94,6 +98,8 @@ describe('archive_session and unarchive_session', () => {
     sent.length = 0;
     openWindows.length = 0;
     destroyProvider.mockReset();
+    destroyTerminal.mockReset();
+    destroyTerminal.mockResolvedValue(undefined);
     vi.mocked(AISessionsRepository.updateMetadata).mockReset();
     vi.mocked(AISessionsRepository.get).mockResolvedValue(session() as never);
   });
@@ -106,6 +112,16 @@ describe('archive_session and unarchive_session', () => {
     expect(out.providerReleased).toBe(true);
     expect(AISessionsRepository.updateMetadata).toHaveBeenCalledWith('child-x', { isArchived: true });
     expect(destroyProvider).toHaveBeenCalledWith('child-x');
+    // #903: the CLI terminal must go too, or the claude process tree keeps running.
+    expect(destroyTerminal).toHaveBeenCalledWith('child-x');
+  });
+
+  it('reports the runtime as not fully released when the terminal will not die', async () => {
+    destroyTerminal.mockRejectedValue(new Error('pty stuck'));
+    const out = JSON.parse(await svc().setSessionArchivedJson(CALLER, HOME, 'child-x', true));
+    expect(out.ok).toBe(true);
+    expect(out.archived).toBe(true);
+    expect(out.providerReleased).toBe(false);
   });
 
   it('unarchives without starting a provider, leaving that to the next prompt', async () => {

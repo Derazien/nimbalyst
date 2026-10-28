@@ -26,7 +26,7 @@ describe('archive session provider lifecycle', () => {
       'archive:session-b',
       'destroy:session-b',
     ]);
-    expect(result).toEqual({ archiveFailures: 0, providerCleanupFailures: 0 });
+    expect(result).toEqual({ archiveFailures: 0, providerCleanupFailures: 0, terminalCleanupFailures: 0 });
   });
 
   it('does not destroy a provider when that session failed to archive', async () => {
@@ -46,7 +46,7 @@ describe('archive session provider lifecycle', () => {
     expect(destroyProvider).toHaveBeenCalledTimes(1);
     expect(destroyProvider).toHaveBeenCalledWith('session-ok');
     expect(onArchiveError).toHaveBeenCalledWith('session-failed', expect.any(Error));
-    expect(result).toEqual({ archiveFailures: 1, providerCleanupFailures: 0 });
+    expect(result).toEqual({ archiveFailures: 1, providerCleanupFailures: 0, terminalCleanupFailures: 0 });
   });
 
   it('bounds provider cleanup errors and continues archiving the remaining sessions', async () => {
@@ -65,7 +65,82 @@ describe('archive session provider lifecycle', () => {
 
     expect(destroyProvider).toHaveBeenCalledTimes(2);
     expect(onProviderCleanupError).toHaveBeenCalledWith('session-a', expect.any(Error));
-    expect(result).toEqual({ archiveFailures: 0, providerCleanupFailures: 1 });
+    expect(result).toEqual({ archiveFailures: 0, providerCleanupFailures: 1, terminalCleanupFailures: 0 });
+  });
+
+  it('releases the terminal after a successful archive write (#903)', async () => {
+    const events: string[] = [];
+    const result = await archiveSessionsAndDestroyProviders(['cli-a', 'cli-b'], {
+      archiveSession: vi.fn(async (id) => {
+        events.push(`archive:${id}`);
+      }),
+      destroyProvider: vi.fn((id) => {
+        events.push(`provider:${id}`);
+      }),
+      destroyTerminal: vi.fn(async (id) => {
+        events.push(`terminal:${id}`);
+      }),
+    });
+
+    expect(events).toEqual([
+      'archive:cli-a',
+      'provider:cli-a',
+      'terminal:cli-a',
+      'archive:cli-b',
+      'provider:cli-b',
+      'terminal:cli-b',
+    ]);
+    expect(result).toEqual({ archiveFailures: 0, providerCleanupFailures: 0, terminalCleanupFailures: 0 });
+  });
+
+  it('does not release the terminal when the archive write fails', async () => {
+    const destroyTerminal = vi.fn(async () => {});
+    const result = await archiveSessionsAndDestroyProviders(['bad', 'good'], {
+      archiveSession: vi.fn(async (id) => {
+        if (id === 'bad') throw new Error('database unavailable');
+      }),
+      destroyProvider: vi.fn(),
+      destroyTerminal,
+    });
+
+    expect(destroyTerminal).toHaveBeenCalledTimes(1);
+    expect(destroyTerminal).toHaveBeenCalledWith('good');
+    expect(result.archiveFailures).toBe(1);
+  });
+
+  it('bounds a throwing destroyTerminal: other sessions and the provider release still run', async () => {
+    const destroyProvider = vi.fn();
+    const onTerminalCleanupError = vi.fn();
+    const destroyTerminal = vi.fn(async (id: string) => {
+      if (id === 'a') throw new Error('pty already gone');
+    });
+
+    const result = await archiveSessionsAndDestroyProviders(['a', 'b'], {
+      archiveSession: vi.fn(async () => {}),
+      destroyProvider,
+      destroyTerminal,
+      onTerminalCleanupError,
+    });
+
+    expect(destroyProvider).toHaveBeenCalledWith('a');
+    expect(destroyProvider).toHaveBeenCalledWith('b');
+    expect(destroyTerminal).toHaveBeenCalledWith('b');
+    expect(onTerminalCleanupError).toHaveBeenCalledWith('a', expect.any(Error));
+    expect(result).toEqual({ archiveFailures: 0, providerCleanupFailures: 0, terminalCleanupFailures: 1 });
+  });
+
+  it('still releases the terminal when the provider release throws', async () => {
+    const destroyTerminal = vi.fn(async () => {});
+    const result = await archiveSessionsAndDestroyProviders(['a'], {
+      archiveSession: vi.fn(async () => {}),
+      destroyProvider: vi.fn(() => {
+        throw new Error('provider cleanup failed');
+      }),
+      destroyTerminal,
+    });
+
+    expect(destroyTerminal).toHaveBeenCalledWith('a');
+    expect(result).toEqual({ archiveFailures: 0, providerCleanupFailures: 1, terminalCleanupFailures: 0 });
   });
 
   it('provides a bounded exact-session cleanup primitive for ordinary archive paths', () => {

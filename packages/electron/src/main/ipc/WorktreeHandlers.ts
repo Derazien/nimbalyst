@@ -91,11 +91,20 @@ async function archiveSessionsForWorktree(
       await AISessionsRepository.updateMetadata(sessionId, { isArchived: true });
     },
     destroyProvider: (sessionId) => ProviderFactory.destroyProvider(sessionId),
+    // #903: also covers the already-archived reconcile path, which skips the terminal sweep.
+    destroyTerminal: (sessionId) => getTerminalSessionManager().destroyTerminal(sessionId),
     onArchiveError: (sessionId, error) => {
       archiveLogger.error('Failed to archive session', { sessionId, worktreeId, error });
     },
     onProviderCleanupError: (sessionId, error) => {
       archiveLogger.error('Failed to destroy archived session provider', {
+        sessionId,
+        worktreeId,
+        error,
+      });
+    },
+    onTerminalCleanupError: (sessionId, error) => {
+      archiveLogger.error('Failed to destroy archived session terminal', {
         sessionId,
         worktreeId,
         error,

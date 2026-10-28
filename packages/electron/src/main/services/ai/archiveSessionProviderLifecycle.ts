@@ -1,13 +1,22 @@
 export interface ArchiveSessionProviderLifecycleDeps {
   archiveSession(sessionId: string): Promise<void>;
   destroyProvider(sessionId: string): void;
+  /**
+   * Optional: release the PTY backing a `claude-code-cli` session (#903). Without
+   * it the CLI process tree outlives the archived session. A no-op for a session
+   * that never had a terminal, so callers can pass it for every session.
+   */
+  destroyTerminal?(sessionId: string): Promise<void>;
   onArchiveError?(sessionId: string, error: unknown): void;
   onProviderCleanupError?(sessionId: string, error: unknown): void;
+  onTerminalCleanupError?(sessionId: string, error: unknown): void;
 }
 
 export interface ArchiveSessionProviderLifecycleResult {
   archiveFailures: number;
   providerCleanupFailures: number;
+  /** Always 0 when no `destroyTerminal` dep was supplied. */
+  terminalCleanupFailures: number;
 }
 
 /**
@@ -81,9 +90,11 @@ export async function releaseSessionRuntime(
 }
 
 /**
- * Archive an exact set of sessions and then release only their providers.
- * A failed archive does not kill that session's live provider; other sessions
- * continue independently and both failure classes are reported separately.
+ * Archive an exact set of sessions and then release only their providers and,
+ * when `destroyTerminal` is supplied, their terminals (#903).
+ * A failed archive does not kill that session's live provider or terminal;
+ * other sessions continue independently and each failure class is reported
+ * separately. A throwing release never blocks the other release or session.
  */
 export async function archiveSessionsAndDestroyProviders(
   sessionIds: Iterable<string>,
@@ -91,6 +102,7 @@ export async function archiveSessionsAndDestroyProviders(
 ): Promise<ArchiveSessionProviderLifecycleResult> {
   let archiveFailures = 0;
   let providerCleanupFailures = 0;
+  let terminalCleanupFailures = 0;
 
   for (const sessionId of new Set(sessionIds)) {
     try {
@@ -107,7 +119,16 @@ export async function archiveSessionsAndDestroyProviders(
       deps.onProviderCleanupError,
     );
     if (!cleaned) providerCleanupFailures++;
+
+    if (deps.destroyTerminal) {
+      try {
+        await deps.destroyTerminal(sessionId);
+      } catch (error) {
+        terminalCleanupFailures++;
+        deps.onTerminalCleanupError?.(sessionId, error);
+      }
+    }
   }
 
-  return { archiveFailures, providerCleanupFailures };
+  return { archiveFailures, providerCleanupFailures, terminalCleanupFailures };
 }

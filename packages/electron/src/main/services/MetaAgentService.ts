@@ -50,6 +50,7 @@ import {
   readCrossProjectFeatureEnabled,
 } from './crossWorkspaceMessaging';
 import { archiveSessionsAndDestroyProviders } from './ai/archiveSessionProviderLifecycle';
+import { getTerminalSessionManager } from './TerminalSessionManager';
 import { resolveEnabledSelectionFromSettings } from './ai/sessionProviderGuard';
 import { ProviderFactory } from '@nimbalyst/runtime/ai/server';
 
@@ -1876,11 +1877,16 @@ export class MetaAgentService {
         await AISessionsRepository.updateMetadata(id, { isArchived: true });
       },
       destroyProvider: (id) => ProviderFactory.destroyProvider(id),
+      // #903: the provider alone leaves a claude-code-cli process tree running.
+      destroyTerminal: (id) => getTerminalSessionManager().destroyTerminal(id),
       onArchiveError: (id, error) => {
         console.error(`[MetaAgentService] archive_session: archive write failed for ${id}:`, error);
       },
       onProviderCleanupError: (id, error) => {
         console.error(`[MetaAgentService] archive_session: provider cleanup failed for ${id}:`, error);
+      },
+      onTerminalCleanupError: (id, error) => {
+        console.error(`[MetaAgentService] archive_session: terminal cleanup failed for ${id}:`, error);
       },
     });
 
@@ -1896,9 +1902,9 @@ export class MetaAgentService {
       changed: true,
       // Reported rather than swallowed: the session IS archived either way, but a provider that
       // refused to die is still holding what it held, which is the half a caller cares about.
-      providerReleased: result.providerCleanupFailures === 0,
+      providerReleased: result.providerCleanupFailures === 0 && result.terminalCleanupFailures === 0,
       message:
-        result.providerCleanupFailures === 0
+        result.providerCleanupFailures === 0 && result.terminalCleanupFailures === 0
           ? 'Session archived and its runtime released.'
           : 'Session archived, but its provider did not shut down cleanly and may still be holding resources.',
     });

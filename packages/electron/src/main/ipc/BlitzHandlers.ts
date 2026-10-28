@@ -27,6 +27,9 @@ import {
 } from '@nimbalyst/runtime/ai/modelConstants';
 import { AnalyticsService } from '../services/analytics/AnalyticsService';
 import { archiveWorktree } from './WorktreeHandlers';
+import { ProviderFactory } from '@nimbalyst/runtime/ai/server';
+import { getTerminalSessionManager } from '../services/TerminalSessionManager';
+import { releaseSessionRuntime } from '../services/ai/archiveSessionProviderLifecycle';
 import type { BlitzCreateResult, WorktreeCreateResult } from '../../shared/ipc/types';
 
 const logger = log.scope('BlitzHandlers');
@@ -481,6 +484,17 @@ export function registerBlitzHandlers(): void {
 
       // Archive the blitz session itself
       await AISessionsRepository.updateMetadata(blitzId, { isArchived: true });
+      // #903: child sessions are released by archiveWorktree above; release the blitz row's own runtime too.
+      await releaseSessionRuntime(blitzId, {
+        destroyProvider: (id) => ProviderFactory.destroyProvider(id),
+        destroyTerminal: (id) => getTerminalSessionManager().destroyTerminal(id),
+        onProviderCleanupError: (id, cleanupError) => {
+          logger.warn('Failed to destroy provider for archived blitz session', { id, error: cleanupError });
+        },
+        onTerminalCleanupError: (id, cleanupError) => {
+          logger.warn('Failed to destroy terminal for archived blitz session', { id, error: cleanupError });
+        },
+      });
 
       if (errors.length > 0) {
         logger.warn('Blitz archived with some worktree failures', { blitzId, errors });
