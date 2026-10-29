@@ -35,8 +35,26 @@ function descriptorPath(): string {
   return path.join(app.getPath('userData'), 'mcp-endpoint.json');
 }
 
+/**
+ * True when this process may own the descriptor: it holds the single-instance lock, or the app runs in
+ * multi-instance mode (dev with NIMBALYST_USER_DATA_DIR, Playwright). A second instance launched while one runs
+ * (it stays alive a moment to relay an open-file) must not write over the running instance's descriptor.
+ */
+function ownsDescriptor(): boolean {
+  if (process.env.NIMBALYST_USER_DATA_DIR || process.env.PLAYWRIGHT) return true;
+  try {
+    return app.hasSingleInstanceLock();
+  } catch {
+    return true;
+  }
+}
+
 /** Write (or rewrite) the endpoint descriptor. Best-effort: never throws. */
 export function writeMcpEndpointDescriptor(params: WriteDescriptorParams): void {
+  if (!ownsDescriptor()) {
+    logger.mcp.info('Not writing the MCP endpoint descriptor: another Nimbalyst instance holds the lock');
+    return;
+  }
   try {
     const payload = {
       pid: process.pid,
@@ -61,10 +79,22 @@ export function writeMcpEndpointDescriptor(params: WriteDescriptorParams): void 
   }
 }
 
-/** Remove the descriptor on quit. Best-effort: never throws. */
+/**
+ * Remove the descriptor on quit, but only when it is this process's own (its pid). A quitting second instance
+ * must not delete the running instance's descriptor (2026-10-28: that left out-of-process tools with no endpoint
+ * until the next restart). Best-effort: never throws.
+ */
 export function removeMcpEndpointDescriptor(): void {
   try {
-    fs.rmSync(descriptorPath(), { force: true });
+    const file = descriptorPath();
+    let owner: unknown;
+    try {
+      owner = JSON.parse(fs.readFileSync(file, 'utf8'))?.pid;
+    } catch {
+      return; // no file, or not readable: nothing of ours to remove
+    }
+    if (owner !== process.pid) return;
+    fs.rmSync(file, { force: true });
   } catch {
     /* non-fatal */
   }
