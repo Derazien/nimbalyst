@@ -180,6 +180,30 @@ async function resolveClaudeCliEffortLevel(
  * `undefined` so the launcher falls back to the global setting. Best-effort: a lookup
  * failure must not block the launch.
  */
+/**
+ * The Claude conversation an imported session continues. An external transcript
+ * imported by "follow external agent sessions" gets a fresh Nimbalyst row id and
+ * keeps its own Claude session id in providerSessionId; without `--resume` of
+ * that id the CLI starts a new conversation that cannot see the history. A native
+ * CLI session runs under its row id, so nothing is returned for it.
+ */
+async function readImportedClaudeSessionId(sessionId: string): Promise<string | undefined> {
+  try {
+    const { AISessionsRepository } = await import(
+      '@nimbalyst/runtime/storage/repositories/AISessionsRepository'
+    );
+    const session = await AISessionsRepository.get(sessionId);
+    const original = session?.providerSessionId;
+    const imported = (session?.providerConfig as { imported?: unknown } | undefined)?.imported === true;
+    return imported && typeof original === 'string' && original.length > 0 && original !== sessionId
+      ? original
+      : undefined;
+  } catch (err) {
+    console.warn('[ClaudeCliLauncher] failed to read the imported Claude session id:', err);
+    return undefined;
+  }
+}
+
 async function readSessionStartInPlanModeOverride(sessionId: string): Promise<boolean | undefined> {
   try {
     const { AISessionsRepository } = await import(
@@ -371,13 +395,17 @@ export async function ensureClaudeCliSession(
       // fresh launch so the global plan-mode default only applies to manual sessions.
       const startInPlanMode = await readSessionStartInPlanModeOverride(input.sessionId);
 
+      // An explicit resume id wins; otherwise an imported session resumes the
+      // Claude conversation it was imported from.
+      const resumeSessionId = input.resumeSessionId ?? (await readImportedClaudeSessionId(input.sessionId));
+
       // Busy-time prompts go into the CLI's own queue; it needs to know which
       // jsonl this CLI writes to see when the CLI takes them.
       registerClaudeCliTerminalQueue({
         sessionId: input.sessionId,
         workspacePath: input.workspacePath,
         cwd: resolvedCwd ?? input.workspacePath,
-        cliSessionId: input.resumeSessionId ?? input.sessionId,
+        cliSessionId: resumeSessionId ?? input.sessionId,
       });
 
       await launcher.launch({
@@ -385,7 +413,7 @@ export async function ensureClaudeCliSession(
         workspacePath: input.workspacePath,
         cwd: resolvedCwd,
         model: input.model,
-        resumeSessionId: input.resumeSessionId,
+        resumeSessionId,
         effortLevel,
         startInPlanMode,
         cols: input.cols,

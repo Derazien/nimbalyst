@@ -56,6 +56,8 @@ describe('claudeCliLauncherSingleton', () => {
     worktree?: { id: string; path: string } | null;
     /** Metadata the mocked session row carries. */
     metadata?: Record<string, unknown>;
+    /** Other fields the mocked session row carries. */
+    session?: Record<string, unknown>;
   }) {
     const claudeInstalled = opts?.claudeInstalled ?? true;
     const worktree = opts?.worktree ?? null;
@@ -116,7 +118,7 @@ describe('claudeCliLauncherSingleton', () => {
     // worktreeId iff `worktree` is set; the store maps it to the on-disk path.
     vi.doMock('@nimbalyst/runtime/storage/repositories/AISessionsRepository', () => ({
       AISessionsRepository: {
-        get: vi.fn(async () => ({ worktreeId: worktree?.id ?? null, metadata: opts?.metadata })),
+        get: vi.fn(async () => ({ worktreeId: worktree?.id ?? null, metadata: opts?.metadata, ...opts?.session })),
       },
     }));
     vi.doMock('../../WorktreeStore', () => ({
@@ -240,6 +242,33 @@ describe('claudeCliLauncherSingleton', () => {
     const h = await loadHarness();
     await h.ensureClaudeCliSession({ sessionId: 'session-1', workspacePath: '/work' });
     expect(h.launch.mock.calls[0][0].startInPlanMode).toBeUndefined();
+  }, 20000);
+
+  // An imported transcript keeps its own Claude session id in providerSessionId;
+  // the Nimbalyst row id is a fresh uuid. Continuing it must resume that
+  // conversation, or the CLI starts a new one that cannot see the history.
+  it('resumes the original Claude conversation when continuing an imported session', async () => {
+    const h = await loadHarness({
+      session: { providerSessionId: 'claude-original', providerConfig: { imported: true } },
+    });
+    await h.ensureClaudeCliSession({ sessionId: 'nimbalyst-row', workspacePath: '/work' });
+    expect(h.launch.mock.calls[0][0]).toMatchObject({ sessionId: 'nimbalyst-row', resumeSessionId: 'claude-original' });
+    const { registerClaudeCliTerminalQueue } = await import('../claudeCliTerminalQueueSingleton');
+    expect(vi.mocked(registerClaudeCliTerminalQueue).mock.calls.at(-1)![0]).toMatchObject({ cliSessionId: 'claude-original' });
+  }, 20000);
+
+  it('keeps a native session on its own id', async () => {
+    const native = await loadHarness({ session: { providerSessionId: null } });
+    await native.ensureClaudeCliSession({ sessionId: 'session-1', workspacePath: '/work' });
+    expect(native.launch.mock.calls[0][0].resumeSessionId).toBeUndefined();
+  }, 20000);
+
+  it('honours an explicit resume id over the imported one', async () => {
+    const explicit = await loadHarness({
+      session: { providerSessionId: 'claude-original', providerConfig: { imported: true } },
+    });
+    await explicit.ensureClaudeCliSession({ sessionId: 'nimbalyst-row', workspacePath: '/work', resumeSessionId: 'chosen' });
+    expect(explicit.launch.mock.calls[0][0].resumeSessionId).toBe('chosen');
   }, 20000);
 
   it('leaves the requested cwd unchanged for a non-worktree session', async () => {
