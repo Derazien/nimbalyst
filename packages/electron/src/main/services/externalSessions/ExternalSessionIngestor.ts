@@ -305,11 +305,11 @@ export class ExternalSessionIngestor {
       await this.deps.sessions.create({
         id: sessionId,
         workspaceId: route.workspacePath,
-        provider: ref.providerId,
+        provider: importedProvider(ref),
         providerSessionId: ref.externalId,
         sessionType: "session",
         title: createdTitle,
-        model: batch.model ?? ref.model ?? DEFAULT_MODELS[ref.providerId],
+        model: batch.model ?? ref.model ?? defaultModelFor(importedProvider(ref)),
         providerConfig: {
           imported: true,
           importedAt: Date.now(),
@@ -417,14 +417,32 @@ export class ExternalSessionIngestor {
         : {}),
     };
     const titleChanged = canUpdateTitle && incomingTitle !== session?.title;
-    const modelChanged = !!batch.model && batch.model !== session?.model;
+    // A row imported before the source could tell a CLI transcript from an SDK
+    // one sits on the wrong provider of the same family; move it so continuing
+    // it resumes the agent that wrote it.
+    const provider = importedProvider(ref);
+    const providerChanged =
+      !!session &&
+      session.provider !== provider &&
+      isImportedSessionConfig(session.providerConfig) &&
+      providerSessionAliases(provider).includes(session.provider);
+    const nextModel =
+      batch.model ??
+      (providerChanged
+        ? rebaseModel(session!.model, session!.provider, provider)
+        : undefined);
+    const modelChanged = !!nextModel && nextModel !== session?.model;
     const metadataChanged =
-      Object.keys(metadata).length > 0 || titleChanged || modelChanged;
+      Object.keys(metadata).length > 0 ||
+      titleChanged ||
+      modelChanged ||
+      providerChanged;
     if (metadataChanged) {
       await this.deps.sessions.updateMetadata(sessionId, {
         ...(Object.keys(metadata).length ? { metadata } : {}),
         ...(titleChanged ? { title: incomingTitle } : {}),
-        ...(modelChanged ? { model: batch.model } : {}),
+        ...(providerChanged ? { provider } : {}),
+        ...(modelChanged ? { model: nextModel } : {}),
       });
     }
     if (
@@ -592,4 +610,23 @@ function isImportedSessionConfig(config: unknown): boolean {
     "imported" in config &&
     config.imported === true
   );
+}
+
+/** The provider an imported row runs on: the source's choice, else its family. */
+function importedProvider(ref: ExternalSessionRef): string {
+  return ref.sessionProvider ?? ref.providerId;
+}
+
+function defaultModelFor(provider: string): string | undefined {
+  return (DEFAULT_MODELS as Record<string, string | undefined>)[provider];
+}
+
+/** Keep the model choice when a row moves between aliases of one provider. */
+function rebaseModel(
+  model: string | undefined,
+  from: string,
+  to: string
+): string | undefined {
+  if (model?.startsWith(`${from}:`)) return `${to}:${model.slice(from.length + 1)}`;
+  return defaultModelFor(to);
 }

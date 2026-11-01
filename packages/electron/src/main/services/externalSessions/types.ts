@@ -12,6 +12,9 @@ export interface ExternalSessionRef {
   title?: string;
   titleKind?: "fallback" | "generated" | "explicit";
   model?: string;
+  /** The Nimbalyst provider an imported row runs on when it differs from the
+   * source family, e.g. "claude-code-cli" for a Claude Code CLI transcript. */
+  sessionProvider?: string;
   parentToolUseId?: string;
   /** A fork's header identifies the copied parent metadata immediately after it. */
   codexInheritedMeta?: { id: string; byteOffset: number };

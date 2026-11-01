@@ -9,6 +9,7 @@ import {
 import {
   entryToMessage,
   importedClaudeCodeModel,
+  importedClaudeCodeProvider,
   inlinePersistedOutputsUsing,
   PERSISTED_OUTPUT_PATTERN,
 } from "./claudeCodeImportCodec";
@@ -347,8 +348,12 @@ export class ClaudeCodeSource implements ExternalSessionSource {
           0,
           head.cursor.byteOffset
         );
+    const sessionProvider = importedClaudeCodeProvider(
+      entries as ClaudeCodeEntry[]
+    );
     const ref: ExternalSessionRef = {
       providerId: this.providerId,
+      sessionProvider,
       externalId,
       workspacePath: path.resolve(cwd),
       filePath,
@@ -356,7 +361,10 @@ export class ClaudeCodeSource implements ExternalSessionSource {
       createdAt: validTime(entries[0]?.timestamp),
       title,
       titleKind: this.titleKind(filePath, title),
-      model: importedClaudeCodeModel(entries as ClaudeCodeEntry[]),
+      model: importedClaudeCodeModel(
+        entries as ClaudeCodeEntry[],
+        sessionProvider
+      ),
       ...(parentToolUseId ? { parentToolUseId } : {}),
     };
     this.headers.set(ref, head.cursor);
@@ -489,7 +497,8 @@ export class ClaudeCodeSource implements ExternalSessionSource {
       title,
       titleKind: this.titleKind(ref.filePath, title),
       model: importedClaudeCodeModel(
-        page.entries.map((e) => e.value as ClaudeCodeEntry)
+        page.entries.map((e) => e.value as ClaudeCodeEntry),
+        ref.sessionProvider === "claude-code" ? "claude-code" : "claude-code-cli"
       ),
     };
   }

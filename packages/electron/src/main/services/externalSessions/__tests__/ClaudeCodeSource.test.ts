@@ -530,3 +530,36 @@ it("pairs initial first-prompt titles with fallback provenance", async () => {
     titleKind: "fallback",
   });
 });
+it("runs headless, interactive and unstamped transcripts on the CLI provider and keeps only Agent SDK ones on the SDK provider", async () => {
+  // `claude -p` stamps entrypoint "sdk-cli", the terminal stamps "cli", and the
+  // Agent SDK stamps "sdk-ts" or "sdk-py". Continuing a CLI run on the SDK
+  // provider would resume it on the wrong agent, so only an explicit SDK stamp
+  // keeps "claude-code".
+  const cases: Array<[string, string | undefined, string]> = [
+    ["headless", "sdk-cli", "claude-code-cli"],
+    ["interactive", "cli", "claude-code-cli"],
+    ["unstamped", undefined, "claude-code-cli"],
+    ["sdk-run", "sdk-ts", "claude-code"],
+  ];
+  for (const [id, entrypoint] of cases) {
+    const stamp = entrypoint ? { entrypoint } : {};
+    await write(path.join(dir, encodeWorkspaceDir(cwd), `${id}.jsonl`), [
+      { ...entry(`${id}-u`), sessionId: id, ...stamp },
+      {
+        type: "assistant",
+        sessionId: id,
+        uuid: `${id}-a`,
+        cwd,
+        timestamp,
+        ...stamp,
+        message: { role: "assistant", model: "claude-opus-4-7", content: [{ type: "text", text: "hi" }] },
+      },
+    ]);
+  }
+  const refs = await source.discover(cwd);
+  for (const [id, , provider] of cases) {
+    const ref = refs.find((r) => r.externalId === id)!;
+    expect(ref).toMatchObject({ providerId: "claude-code", sessionProvider: provider, model: `${provider}:opus` });
+    expect((await source.readSince(ref, null)).model).toBe(`${provider}:opus`);
+  }
+});

@@ -367,7 +367,8 @@ describe("Claude Code v2 sync", () => {
     expect(results[0].success).toBe(true);
 
     // Session row should preserve the Claude Code session id verbatim so the
-    // SDK can resume it.
+    // CLI can resume it. An unstamped transcript is a CLI run, so it continues on
+    // the CLI provider, never the Agent SDK one.
     const createdSession = (await realSessions.get(
       (
         await db.query<{ id: string }>("SELECT id FROM ai_sessions")
@@ -379,7 +380,7 @@ describe("Claude Code v2 sync", () => {
       )
     ).rows;
     expect(createdSession.providerSessionId).toBe(SESSION_ID);
-    expect(createdSession.provider).toBe("claude-code");
+    expect(createdSession.provider).toBe("claude-code-cli");
 
     // The full external tool-result content should have been inlined.
     const inlined = stored.find((m) =>

@@ -358,6 +358,30 @@ describe("ExternalSessionIngestor", () => {
     await h.ingestor.stop();
     expect((h.ingestor as any).provisional.size).toBe(0);
   });
+  it("creates imported Claude Code CLI sessions on the CLI provider and moves an earlier SDK-provider import onto it", async () => {
+    const h = harness();
+    const cli: ExternalSessionRef = { ...ref, sessionProvider: "claude-code-cli" };
+    h.persistence.resolveSessionId.mockResolvedValueOnce(null as never);
+    await h.ingestor.ingest(h.source, cli, { workspacePath: "/workspace" });
+    expect(h.sessions.create).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "claude-code-cli", model: "claude-code-cli:opus", providerSessionId: "external" })
+    );
+
+    // A row imported before this fix sits on the SDK provider; typing into it
+    // would continue a CLI run on the wrong agent. The next read moves it.
+    h.sessions.updateMetadata.mockClear();
+    Object.assign(h.session, { provider: "claude-code", model: "claude-code:sonnet" });
+    await h.ingestor.ingest(h.source, cli, { workspacePath: "/workspace" });
+    expect(h.sessions.updateMetadata).toHaveBeenCalledWith(
+      "local",
+      expect.objectContaining({ provider: "claude-code-cli", model: "claude-code-cli:sonnet" })
+    );
+
+    // A transcript the Agent SDK wrote stays where it is.
+    h.sessions.updateMetadata.mockClear();
+    await h.ingestor.ingest(h.source, { ...ref, sessionProvider: "claude-code" }, { workspacePath: "/workspace" });
+    for (const [, payload] of h.sessions.updateMetadata.mock.calls) expect(payload).not.toHaveProperty("provider");
+  });
   it("continues an external batch across unrelated local streaming events without per-token reads", async () => {
     const h = harness();
     h.sessions.get.mockImplementation(async (id) =>

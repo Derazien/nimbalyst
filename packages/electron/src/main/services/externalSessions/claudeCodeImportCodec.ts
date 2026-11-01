@@ -79,17 +79,38 @@ async function loadPersistedOutput(text: string): Promise<string | null> {
  * as a `claude-code:<variant>` string; undefined when none carry a model.
  */
 export function importedClaudeCodeModel(
-  entries: ClaudeCodeEntry[]
+  entries: ClaudeCodeEntry[],
+  provider: ImportedClaudeCodeProvider = "claude-code-cli"
 ): string | undefined {
   for (let i = entries.length - 1; i >= 0; i--) {
     const raw = entries[i]?.message?.model;
     if (typeof raw !== "string" || raw.length === 0) continue;
     const id = raw.toLowerCase();
-    if (id.includes("opus")) return "claude-code:opus";
-    if (id.includes("sonnet")) return "claude-code:sonnet";
-    if (id.includes("haiku")) return "claude-code:haiku";
+    if (id.includes("opus")) return `${provider}:opus`;
+    if (id.includes("sonnet")) return `${provider}:sonnet`;
+    if (id.includes("haiku")) return `${provider}:haiku`;
   }
   return undefined;
+}
+
+export type ImportedClaudeCodeProvider = "claude-code" | "claude-code-cli";
+
+/**
+ * The provider an imported Claude Code transcript continues on. The CLI stamps
+ * every entry with `entrypoint`: "cli" in a terminal, "sdk-cli" for `claude -p`,
+ * and the Agent SDK stamps "sdk-ts" or "sdk-py". Only an explicit SDK stamp keeps
+ * the SDK provider; anything else, including no stamp, is a CLI run, so typing
+ * into it resumes the same CLI conversation.
+ */
+export function importedClaudeCodeProvider(
+  entries: ClaudeCodeEntry[]
+): ImportedClaudeCodeProvider {
+  for (const entry of entries) {
+    const stamp = (entry as { entrypoint?: unknown })?.entrypoint;
+    if (typeof stamp !== "string") continue;
+    return stamp === "sdk-ts" || stamp === "sdk-py" ? "claude-code" : "claude-code-cli";
+  }
+  return "claude-code-cli";
 }
 
 /**
