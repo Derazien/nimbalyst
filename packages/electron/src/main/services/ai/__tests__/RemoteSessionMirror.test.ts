@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RemoteSessionMirror } from '../RemoteSessionMirror';
+import { RemoteSessionMirrorSet } from '../remoteSessionMirrorSet';
 import type { SessionChange, SyncProvider } from '@nimbalyst/runtime/sync/types';
 import { logger } from '../../../utils/logger';
 import type { RemoteSessionSnapshot } from '../RemoteSessionMirror';
@@ -221,33 +222,44 @@ it('keeps desktop history readable after its presence record expires and invento
 // transport (real HTTP on loopback, real client, real host). The node itself is
 // a stand-in that answers the way serve's runtime does; the node package's
 // localTransport test covers the real runtime on the other side of this wire.
+const LOCAL_TOKEN = 't'.repeat(48);
+const settle = async (check: () => boolean, what: string) => {
+  for (let i = 0; i < 400 && !check(); i++) await new Promise(resolve => setTimeout(resolve, 25));
+  if (!check()) throw new Error(`timed out: ${what}`);
+};
+
+/** A stand-in headless node on loopback that answers the way serve's runtime does. */
+function localNode() {
+  const token = LOCAL_TOKEN;
+  const stored = new Map<string, AgentMessage[]>();
+  const device = { deviceId: 'node-1', name: 'Node', type: 'headless' as const, platform: 'win32', connectedAt: 1, lastActiveAt: 1 };
+  function startHost(port: number, seed: Array<NonNullable<ReturnType<NonNullable<SyncProvider['getCachedIndexEntry']>>>> = []) {
+    const host = createLocalServeHost({ host: '127.0.0.1', port, token, device, loadIndex: async () => seed as any, loadMessages: async (id) => stored.get(id) ?? [] });
+    const write = async (sessionId: string, prompt: string) => {
+      const message: AgentMessage = { id: 0, sessionId, source: 'user', direction: 'input', content: prompt, createdAt: new Date() };
+      stored.get(sessionId)!.push(message);
+      await host.pushChange(sessionId, { type: 'message_added', message });
+    };
+    host.onCreateSessionRequest!(async (request) => {
+      stored.set('hosted-1', []);
+      await host.syncSessionsToIndex!([{ id: 'hosted-1', title: 'Hosted', provider: 'claude-code', hostDeviceId: 'node-1', workspaceId: request.projectId, messageCount: 0, createdAt: 10, updatedAt: 10 }]);
+      await host.sendCreateSessionResponse!({ requestId: request.requestId, success: true, sessionId: 'hosted-1' });
+      if (request.initialPrompt) await write('hosted-1', request.initialPrompt);
+    });
+    host.onIndexChange!((sessionId, entry) => {
+      void (async () => {
+        for (const prompt of entry.queuedPrompts ?? []) await write(sessionId, prompt.prompt);
+        await host.pushChange(sessionId, { type: 'metadata_updated', metadata: { queuedPrompts: [] } });
+      })();
+    });
+    return host;
+  }
+  return { token, startHost };
+}
+
 describe('remote session mirror over the local serve transport', () => {
   it('lists, streams, queues into and creates a node-hosted session, and keeps working across a node restart', async () => {
-    const token = 't'.repeat(48);
-    const stored = new Map<string, AgentMessage[]>();
-    const device = { deviceId: 'node-1', name: 'Node', type: 'headless' as const, platform: 'win32', connectedAt: 1, lastActiveAt: 1 };
-
-    function startHost(port: number, seed: Array<NonNullable<ReturnType<NonNullable<SyncProvider['getCachedIndexEntry']>>>> = []) {
-      const host = createLocalServeHost({ host: '127.0.0.1', port, token, device, loadIndex: async () => seed as any, loadMessages: async (id) => stored.get(id) ?? [] });
-      const write = async (sessionId: string, prompt: string) => {
-        const message: AgentMessage = { id: 0, sessionId, source: 'user', direction: 'input', content: prompt, createdAt: new Date() };
-        stored.get(sessionId)!.push(message);
-        await host.pushChange(sessionId, { type: 'message_added', message });
-      };
-      host.onCreateSessionRequest!(async (request) => {
-        stored.set('hosted-1', []);
-        await host.syncSessionsToIndex!([{ id: 'hosted-1', title: 'Hosted', provider: 'claude-code', hostDeviceId: 'node-1', workspaceId: request.projectId, messageCount: 0, createdAt: 10, updatedAt: 10 }]);
-        await host.sendCreateSessionResponse!({ requestId: request.requestId, success: true, sessionId: 'hosted-1' });
-        if (request.initialPrompt) await write('hosted-1', request.initialPrompt);
-      });
-      host.onIndexChange!((sessionId, entry) => {
-        void (async () => {
-          for (const prompt of entry.queuedPrompts ?? []) await write(sessionId, prompt.prompt);
-          await host.pushChange(sessionId, { type: 'metadata_updated', metadata: { queuedPrompts: [] } });
-        })();
-      });
-      return host;
-    }
+    const { token, startHost } = localNode();
 
     let host = startHost(0);
     const { port } = await host.listen();
@@ -257,10 +269,6 @@ describe('remote session mirror over the local serve transport', () => {
     const deps = { localSessionIds: vi.fn(async () => new Set<string>()), hasLocalSession: vi.fn(async () => false), listChanged: vi.fn() };
     const mirror = new RemoteSessionMirror(deps);
     mirror.setProvider(client, await deriveLocalServeKey(token));
-    const settle = async (check: () => boolean, what: string) => {
-      for (let i = 0; i < 400 && !check(); i++) await new Promise(resolve => setTimeout(resolve, 25));
-      if (!check()) throw new Error(`timed out: ${what}`);
-    };
 
     try {
       expect((await mirror.hosts('/repo')).map(d => d.deviceId)).toEqual(['node-1']);
@@ -290,6 +298,60 @@ describe('remote session mirror over the local serve transport', () => {
       const rows = JSON.parse(latest()) as unknown[];
       expect(rows).toHaveLength(3);
       off();
+    } finally {
+      client.close();
+      await host.close();
+    }
+  }, 30_000);
+});
+
+// #416: the desktop holds the cloud mirror and a local-host mirror side by
+// side. Every IPC handler talks to the set, so a session on a local node must
+// list, stream, take prompts and be created through it, while cloud sessions
+// keep reaching the cloud provider.
+describe('remote session mirror set (cloud plus local host)', () => {
+  it('routes each call to the mirror that owns the session or host, and drops the local host cleanly', async () => {
+    const cloud = fixture();
+    // Like CollabV3Sync: an id the cloud index does not hold has no cached entry.
+    cloud.provider.getCachedIndexEntry.mockImplementation(((id: string) => (id === 'remote' ? cloud.entry : undefined)) as any);
+    cloud.provider.getConnectedDevices.mockReturnValue([{ deviceId: 'sandbox-1', name: 'Sandbox', type: 'headless', platform: 'linux', isOnline: true, connectedAt: 1, lastActiveAt: 1 }] as any);
+    const { token, startHost } = localNode();
+    const host = startHost(0);
+    const { port } = await host.listen();
+    const client = createLocalServeClient({ baseUrl: `http://127.0.0.1:${port}`, token, reconnectDelayMs: 50, localDevice: { deviceId: 'desktop', name: 'Desktop', type: 'desktop', platform: 'win32', connectedAt: 1, lastActiveAt: 1 } });
+    client.start();
+    await client.ready();
+    const localDeps = { localSessionIds: vi.fn(async () => new Set<string>()), hasLocalSession: vi.fn(async () => false), listChanged: vi.fn() };
+    const set = new RemoteSessionMirrorSet(cloud.mirror, new RemoteSessionMirror(localDeps));
+    set.setLocalProvider(client, await deriveLocalServeKey(token));
+
+    try {
+      expect((await set.hosts('/repo')).map(d => d.deviceId).sort()).toEqual(['node-1', 'sandbox-1']);
+      const created = await set.create('/repo', 'node-1', { prompt: 'from the desktop' });
+      expect(created).toBe('hosted-1');
+
+      const listed = await set.list('/repo', []);
+      expect(listed.map(s => [s.id, s.remoteHostDeviceId]).sort()).toEqual([['hosted-1', 'node-1'], ['remote', 'sandbox-1']]);
+      expect(set.isRemote('hosted-1')).toBe(true);
+      await expect(set.assertLocalExecution('hosted-1')).rejects.toThrow();
+      expect(await set.get('hosted-1', '/repo')).toEqual(expect.objectContaining({ id: 'hosted-1' }));
+
+      const snapshots: RemoteSessionSnapshot[] = [];
+      const off = await set.watch('hosted-1', '/repo', snapshot => snapshots.push(snapshot));
+      const latest = () => JSON.stringify(snapshots.at(-1)?.session.messages ?? []);
+      await settle(() => latest().includes('from the desktop'), 'the created session streaming');
+
+      await set.queue('hosted-1', '/repo', 'typed into it');
+      await settle(() => latest().includes('typed into it'), 'a prompt reaching the local node');
+      expect(cloud.provider.pushChange).not.toHaveBeenCalled();
+
+      await set.queue('remote', '/repo', 'to the sandbox');
+      expect(cloud.provider.pushChange).toHaveBeenCalledWith('remote', expect.objectContaining({ type: 'metadata_updated' }));
+      off();
+
+      set.setLocalProvider(null);
+      expect((await set.list('/repo', [])).map(s => s.id)).toEqual(['remote']);
+      expect(set.isRemote('hosted-1')).toBe(false);
     } finally {
       client.close();
       await host.close();

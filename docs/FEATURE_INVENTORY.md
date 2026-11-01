@@ -486,6 +486,7 @@ Companion app; pairs with a desktop over encrypted sync. Voice mode is not inclu
 - Headless Node runner creates or resumes Claude Code sessions without Electron, persists transcripts, and can serve as a personal-sync execution device for mapped repositories
 - Cloudflare sandbox management from Settings using the user's own account -- deploy, inspect status, wake, stop, delete, and pair a headless runner
 - Remote sandbox sessions use the normal composer, attachments, project Actions, session list, streamed transcripts, follow-up prompts, and stop controls
+- Local headless hosts (alpha) -- Settings > Local Hosts connects the desktop to a `nimbalyst-node serve --transport local` on this machine or the tailnet (address plus token; loopback and tailnet only, token stored encrypted); its sessions list, stream, take prompts and can be created from the desktop with no cloud room, and survive a node restart because the node database is the source of truth
 - Remote execution limitations: sandbox files/processes are ephemeral; previous execution state is not restored after the host restarts, and remote interactive question/permission answers and remote worktree creation are not supported
 
 ## Terminal

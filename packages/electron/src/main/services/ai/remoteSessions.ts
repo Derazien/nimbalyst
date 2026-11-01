@@ -4,8 +4,9 @@ import { AISessionsRepository } from '@nimbalyst/runtime/storage/repositories/AI
 import { findWindowByWorkspace } from '../../window/WindowManager';
 import { encryptRemoteAttachments } from './remoteAttachments';
 import { RemoteSessionMirror } from './RemoteSessionMirror';
+import { RemoteSessionMirrorSet } from './remoteSessionMirrorSet';
 
-export const remoteSessions = new RemoteSessionMirror({
+const mirrorDeps: ConstructorParameters<typeof RemoteSessionMirror>[0] = {
   localSessionIds: async workspace => new Set((await AISessionsRepository.list(workspace, {includeArchived: true})).map(s => s.id)),
   configuredHostIds: () => { const id = readDeployment()?.node?.deviceId; return new Set(id ? [id] : []); },
   encryptAttachments: encryptRemoteAttachments,
@@ -23,4 +24,15 @@ export const remoteSessions = new RemoteSessionMirror({
     const window = findWindowByWorkspace(workspacePath);
     if (window && !window.isDestroyed()) window.webContents.send('sessions:refresh-list', { workspacePath, sessionId });
   },
-});
+};
+
+/**
+ * Cloud sessions (sandboxes, other desktops, cloud-joined nodes) and sessions on
+ * a local headless host (#416), behind one object every handler uses. The
+ * configured sandbox is a cloud host only; the local mirror learns its host
+ * from the node itself.
+ */
+export const remoteSessions = new RemoteSessionMirrorSet(
+  new RemoteSessionMirror(mirrorDeps),
+  new RemoteSessionMirror({ ...mirrorDeps, configuredHostIds: () => new Set() }),
+);

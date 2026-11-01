@@ -1,5 +1,6 @@
 import { registerProviderCredentialHandlers } from './ProviderCredentialHandlers';
 import { registerCloudflareSandboxHandlers } from './CloudflareSandboxHandlers';
+import { registerLocalHostHandlers } from '../services/localServe/registerLocalHostHandlers';
 import { BrowserWindow, safeStorage, session, dialog } from 'electron';
 import { getWindowIdForWindow, windowStates } from '../window/windowState';
 import { applyAnalyticsEnabled } from '../services/analytics/applyAnalyticsEnabled';
@@ -164,6 +165,8 @@ function getLocalNetworkIP(): string | null {
 export function registerSettingsHandlers() {
     registerProviderCredentialHandlers();
     registerCloudflareSandboxHandlers();
+    // Settings > Local hosts, and the saved host's startup connect (#416).
+    registerLocalHostHandlers();
     // ============================================================
     // Flat-key SettingsService (per-key reads/writes + broadcast)
     //
