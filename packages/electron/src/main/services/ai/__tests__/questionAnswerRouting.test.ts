@@ -25,6 +25,9 @@ const h = vi.hoisted(() => {
 });
 
 vi.mock('electron', () => ({ ipcMain: h.ipcMain }));
+// The CLI plan-dialog path reaches the terminal manager, which loads node-pty
+// through `app` at import time. Nothing here drives a terminal.
+vi.mock('../../TerminalSessionManager', () => ({ getTerminalSessionManager: vi.fn() }));
 vi.mock('../../../utils/logger', () => ({ logger: { main: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } } }));
 vi.mock('../../../mcp/tools/interactivePromptTranscript', () => ({
   persistInteractivePromptToolResult: vi.fn(async (a: { sessionId: string; toolUseId: string; result: any }) => { h.rows.push(a); }),
