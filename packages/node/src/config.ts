@@ -61,6 +61,13 @@ export interface NodeConfig {
   sync?: NodeSyncConfig;
 
   /**
+   * Local-transport settings for `serve --transport local` (#416): the desktop
+   * on this machine or the tailnet connects to this node directly, with no
+   * cloud room. Validated only when that transport starts.
+   */
+  local?: NodeLocalConfig;
+
+  /**
    * Path to the project -> checkout map `serve` consults on every create-session
    * request. Re-read per request so the desktop can update it without a restart.
    */
@@ -101,6 +108,25 @@ export interface NodeSyncConfig {
   deviceId: string;
   /** Human-readable name shown in the desktop's device list. */
   deviceName?: string;
+}
+
+/** The local half of the config file. See `serve --transport local` in the README. */
+export interface NodeLocalConfig {
+  /** Loopback (`127.0.0.1`) or this machine's tailnet address. Nothing else is accepted. */
+  host: string;
+  /** TCP port. 0 picks a free one, which is only useful in tests. */
+  port: number;
+  /** File holding the shared bearer token. Relative paths resolve against the config file. */
+  tokenPath: string;
+  /** Stable id this node announces; the desktop targets create-session requests at it. */
+  deviceId: string;
+  deviceName?: string;
+  /**
+   * Directories under which a requested project is run in place, with no
+   * workspaces mapping and no git. For a node on the same machine as the
+   * desktop. Absent means every project needs a workspaces mapping.
+   */
+  inPlaceRoots?: string[];
 }
 
 export interface LoadedConfig extends NodeConfig {
@@ -169,6 +195,25 @@ export function requireSyncSettings(config: LoadedConfig): NodeSyncConfig & {
   }
 
   return { ...sync, credentialPath: config.resolvedCredentialPath };
+}
+
+/** Validate the local block before `serve --transport local` opens a port. */
+export function requireLocalSettings(config: LoadedConfig): NodeLocalConfig & { resolvedTokenPath: string } {
+  const local = config.local;
+  if (!local || typeof local !== 'object' || Array.isArray(local)) {
+    fail(`config file ${config.configPath} must set a "local" object to run "serve --transport local"`);
+  }
+  const missing = (['host', 'tokenPath', 'deviceId'] as const).filter(
+    (key) => typeof local[key] !== 'string' || (local[key] as string).length === 0,
+  );
+  if (!Number.isInteger(local.port) || local.port < 0 || local.port > 65535) missing.push('port' as never);
+  if (missing.length > 0) {
+    fail(`config file ${config.configPath} is missing local setting(s): ${missing.map((key) => `local.${key}`).join(', ')}`);
+  }
+  if (local.inPlaceRoots !== undefined && (!Array.isArray(local.inPlaceRoots) || local.inPlaceRoots.some((root) => typeof root !== 'string' || !path.isAbsolute(root)))) {
+    fail('local.inPlaceRoots must be an array of absolute directories');
+  }
+  return { ...local, resolvedTokenPath: path.resolve(path.dirname(config.configPath), local.tokenPath) };
 }
 
 export function loadConfig(configPath: string): LoadedConfig {

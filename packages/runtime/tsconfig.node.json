@@ -49,6 +49,10 @@
     "src/sync/SyncedSessionStore.ts",
     "src/sync/types.ts",
     "src/sync/syncClientInfo.ts",
-    "src/sync/nodeCredentialToken.ts"
+    "src/sync/nodeCredentialToken.ts",
+    // The local serve transport (#416): the host half runs inside `serve`.
+    "src/sync/localServe/protocol.ts",
+    "src/sync/localServe/LocalServeHost.ts",
+    "src/sync/localServe/LocalServeClient.ts"
   ]
 }

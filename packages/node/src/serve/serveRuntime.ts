@@ -77,8 +77,12 @@ export interface ServeRuntimeDeps {
   /** This node's announced device id; targeted requests carry it. */
   deviceId: string;
   sync: ServeSyncProvider;
-  /** Re-read per request so the desktop can map a new project without a restart. */
-  loadWorkspaces(): WorkspaceMapping[];
+  /**
+   * Re-read per request so the desktop can map a new project without a restart.
+   * Handed the requested project so a host that runs in place (the local
+   * transport on the same machine) can answer for it without a mapping file.
+   */
+  loadWorkspaces(projectId: string): WorkspaceMapping[];
   ensureCheckout(mapping: WorkspaceMapping): Promise<CheckoutOutcome>;
   /**
    * The canonical checkout directory for a mapping, or a throw if it is not
@@ -281,7 +285,7 @@ export function createServeRuntime(deps: ServeRuntimeDeps): ServeRuntime {
     }
 
     try {
-      const mapping = findWorkspace(deps.loadWorkspaces(), projectId);
+      const mapping = findWorkspace(deps.loadWorkspaces(projectId), projectId);
       if (!mapping) {
         deps.log('drain-skipped', { sessionId, reason: `no workspace mapping for ${projectId}` });
         return null;
@@ -445,7 +449,7 @@ export function createServeRuntime(deps: ServeRuntimeDeps): ServeRuntime {
 
       let mapping: WorkspaceMapping | undefined;
       try {
-        mapping = findWorkspace(deps.loadWorkspaces(), request.projectId);
+        mapping = findWorkspace(deps.loadWorkspaces(request.projectId), request.projectId);
       } catch (error) {
         await refuse(
           request.requestId,

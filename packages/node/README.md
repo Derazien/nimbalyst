@@ -113,6 +113,40 @@ A refresh has three outcomes, and the line between them is **whether the request
 - **Worktree requests.** `onCreateWorktreeRequest` is not subscribed; the desktop is still the only worktree host.
 - **Durable replay of unpublished transcript rows.** A publication covers the whole send (`onMessageCreated` awaits the provider's `pushChange`, so encryption and transport are included) and reports what happened rather than throwing — a failed connect or a withheld write comes back as `{ published: false }`, which is *not* success, and treating it as such meant a node that had never connected reported zero failures while sending nothing. Shutdown waits up to 10s for in-flight publications and 15s for everything, and a row that did not publish is held and retried on **every** reconnect via `onConnectionGenerationChange`, not just the twelve-minute rotation. But that buffer is memory only and capped at 500 rows: a row still unsent when the process exits stays correct in the local database and invisible to every other device. Durable replay needs a published-watermark per session and is deferred.
 
+## `serve --transport local`: a node and a desktop without the cloud room (#416)
+
+```sh
+nimbalyst-node serve --config ./nimbalyst-node.config.json --transport local
+```
+
+The same serve runtime, the same create-session claim, queue drain and no-replay-after-restart rules, over a direct HTTP link to a desktop on this machine (loopback) or on the user's tailnet. The node is the server and its SQLite file is the source of truth: a desktop that connects late, or reconnects after the node restarted, reads the index and every transcript from it. Nothing goes through the cloud room, so no credential, refresh loop or index-eligibility heartbeat is involved.
+
+```json
+{
+  "databasePath": "./data/nimbalyst.sqlite",
+  "trust": { "mode": "bypass-all" },
+  "local": {
+    "host": "127.0.0.1",
+    "port": 47615,
+    "tokenPath": "./local-token",
+    "deviceId": "node-loopback",
+    "inPlaceRoots": ["C:/work"]
+  }
+}
+```
+
+| Key | Meaning |
+| --- | --- |
+| `local.host` | `127.0.0.1` or this machine's tailnet address. Anything outside loopback, `100.64.0.0/10` and `fd7a:115c:a1e0::/48` is refused at startup. |
+| `local.port` | TCP port the desktop connects to. |
+| `local.tokenPath` | File holding a shared bearer token of at least 32 characters. Every request must present it. The payload key for attachments and the workspace context is derived from it. |
+| `local.deviceId` | The id the node announces; the desktop targets create-session requests at it. |
+| `local.inPlaceRoots` | Optional. A requested project under one of these directories runs in place, in the desktop's own tree, with no workspaces mapping and no git. Anything else falls back to `workspacesPath`, and an unmapped project is refused as before. |
+
+The wire contract lives in `@nimbalyst/runtime/sync/localServe/protocol`. The host (`LocalServeHost`) and the client (`LocalServeClient`) are both `SyncProvider`s, so the serve runtime and the desktop's `RemoteSessionMirror` use them exactly as they use CollabV3Sync. Row ids on this wire are the row's position in its session, for stored and live rows alike, because the synced message store publishes every row with `id: 0` and leaves sequencing to the room.
+
+What stays on the cloud path: mobile, team collaboration, a desktop's own sessions, and any node the desktop cannot reach directly.
+
 ## Configuration
 
 `--config` is required and has no default. Provider API keys and MCP servers must be explicitly provisioned in that file. The agent child receives only OS/runtime environment locations plus Nimbalyst's managed options; ambient provider keys and endpoint overrides are excluded. CLI OAuth login can still use the current user's credential store.

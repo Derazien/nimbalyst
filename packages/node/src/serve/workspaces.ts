@@ -19,6 +19,12 @@ export interface WorkspaceMapping {
   branch: string;
   /** Absolute path this node checks the branch out to. */
   checkoutDir: string;
+  /**
+   * The requester's own directory on this machine, used as it is: no clone,
+   * no fetch, no checkout. Only the local transport produces these, and only
+   * under a configured root; the workspaces file never does.
+   */
+  inPlace?: true;
 }
 
 function fail(message: string): never {

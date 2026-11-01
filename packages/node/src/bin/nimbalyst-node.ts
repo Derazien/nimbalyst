@@ -21,6 +21,7 @@ import * as path from 'node:path';
 import { loadConfig } from '../config.js';
 import { NimbalystNode } from '../NimbalystNode.js';
 import { serve } from '../serve/startServe.js';
+import { serveLocal } from '../serve/startServeLocal.js';
 
 interface Args {
   config?: string;
@@ -29,10 +30,11 @@ interface Args {
   session?: string;
   json?: boolean;
   help?: boolean;
+  transport?: string;
 }
 
 const USAGE = `nimbalyst-node --config <file> --workspace <dir> --prompt <text>
-nimbalyst-node serve --config <file>
+nimbalyst-node serve --config <file> [--transport cloud|local]
 
 Run one turn:
   --config    <file>  Required. JSON config: databasePath and explicit trust.mode;
@@ -48,6 +50,9 @@ Serve (long-running headless device):
   Joins the user's personal sync as a headless device, claims create-session
   requests targeted at sync.deviceId, checks out the mapped repo branch, runs
   turns and streams transcripts. SIGTERM exits 0; a revoked credential exits 3.
+
+  --transport local   Serve a desktop on this machine or the tailnet directly,
+                      with no cloud room. Needs a "local" block instead of "sync".
 `;
 
 function parseArgs(argv: string[]): Args {
@@ -60,6 +65,7 @@ function parseArgs(argv: string[]): Args {
       case '--prompt': args.prompt = argv[++i]; break;
       case '--session': args.session = argv[++i]; break;
       case '--json': args.json = true; break;
+      case '--transport': args.transport = argv[++i]; break;
       case '-h':
       case '--help': args.help = true; break;
       default:
@@ -74,14 +80,22 @@ function parseArgs(argv: string[]): Args {
  * end to `serve`. It must exit 0 -- a supervisor reading a non-zero code
  * restarts the process it just deliberately stopped.
  */
-async function runServe(configPath: string): Promise<number> {
+async function runServe(configPath: string, transport = 'cloud'): Promise<number> {
+  if (transport !== 'cloud' && transport !== 'local') {
+    process.stderr.write(`unknown --transport ${transport}: expected cloud or local
+`);
+    return 2;
+  }
   const controller = new AbortController();
   const stop = () => controller.abort();
   process.once('SIGTERM', stop);
   process.once('SIGINT', stop);
 
   try {
-    const { exitCode } = await serve({ config: loadConfig(configPath), signal: controller.signal });
+    const config = loadConfig(configPath);
+    const { exitCode } = transport === 'local'
+      ? await serveLocal({ config, signal: controller.signal })
+      : await serve({ config, signal: controller.signal });
     return exitCode;
   } finally {
     process.off('SIGTERM', stop);
@@ -102,7 +116,7 @@ async function main(): Promise<number> {
       process.stderr.write(`missing required argument: --config\n\n${USAGE}`);
       return 2;
     }
-    return runServe(args.config);
+    return runServe(args.config, args.transport);
   }
 
   const args = parseArgs(argv);

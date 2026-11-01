@@ -3,6 +3,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RemoteSessionMirror } from '../RemoteSessionMirror';
 import type { SessionChange, SyncProvider } from '@nimbalyst/runtime/sync/types';
 import { logger } from '../../../utils/logger';
+import type { RemoteSessionSnapshot } from '../RemoteSessionMirror';
+import type { AgentMessage } from '@nimbalyst/runtime/ai/server/types';
+import { createLocalServeHost } from '@nimbalyst/runtime/sync/localServe/LocalServeHost';
+import { createLocalServeClient } from '@nimbalyst/runtime/sync/localServe/LocalServeClient';
+import { deriveLocalServeKey } from '@nimbalyst/runtime/sync/localServe/protocol';
 
 function fixture() {
   const entry = { sessionId: 'remote', hostDeviceId: 'sandbox-1', projectId: '/repo', title: 'Remote test', provider: 'claude-code', messageCount: 0, createdAt: 100, updatedAt: 200, lastMessageAt: 200 };
@@ -210,4 +215,84 @@ it('keeps desktop history readable after its presence record expires and invento
   f.provider.getConnectedDevices.mockReturnValue([{deviceId: 'retired-desktop', name: 'Previous installation', type: 'unknown', isOnline: false, inventoryHidden: false}] as any);
   expect((await f.mirror.hosts('/repo')).map(d => d.deviceId)).toEqual(['retired-desktop']);
   await expect(f.mirror.assertLocalExecution('remote')).rejects.toThrow('host');
+});
+
+// #416: the desktop's real mirror, reading a headless node over the local
+// transport (real HTTP on loopback, real client, real host). The node itself is
+// a stand-in that answers the way serve's runtime does; the node package's
+// localTransport test covers the real runtime on the other side of this wire.
+describe('remote session mirror over the local serve transport', () => {
+  it('lists, streams, queues into and creates a node-hosted session, and keeps working across a node restart', async () => {
+    const token = 't'.repeat(48);
+    const stored = new Map<string, AgentMessage[]>();
+    const device = { deviceId: 'node-1', name: 'Node', type: 'headless' as const, platform: 'win32', connectedAt: 1, lastActiveAt: 1 };
+
+    function startHost(port: number, seed: Array<NonNullable<ReturnType<NonNullable<SyncProvider['getCachedIndexEntry']>>>> = []) {
+      const host = createLocalServeHost({ host: '127.0.0.1', port, token, device, loadIndex: async () => seed as any, loadMessages: async (id) => stored.get(id) ?? [] });
+      const write = async (sessionId: string, prompt: string) => {
+        const message: AgentMessage = { id: 0, sessionId, source: 'user', direction: 'input', content: prompt, createdAt: new Date() };
+        stored.get(sessionId)!.push(message);
+        await host.pushChange(sessionId, { type: 'message_added', message });
+      };
+      host.onCreateSessionRequest!(async (request) => {
+        stored.set('hosted-1', []);
+        await host.syncSessionsToIndex!([{ id: 'hosted-1', title: 'Hosted', provider: 'claude-code', hostDeviceId: 'node-1', workspaceId: request.projectId, messageCount: 0, createdAt: 10, updatedAt: 10 }]);
+        await host.sendCreateSessionResponse!({ requestId: request.requestId, success: true, sessionId: 'hosted-1' });
+        if (request.initialPrompt) await write('hosted-1', request.initialPrompt);
+      });
+      host.onIndexChange!((sessionId, entry) => {
+        void (async () => {
+          for (const prompt of entry.queuedPrompts ?? []) await write(sessionId, prompt.prompt);
+          await host.pushChange(sessionId, { type: 'metadata_updated', metadata: { queuedPrompts: [] } });
+        })();
+      });
+      return host;
+    }
+
+    let host = startHost(0);
+    const { port } = await host.listen();
+    const client = createLocalServeClient({ baseUrl: `http://127.0.0.1:${port}`, token, reconnectDelayMs: 50, localDevice: { deviceId: 'desktop', name: 'Desktop', type: 'desktop', platform: 'win32', connectedAt: 1, lastActiveAt: 1 } });
+    client.start();
+    await client.ready();
+    const deps = { localSessionIds: vi.fn(async () => new Set<string>()), hasLocalSession: vi.fn(async () => false), listChanged: vi.fn() };
+    const mirror = new RemoteSessionMirror(deps);
+    mirror.setProvider(client, await deriveLocalServeKey(token));
+    const settle = async (check: () => boolean, what: string) => {
+      for (let i = 0; i < 400 && !check(); i++) await new Promise(resolve => setTimeout(resolve, 25));
+      if (!check()) throw new Error(`timed out: ${what}`);
+    };
+
+    try {
+      expect((await mirror.hosts('/repo')).map(d => d.deviceId)).toEqual(['node-1']);
+      const sessionId = await mirror.create('/repo', 'node-1', { prompt: 'first prompt' });
+      expect(sessionId).toBe('hosted-1');
+      expect(await mirror.list('/repo', [])).toEqual([expect.objectContaining({ id: 'hosted-1', remoteHostDeviceId: 'node-1' })]);
+
+      const snapshots: RemoteSessionSnapshot[] = [];
+      const off = await mirror.watch(sessionId, '/repo', snapshot => snapshots.push(snapshot));
+      const latest = () => JSON.stringify(snapshots.at(-1)?.session.messages ?? []);
+      await settle(() => latest().includes('first prompt'), 'initial prompt in the transcript');
+      expect(snapshots.at(-1)).toEqual(expect.objectContaining({ connected: true, hostOnline: true, readOnlyReason: undefined }));
+
+      await mirror.queue(sessionId, '/repo', 'second prompt');
+      await settle(() => latest().includes('second prompt'), 'queued prompt reaching the node');
+
+      // The node restarts on the same port; the client reconnects by itself.
+      const seed = [host.getCachedIndexEntry!('hosted-1')!];
+      await host.close();
+      await settle(() => !client.isIndexReady!(), 'client noticing the node went away');
+      host = startHost(port, seed);
+      await host.listen();
+      await settle(() => client.isIndexReady!(), 'client reconnecting');
+
+      await mirror.queue(sessionId, '/repo', 'third prompt');
+      await settle(() => latest().includes('third prompt'), 'prompt after the node restart');
+      const rows = JSON.parse(latest()) as unknown[];
+      expect(rows).toHaveLength(3);
+      off();
+    } finally {
+      client.close();
+      await host.close();
+    }
+  }, 30_000);
 });
