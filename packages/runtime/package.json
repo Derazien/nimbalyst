@@ -332,6 +332,30 @@
         "types": "./dist-node/sync/encryptionKey.d.ts",
         "import": "./dist-node/sync/encryptionKey.js"
       }
+    },
+    "./sync/localServe/protocol": {
+      "node": {
+        "types": "./dist-node/sync/localServe/protocol.d.ts",
+        "import": "./dist-node/sync/localServe/protocol.js"
+      },
+      "import": "./dist/sync/localServe/protocol.js",
+      "types": "./dist/sync/localServe/protocol.d.ts"
+    },
+    "./sync/localServe/LocalServeHost": {
+      "node": {
+        "types": "./dist-node/sync/localServe/LocalServeHost.d.ts",
+        "import": "./dist-node/sync/localServe/LocalServeHost.js"
+      },
+      "import": "./dist/sync/localServe/LocalServeHost.js",
+      "types": "./dist/sync/localServe/LocalServeHost.d.ts"
+    },
+    "./sync/localServe/LocalServeClient": {
+      "node": {
+        "types": "./dist-node/sync/localServe/LocalServeClient.d.ts",
+        "import": "./dist-node/sync/localServe/LocalServeClient.js"
+      },
+      "import": "./dist/sync/localServe/LocalServeClient.js",
+      "types": "./dist/sync/localServe/LocalServeClient.d.ts"
     }
   },
   "files": [
