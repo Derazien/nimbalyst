@@ -180,8 +180,14 @@ export async function submitClaudeCliPrompt(
   // its own keystroke, then the remainder, then Enter. Skips the document
   // context block (it would corrupt the command line) and only applies to
   // attachment-free prompts (paths after a command make no sense).
-  const isTuiTrigger =
-    (prompt.startsWith('/') || prompt.startsWith('#')) && attachments.length === 0;
+  //
+  // A memory note is one line. A multi-line prompt that opens with `#` is a
+  // markdown document whose first line is a heading (the companion deck's briefs
+  // are), and typing it raw lost it: the CLI split the keystrokes into "[Pasted
+  // text #N]" fragments, dropped the Enter, and the leftover tail merged into the
+  // next prompt. Such a prompt is pasted like any other.
+  const isMemoryNote = prompt.startsWith('#') && !/[\r\n]/.test(prompt);
+  const isTuiTrigger = (prompt.startsWith('/') || isMemoryNote) && attachments.length === 0;
 
   if (isTuiTrigger) {
     deps.writeToTerminal(input.sessionId, prompt[0]);

@@ -195,6 +195,27 @@ describe('submitClaudeCliPrompt', () => {
       ]);
     });
 
+    /**
+     * 2026-11-01: four briefs opened through the companion deck began with a
+     * markdown heading ("# Harness OS..."). Treated as a memory note, each was
+     * typed raw: the CLI split it into "[Pasted text #N]" fragments, dropped the
+     * Enter, and the leftover tail merged into the next prompt. A memory note is
+     * one line; a multi-line prompt that opens with a heading is a document.
+     */
+    it('pastes a multi-line prompt that opens with a markdown heading like any other prompt', async () => {
+      const h = harness();
+      const hasTurnStarted = vi.fn(() => true);
+      await submitClaudeCliPrompt(
+        { sessionId: 's1', workspacePath: '/w', prompt: '# Harness OS, admin side\n\nTicket 0bb36f04. Read the brief.' },
+        { ...h.deps, hasTurnStarted },
+      );
+      expect(h.writes).toEqual([
+        ['s1', pasted('# Harness OS, admin side\\n\\nTicket 0bb36f04. Read the brief.')],
+        ['s1', '\r'],
+      ]);
+      expect(hasTurnStarted).toHaveBeenCalled();
+    });
+
     it('does NOT add a menu-dismiss space for # memory notes (NIM-851)', async () => {
       const h = harness();
       await submitClaudeCliPrompt({ sessionId: 's1', workspacePath: '/w', prompt: '#note' }, h.deps);
